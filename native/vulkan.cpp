@@ -37,6 +37,7 @@
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
 #include "vk_shader.h"
+#include "xr.h"
 
 namespace gpu {
 
@@ -1136,6 +1137,7 @@ private:
     void ApplySettings();
     void SavePipelineCache();
 
+    bool xr_ = false;  // blackquest: drawing for the headset through openxr, not to an android window
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     uint32_t surface_epoch_ = 0;
@@ -1245,7 +1247,9 @@ bool VulkanBackend::Init(uint32_t width, uint32_t height) {
     guest_w_ = width;
     guest_h_ = height;
     vkshader::Init(app::ExeDir() / "shadercache");
+    xr_ = xr::Init();
     if (!CreateInstance() || !CreateSurface() || !PickDevice() || !CreateDevice()) return false;
+    if (xr_ && !xr::CreateSession(instance_, pd_, dev_, qfam_)) return false;
     alloc_.Init(pd_, dev_);
     if (!CreateLayouts() || !CreateFrames() || !CreateSwapchain() || !CreateFixedImages()) return false;
     Begin();
@@ -1258,7 +1262,8 @@ bool VulkanBackend::Init(uint32_t width, uint32_t height) {
 
 bool VulkanBackend::CreateInstance() {
     uint32_t n = 0;
-    const char* const* sdl = SDL_Vulkan_GetInstanceExtensions(&n);
+    // the headset needs no window surface: the runtime adds the instance extensions it wants itself
+    const char* const* sdl = xr_ ? nullptr : SDL_Vulkan_GetInstanceExtensions(&n);
     std::vector<const char*> exts(sdl, sdl + n);
     uint32_t loader = VK_API_VERSION_1_1;
     vkEnumerateInstanceVersion(&loader);
@@ -1270,12 +1275,14 @@ bool VulkanBackend::CreateInstance() {
     ci.pApplicationInfo = &ai;
     ci.enabledExtensionCount = uint32_t(exts.size());
     ci.ppEnabledExtensionNames = exts.data();
+    if (xr_) return xr::CreateVkInstance(ci, instance_);
     VK_CHECK(vkCreateInstance(&ci, nullptr, &instance_));
     return true;
 }
 
 // the epoch is taken only once the surface is made: until then each present tries again
 bool VulkanBackend::CreateSurface() {
+    if (xr_) return true;
     uint32_t epoch = host::SurfaceEpoch();
     // Android has not handed the window back yet (resuming, or a surface change): wait for it without asking SDL,
     // which only fails, and log the outage once, not every present
@@ -1305,6 +1312,12 @@ bool VulkanBackend::PickDevice() {
     vkEnumeratePhysicalDevices(instance_, &n, nullptr);
     std::vector<VkPhysicalDevice> pds(n);
     vkEnumeratePhysicalDevices(instance_, &n, pds.data());
+    // the headset's runtime says which GPU it composites with
+    if (xr_) {
+        VkPhysicalDevice want = VK_NULL_HANDLE;
+        if (!xr::PhysicalDevice(instance_, want)) return false;
+        pds = {want};
+    }
     // rejections are reported, not warned: release logs drop warnings and these are what a bug report needs
     if (pds.empty()) LOGE("vulkan: the driver lists no GPU");
     for (VkPhysicalDevice pd : pds) {
@@ -1323,7 +1336,7 @@ bool VulkanBackend::PickDevice() {
         uint32_t api = std::min<uint32_t>(p.apiVersion, VK_API_VERSION_1_3);
         bool swapchain = HasExtension(ext, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         bool dynamic = api >= VK_API_VERSION_1_3 || HasExtension(ext, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
-        if (!swapchain) {
+        if (!swapchain && !xr_) {
             LOGE("vulkan: %s lacks swapchain", p.deviceName);
             continue;
         }
@@ -1332,14 +1345,15 @@ bool VulkanBackend::PickDevice() {
         std::vector<VkQueueFamilyProperties> qs(qn);
         vkGetPhysicalDeviceQueueFamilyProperties(pd, &qn, qs.data());
         for (uint32_t q = 0; q < qn; q++) {
-            VkBool32 present = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(pd, q, surface_, &present);
+            VkBool32 present = xr_ ? VK_TRUE : VK_FALSE;  // the runtime presents, from any graphics queue
+            if (!xr_) vkGetPhysicalDeviceSurfaceSupportKHR(pd, q, surface_, &present);
             if (!(qs[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) || !present) continue;
             pd_ = pd;
             props_ = p;
             api_ = api;
             qfam_ = q;
-            dev_exts_ = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+            dev_exts_.clear();
+            if (!xr_) dev_exts_.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
             auto want = [&](const char* name) {
                 if (HasExtension(ext, name)) dev_exts_.push_back(name);
             };
@@ -1399,7 +1413,11 @@ bool VulkanBackend::CreateDevice() {
     ci.pQueueCreateInfos = &qi;
     ci.enabledExtensionCount = uint32_t(dev_exts_.size());
     ci.ppEnabledExtensionNames = dev_exts_.data();
-    VK_CHECK(vkCreateDevice(pd_, &ci, nullptr, &dev_));
+    if (xr_) {
+        if (!xr::CreateVkDevice(pd_, ci, dev_)) return false;
+    } else {
+        VK_CHECK(vkCreateDevice(pd_, &ci, nullptr, &dev_));
+    }
     vkGetDeviceQueue(dev_, qfam_, 0, &queue_);
     bool core13 = api_ >= VK_API_VERSION_1_3, core12 = api_ >= VK_API_VERSION_1_2;
     begin_rendering_ = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(
@@ -1433,6 +1451,23 @@ bool VulkanBackend::CreateDevice() {
 }
 
 bool VulkanBackend::CreateSwapchain() {
+    if (xr_) {
+        // the virtual screen's images stand in for the window's: DrawFrame draws the game's frame into them
+        swap_fmt_ = xr::ScreenViewFormat();
+        swap_extent_ = xr::ScreenExtent();
+        swap_images_ = xr::ScreenImages();
+        for (VkImage im : swap_images_) {
+            VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vi.image = im;
+            vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format = swap_fmt_;
+            vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkImageView v = VK_NULL_HANDLE;
+            VK_CHECK(vkCreateImageView(dev_, &vi, nullptr, &v));
+            swap_views_.push_back(v);
+        }
+        return !swap_images_.empty();
+    }
     if (!surface_) return false;
     VkSurfaceCapabilitiesKHR caps;
     VkResult cr = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pd_, surface_, &caps);
@@ -3248,7 +3283,8 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     b.dstAccessMask = 0;
     b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    b.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // openxr takes its images back in the attachment layout
+    b.newLayout = xr_ ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
                          nullptr, 0, nullptr, 1, &b);
 }
@@ -3358,12 +3394,21 @@ void VulkanBackend::Present(const Surface& front) {
     if (ramp_dirty_) UploadGammaRamp();
     if (!skin_tried_) UploadSkin();
     uint32_t index = 0;
-    bool shown = AcquireImage(index);
+    if (xr_) {
+        // the headset's frame: waits for its slot (72 hz), the game's frame on the screen quad, handed back after
+        // the submit so the compositor reads finished pixels
+        bool shown = xr::BeginFrame() && xr::AcquireScreen(index);
+        if (shown) DrawFrame(t, index);
+        Submit(false, false);
+        if (shown) xr::ReleaseScreen();
+        xr::EndFrame(shown);
+    }
+    bool shown = !xr_ && AcquireImage(index);
     if (shown) {
         present_index_ = index;
         DrawFrame(t, index);
     }
-    Submit(false, shown);
+    if (!xr_) Submit(false, shown);
     present_value_[presents_ % (kFrames + 1)].store(value_);
     if (shown) {
         VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};

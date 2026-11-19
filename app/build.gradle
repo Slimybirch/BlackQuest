@@ -87,4 +87,14 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    // blackquest: the openxr loader's aar hands its headers and libopenxr_loader.so to cmake as a prefab package
+    buildFeatures {
+        prefab true
+    }
+}
+
+dependencies {
+    // khronos' standard loader (apache-2.0); on horizon os it finds meta's runtime through the runtime broker
+    implementation "org.khronos.openxr:openxr_loader_for_android:1.1.63"
 }

@@ -217,3 +217,100 @@ SLUS-21376**.
   game already changed for the next frame. Phase 2 must either replay both eyes in one pass per draw (multiview /
   two passes per command before the fence releases) or snapshot dynamic buffers. Multiview (VK_KHR_multiview,
   Vulkan 1.1 core) with per-eye matrices in a push constant is the cleanest fit.
+
+## 2026-11-18 — Phase 1 (OpenXR bring-up, theater mode)
+
+- Loader: Khronos `org.khronos.openxr:openxr_loader_for_android:1.1.63` (Apache-2.0) from Maven Central, as a
+  Gradle prefab package; CMake `find_package(OpenXR CONFIG)` → `OpenXR::openxr_loader`; `libopenxr_loader.so` in
+  the APK. Newest on Maven at the time: 1.1.65.
+- Manifest: `android.hardware.vr.headtracking` (required, v1), `org.khronos.openxr.permission.OPENXR(_SYSTEM)`,
+  `<queries>` for the runtime broker providers and the runtime/API-layer services (Android 11 package visibility),
+  `com.oculus.supportedDevices` = quest3|quest3s|quest2|questpro, `com.oculus.vr.focusaware`, launcher intent also
+  `com.oculus.intent.category.VR`, orientation `landscape`.
+- `native/xr.cpp` / `xr.h`: loader init (XrLoaderInitInfoAndroidKHR with the activity as a global ref), instance
+  (XR_KHR_android_create_instance + XR_KHR_vulkan_enable2, API 1.0), HMD system, Vulkan instance/physical
+  device/device made through the runtime, session, LOCAL space, one 1920x1080 swapchain for the virtual screen.
+  - Colour: swapchain `R8G8B8A8_SRGB` with MUTABLE_FORMAT, views `R8G8B8A8_UNORM`: the game's gamma-encoded bytes go
+    in unchanged and the compositor reads them as sRGB (a plain UNORM chain would be read as linear = too bright).
+  - The screen is an `XrCompositionLayerQuad`, 3.2 m wide, 2.6 m in front at eye height in LOCAL space (≈63°),
+    no projection layer: the runtime's empty dark space is the "room"; it does reprojection and recentring.
+  - Frame loop on the Vulkan render thread in `VulkanBackend::Present`: PollEvents → xrWaitFrame (paces the game at
+    the display rate) → xrBeginFrame → acquire/wait image → `DrawFrame` into it (same blit/filters/ImGui as the flat
+    path; final layout COLOR_ATTACHMENT_OPTIMAL) → Submit → release → xrEndFrame with the quad.
+  - Session states: READY → xrBeginSession(PRIMARY_STEREO); STOPPING → xrEndSession; EXITING/LOSS_PENDING →
+    SDL_EVENT_QUIT. Not running: no frame wait, 10 ms sleep so the game doesn't spin.
+  - Fallback: `xr::Init` fails without a runtime → the flat Android path runs unchanged.
+- `native/vulkan.cpp`: `xr_` flag; under XR no window surface, no VK_KHR_swapchain, GPU from
+  xrGetVulkanGraphicsDevice2KHR, any graphics queue; `CreateSwapchain` fills `swap_images_/views/fmt/extent` from
+  the XR swapchain so `DrawFrame`, ImGui and the filter pipelines are untouched.
+- Input (`xr::ApplyPad`, called in `input::Poll` before the sticks are shaped), Touch → Xbox pad:
+  sticks → sticks; triggers → LT/RT; A B X Y → A B X Y; right grip → black, left grip → white; stick clicks →
+  L3/R3; left menu: tap = START, hold ≥ 0.5 s = BACK. No D-pad on Touch (menus move with the stick). A paired
+  Bluetooth pad still works: the further-pushed value wins. No haptics yet (Phase 4).
+- Not handled yet: Android dialogs (storage access, update notice) don't show in an immersive app — storage is
+  granted by `appops` for now; the update notice needs moving onto the virtual screen (Phase 7).
+- Build: 3 m 04 s incremental. Wireless adb dropped ("offline", then no answer) while the headset was charging,
+  probably asleep.
+- **First XR run (2026-11-18, installed over Wi-Fi, launched by monkey, proximity sensor off by the user):**
+  loader found no runtime broker (`Null cursor` for both content providers) and fell back to the system manifest
+  `/odm/etc/openxr/1/active_runtime.aarch64.json` — fine, that is Meta's runtime. Runtime "Oculus 209.174.0",
+  system "Meta Quest 3", screen swapchain sRGB, 3 images. Session READY → SYNCHRONIZED → VISIBLE → FOCUSED,
+  app load 1.23 s to BeginSession. VrApi: `FPS=72/72, Stale=0, Tear=0`, App 1.8 ms, GPU% 0.20, CPU% 0.55,
+  1 layer. SDL now reports the display as 4128x2208 @ 90 Hz (the immersive panel; not our frame rate).
+  The `XR_ERROR_CALL_ORDER_INVALID` lines in logcat at launch are another process (pid 4409), not ours.
+- **User's headset run (2026-11-19):** "all good" — picture, Touch controls, menus, mission 1. Headset removal
+  not tested (proximity sensor off in dev mode). Exiting: the first run had to be force closed; the second run quit
+  from the game's own Quit → Yes and closed cleanly (`black.log`: `Exit (0)`, no tombstone or ANR in dropbox).
+  The `quit: ConfirmWarning, FEAudio failed` line before it is the base port's quit page failing to borrow the
+  title menu's click sounds; harmless, the quit still works.
+- **Exit fix (me, 2026-11-19).** Cause of the hang, from the code: the runtime's events were only read in
+  `xr::BeginFrame`, on the render thread, inside a present. In the background (`SDL_EVENT_WILL_ENTER_BACKGROUND`)
+  the game thread parks in `game::WaitWhileUnfocused` before presenting, so nothing read STOPPING/EXITING; and the
+  old EXITING handler pushed `SDL_EVENT_QUIT` to SDL's thread, which SDL blocks while the activity is paused
+  (`SDL_HINT_ANDROID_BLOCK_ON_PAUSE`, default on). Now:
+  - a watch thread polls the runtime's events every 20 ms under `g_session_lock`, which the render thread holds from
+    BeginFrame to EndFrame (one display period at most), so STOPPING → xrEndSession happens even while paused;
+  - EXITING / LOSS_PENDING / instance loss → destroy session + instance and `kernel::Shutdown(0)` from that thread;
+  - the app's own quit (`SDL_EVENT_QUIT`/`TERMINATING` in `Dispatch`) → `xr::Shutdown()` first (500 ms timed lock,
+    then destroy session + instance), so the runtime never waits on a dead process;
+  - session state changes are logged at report level now (they're in `black.log`).
+  Checked on the headset: launch → states 1-5 (FOCUSED); Home → VISIBLE, SYNCHRONIZED, STOPPING, IDLE, then
+  Horizon finishes the activity → `xr: app quit, session closed`, process died 0.3 s after
+  `IMMERSIVE_APP_EXITED`, no crash/ANR. On Quest, Home closes an immersive app (no background state to resume).
+  Runtime is now 210.135.0 (updated overnight).
+
+## 2026-11-19 — Phase 2 (true stereo): design
+
+What the code says (me, reading `render_thread.cpp`, `native/vulkan.cpp`, the SDK's `gpu/shaders.cpp`):
+- The title's thread records calls into batches of 64 commands (`Threaded`); the render thread executes a batch,
+  then sets `done_` to its id. Every title-side wait (fence, busy resource, read-back, frame) is a wait on `done_`,
+  so **guest memory a batch reads stays valid until that batch is marked done**.
+- Each `Draw` reads vertex/index/texture memory when it runs (`VulkanBackend::Draw` copies vertices into the upload
+  ring then), and the state arrives as byte deltas applied to `state_`.
+- Vertex shaders end in the SDK's `kVsEpilogue`: the program's screen-space `oPos` (pixels, depth units, clip w) is
+  turned back into Vulkan clip space `q`, then `o.pos = q`. That's the one place a per-eye clip-space matrix goes:
+  `o.pos = mul(E[eye], q)`, with `E = F · P_eye · T_eye · P_game⁻¹ · F` (F = diag(1,−1,1,1), the y flip the
+  epilogue applies), P_game from `transforms[D3DTS_PROJECTION]` of the draw, P_eye from the OpenXR per-eye FOV
+  with the game's near/far. E = identity for draws that aren't the world camera (2D, HUD, post passes, an
+  orthographic or missing projection).
+- Pixel shaders sample render targets as `Texture2D` (`tex%d.Sample`), so making targets array layers
+  (multiview) would mean rewriting generated pixel shaders and every copy/blit/read-back path.
+
+Two ways to get two eyes:
+- **A. Multiview** (VK_KHR_multiview): every target a 2-layer image, render passes with viewMask 0b11, the VS
+  matrix chosen by `SV_ViewID`, pixel shaders sampling targets as `Texture2DArray` at the view index; copies,
+  read-backs, depth copies, shrinks, feedback copies and clears all made layer-aware. One pass, cheapest GPU, but
+  it touches the shader generator's output and ~15 backend paths.
+- **B. Replay each batch twice** (chosen): the render thread executes a batch for the left eye, keeps it, and
+  replays it for the right eye with the right-eye target set and matrices before marking it done, so the right eye
+  reads the same guest memory the left did. Targets are looked up through a per-eye map, so render-to-texture
+  passes (shadows, DOF, light shafts, bloom) stay per eye with no shader change beyond the VS matrix. Ops with side
+  effects outside the GPU run once (read-back `Sync`, `RecordLate`, `Flush`, reports, `Gamma`); `Present` after
+  both eyes. To keep eye switches (render pass store/load on the Adreno) down, the right-eye replay is deferred
+  while nobody waits: batches pile up with the left eye done, and the right eye catches up when the title waits on
+  one of them or at Present — about 1–2 switches per frame instead of one per batch.
+- OpenXR side: a projection layer with one 2-layer (or two) swapchain(s) at the recommended size × a scale option;
+  the per-eye `XrView` pose/FOV from `xrLocateViews` each frame; the quad screen stays for menus/FMV (Phase 1).
+- Order of work: (1) projection layer + per-eye swapchains showing the mono frame in both eyes; (2) per-eye target
+  sets and the double replay; (3) the VS matrix with P_game⁻¹ and IPD from the views; (4) pass classification —
+  HUD to a quad layer, post passes checked per eye; (5) world scale (units per metre) and render scale option.

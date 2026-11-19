@@ -16,6 +16,7 @@
 #include "common/options.h"
 #include "core/log.h"
 #include "host.h"
+#include "xr.h"
 
 namespace input {
 
@@ -212,6 +213,7 @@ Pad Poll(int port) {
     constexpr int16_t kStickPushed = 16000;
     auto pushed = [](int16_t v) { return v > kStickPushed || v < -kStickPushed; };
     if (port == 0) MergeLoose(p);
+    xr::ApplyPad(port, p);  // blackquest: the touch controllers through openxr, before the sticks are shaped
     ShapeSticks(p);
     bool analog = std::any_of(std::begin(p.analog), std::end(p.analog), [](uint8_t a) { return a > 0x20; });
     if (p.buttons || analog || pushed(p.lx) || pushed(p.ly) || pushed(p.rx) || pushed(p.ry)) touch::PadUsed();

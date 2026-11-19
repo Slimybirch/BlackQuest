@@ -31,6 +31,7 @@
 #include "host.h"
 #include "image_symbols.h"
 #include "kernel/kernel.h"
+#include "xr.h"
 
 namespace {
 
@@ -309,6 +310,7 @@ void Dispatch(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_TERMINATING:
+            xr::Shutdown();
             logx::Flush();
             kernel::Shutdown(0);
             break;

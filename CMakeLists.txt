@@ -136,7 +136,9 @@ endif()
 set_source_files_properties(${NATIVE}/game_files.cpp PROPERTIES
     COMPILE_DEFINITIONS "EUROPE_PATCH=\"${EUROPE_PATCH}\""
     OBJECT_DEPENDS ${EUROPE_PATCH})
+# blackquest: the openxr loader from the khronos aar (gradle prefab)
+find_package(OpenXR REQUIRED CONFIG)
 target_link_libraries(main PRIVATE SDL3::SDL3 tomlplusplus::tomlplusplus glslang glslang-default-resource-limits
-                      vulkan android log)
+                      vulkan android log OpenXR::openxr_loader)
 # 16 KB pages, as Android 15 devices may have
 target_link_options(main PRIVATE -Wl,-z,max-page-size=16384)

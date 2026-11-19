@@ -2,6 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:glEsVersion="0x00020000" />
+    <!-- blackquest: a vr app on horizon os, run by its openxr runtime -->
+    <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+    <!-- android 11+ package visibility: the loader asks the runtime broker which runtime is active -->
+    <queries>
+        <provider android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />
+        <intent>
+            <action android:name="org.khronos.openxr.OpenXRRuntimeService" />
+        </intent>
+        <intent>
+            <action android:name="org.khronos.openxr.OpenXRApiLayerService" />
+        </intent>
+    </queries>
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
@@ -33,17 +47,24 @@
         android:isGame="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
 
+        <!-- quest 3 first; 3s, 2 and pro run the same arm64 + vulkan build -->
+        <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s|quest2|questpro" />
+        <!-- the system menu opens over the game instead of taking it away -->
+        <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
+
         <activity
             android:name=".BlackActivity"
             android:label="@string/app_name"
             android:exported="true"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="landscape"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:preferMinimalPostProcessing="true"
             android:launchMode="singleInstance">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- starts as an immersive app, not a panel -->
+                <category android:name="com.oculus.intent.category.VR" />
             </intent-filter>
         </activity>
     </application>
