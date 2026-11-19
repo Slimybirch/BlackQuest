@@ -1,0 +1,219 @@
+# BlackQuest notes
+
+Addresses are x86 VAs in the **USA** `default.xbe` (image base 0x10000) unless said otherwise. Each entry says how
+it was found. Sources: **bp** = black-pc `NOTES.md` (GPL-2.0, facts only, no code taken), **ba** = black-android
+source (MIT, our base), **me** = checked here.
+
+## 2026-11-18 — Phase 0
+
+### Repo layout
+
+- Repo root = black-android tree at `8e9c6fc` (2026-11-01, "fix: GENERAL options crashed the app"), copied without
+  its git history: upstream history contains `ci/default.xbe.enc` (encrypted game code), which must never be in our
+  git. Also dropped: `.github/workflows/build.yml` and `ci/` (the encrypted-xbe release CI, rule 3).
+- `ref/` (gitignored, reading only):
+  - `black-android` @ `8e9c6fc`
+  - `XboxXBE-Recomp` @ `99078b1` — the commit black-android pins in both CMakeLists (`GIT_TAG 99078b11…`).
+    The root and `tools/` CMakeLists now look in `ref/XboxXBE-Recomp` before `../XboxXBE-Recomp` and FetchContent,
+    so the build uses this checkout (same commit).
+  - `black-pc` @ `c065917` (Release 0.4.0, 2026-11-14) — GPL, read only.
+  - `black-seamless-coop` @ `422eeaa` (2026-10-18) — matches the commit the prompt names.
+- `build.bat` now takes `BLACK_ISO=<path>` or the first `*.iso` in `assets/`, `iso/`, then the repo root, so
+  `Black.iso` stays where it is.
+
+### The disc (me)
+
+- `Black.iso`: XISO, game partition at offset 0 (`MICROSOFT*XBOX*MEDIA` at 0x10000).
+- `default.xbe` from it (`tools/xdvdfs.py`): 2,813,952 bytes.
+  - SHA-1   `82d0588124e70102ee650f8969c0a56374476234`
+  - SHA-256 `42eb02fcd811f57e003e3c144dc2e1ee15445f53d172ed23711573dfbefb3cf3`
+  - matches **neither** listed hash (NTSC-U `df2739c3…68f6`, PAL `67f35121…30f0`).
+- Why: the certificate was patched by the dump tool. Title `Black` 0x45410083, version 2, xbe time 2006-01-09
+  18:22:23, cert time 2006-01-24 05:01:34, entry 0x25A3F, XDK 5849 — all equal to black-pc's NTSC-U report
+  (`notes/phase1-xbe-report.txt`). Different: **region 0x7** (was 0x1 NA) and **allowed media 0x400001FF** (was 0x202),
+  the usual region-free + any-media patch.
+- All 13 section SHA-1 digests in the header match the section data: code and data are untouched.
+- Setting cert +0x9C = 0x202 and +0xA0 = 0x1 gives SHA-256 `df2739c3…68f6` exactly → **NTSC-U (USA)**.
+  Stock US SHA-1 (for `kImageSha1`): `c5bfed25449c8212d7a976f15246e87ead57713f`.
+- Effect today: none for a build from this ISO. CMake hashes whatever xbe is in `assets/` into `kImageSha1`, and
+  the app on the headset hashes the xbe from the same ISO, so they match. But an APK built from a stock xbe would
+  reject this ISO, and vice versa. TODO (Phase 9 Builder, and `game_files.cpp`): normalise those two cert fields
+  before hashing, accept only if the section digests also check out.
+
+### Baseline on the Quest 3 (2026-11-18)
+
+- Native build (Gradle) 4 m 32 s after the recompile; APK 22.3 MB. `adb install -r` ok.
+- Storage: `adb shell appops set com.slimybirch.blackquest MANAGE_EXTERNAL_STORAGE allow` works on Horizon OS
+  (Android 14, UP1A.231005.007.A1); no in-app dialog needed after that. ISO pushed to `/sdcard/Black/Black.iso`
+  (adb push 221 MB/s over USB). Game found it: "574 files", xbe sha1 82d05881… matched.
+- Launched by `monkey` with the headset **asleep** (off the head): SDL window 1280x800 @ 72 Hz; activity went
+  onResume → onPause → onStop within 0.1 s; `d3d: renderer init failed` with no `vulkan:` error line (so a silent
+  early return in `VulkanBackend::Init`, likely surface/size), then **SIGSEGV in `vkCreateImage`** on the render
+  thread: `EnsureBackend` (`src/d3d/d3d8.cpp:305`) logs the failed Init and carries on with a dead backend. Base
+  port bug; harmless while awake if Init succeeds.
+- **Headset worn (user, 2026-11-18): it runs.** Flat window from Unknown Sources; GPU Adreno 740, Vulkan 1.3.295,
+  driver 80345009; display reported 1280x800 @ 72 Hz. Session 44 s, quit through the port's exit menu, `Exit (0)`.
+  Log line `quit: ConfirmWarning, FEAudio failed` (`src/game/exit_menu.cpp:173`): the quit page's sound clips
+  weren't found; the quit still works. Cosmetic, not chased.
+- So the asleep crash is only the launch-while-off case. TODO: bail out cleanly (or wait for a surface) when
+  `Init` fails instead of crashing — moot once OpenXR owns the session (Phase 1).
+- User, 2026-11-18, second session (3 min, played): "played really well on the headset, no framerate drops".
+  Log clean apart from the FEAudio quit line; `Exit (0)`.
+- **europe.patch out of the repo** (user, 2026-11-18: nothing close to game files shipped). It is black-android's
+  PAL→US xbe patch, built from the game's bytes. `src/common/europe.patch` deleted and gitignored; `CMakeLists.txt`
+  takes it from `ref/black-android` or downloads it from raw.githubusercontent at black-android `8e9c6fc7…` and
+  checks SHA-256 `3cb0f57b…c390`, into the CMake build dir. Fallback: empty patch = US disc only, with a warning.
+  README tells builders this. The Builder (Phase 9) will do the same fetch.
+
+### Package rename (user ok 2026-11-18)
+
+- `com.racas.black` → `com.slimybirch.blackquest` (Gradle `namespace`/`applicationId`, Java package dir, JNI
+  names `Java_com_slimybirch_blackquest_BlackActivity_*` in `native/input.cpp`). App name "BlackQuest" (strings.xml,
+  storage dialogs, FPS watermark, `settings.gradle`). Device data now in
+  `Android/data/com.slimybirch.blackquest/files`. Game folder unchanged: `/storage/emulated/0/Black`.
+- UpdateChecker → `Slimybirch/BlackQuest` releases; the dialog no longer offers an APK download (none can exist:
+  each APK is built from the player's disc) and says to run the PC launcher to rebuild and reinstall.
+- Credits: SUPPORT row (black-android author's donation link) removed at the user's request, 2026-11-18; the
+  author's credit, YouTube and GitHub rows stay.
+- Wireless adb works (the headset was paired already, mDNS `adb-2G0YC5ZG6L0989-…._adb-tls-connect._tcp`):
+  `adb install -r` over Wi-Fi keeps the storage appop.
+
+### HD texture pack inventory (me, counted 2026-11-18)
+
+`BLACK_HD_Reimagined_Texture_Pack/` — "BLACK HD Reimagined", PCSX2 replacement pack for the **PS2 USA release
+SLUS-21376**.
+
+- `SLUS-21376/replacements/`: 1,324 textures, flat folder, named by PCSX2 hashes
+  `<tex hash>-<clut hash>-<tex0 bits>` (e.g. `108d09fad126df42-f541a70889ace26c-00001dd4.dds`).
+  - 1,204 DXT5 + 7 DXT1 `.dds` (1,211) and 113 `.png`.
+  - sizes: mostly 2048 px (709) and 1024 px (431), a few up to 4096.
+  - 4.5 GB. Plus a Windows `desktop.ini` in the folder (ignore).
+- `BLACK HD Reimagined.ini` is **not** a texture setting: it is a **ReShade** preset. Techniques, in order:
+  Sepia/Tint (strength 0.10, tint 0.55/0.43/0.42), qUINT sharpen (0.294, depth + RMS mask), PD80 Bonus LUT
+  (#2, intensity 0.513, chroma 0.245), Vignette (amount -1, radius 2, ratio 2.342), PD80 Cinetools LUT (#7, full),
+  BaBa FakeHDR (preset 2, 0.555). Nothing the texture loader needs. A light grade like this could be an optional
+  post effect later; not planned.
+- Two install PDFs (EN, PT).
+- The port runs the **Xbox** code with Xbox textures (swizzled, DXT/palettised), so PS2 hashes will not match:
+  Phase 8 matches images visually and re-keys them by our own Xbox hash.
+
+### Toolchain on this PC (me)
+
+- Found: git 2.x, Python 3.11, adb 1.0.41 (34.0.5, `C:\Users\codyp\platform-tools`), VS Build Tools 2026
+  (MSVC 14.51, at `S:\Microsoft Visual Studio18BuildTools`; vswhere finds it with VC.Tools.x86.x64, so `build.bat`'s
+  check passes), VS Community 2022 (no C++ workload).
+- Missing: Android SDK (platform 34), NDK 28.2.13676358, CMake 3.31.6 (SDK package; also gives ninja), JDK 17–21.
+  No Clang in VS: `build.bat` falls back to the NDK's clang-cl for the recompiler, fine.
+- adb: no device connected at the time.
+- Installed (user ok, 2026-11-18) into `toolchain/` (gitignored), portable, nothing system-wide:
+  `toolchain/jdk17` = Temurin 17.0.21+9 (Adoptium API zip); `toolchain/android-sdk` = cmdline-tools
+  `commandlinetools-win-13114758` + platforms;android-34, build-tools;34.0.0, platform-tools, ndk;28.2.13676358,
+  cmake;3.31.6 (SDK licences accepted). `build.bat` prefers these when present. This is also the layout the Phase 9
+  Builder can download to.
+- Baseline `build.bat` run started 2026-11-18; log in `out/build-baseline.log`.
+- **Build fixes for VS Build Tools 2026** (2026-11-18, found by running the recompiler build by hand; `build.bat`
+  sends that step's output to nul):
+  - MSVC 14.51's STL defines its "doom function" as `__builtin_verbose_trap` under clang; the NDK's clang-cl
+    19.0.1 doesn't have it → 7 errors in `xmemory`. `tools/CMakeLists.txt` defines
+    `_MSVC_STL_USE_ABORT_AS_DOOM_FUNCTION` (the STL's own switch, `__msvc_doom_core.hpp`).
+  - **Not enough**: MSVC 14.51's `yvals_core.h` refuses any clang below 20 (STL1000, "expected Clang 20 or newer")
+    and its `type_traits` uses clang-20 builtins. The NDK's clang-cl is 19.0.1. MSVC `cl.exe` can't build the
+    recompiler either (the SDK's `tools/recomp/*.cpp` use `__attribute__`). Needs a Clang ≥ 20 for Windows: VS
+    "C++ Clang tools" component (build.bat already prefers `%VSDIR%\VC\Tools\Llvm`) or LLVM 20.1.8 portable.
+    The abort() define stays: harmless and still needed with a newer STL under clang.
+  - **Fix**: LLVM 20.1.8 portable (`clang+llvm-20.1.8-x86_64-pc-windows-msvc.tar.xz`, 940 MB, llvm/llvm-project
+    GitHub release; user ok 2026-11-18) in `toolchain/llvm`; `build.bat` prefers it. Recompiler builds; recompile
+    of the xbe: 15,042 functions, 680,140 instructions, 457 jump tables, 64 partitions (`generated/game`, 68 files).
+    Logs a few hundred "unimplemented" rare opcodes (aas, les, iretd…): data decoded as code in gap fill, expected.
+  - `NoDefaultCurrentDirectoryInExePath=1` in this environment: cmd doesn't run `gradlew.bat` from the current
+    folder by bare name ("not recognized"). `build.bat` now calls `"%~dp0gradlew.bat"`.
+  - Git Bash rewrites `/sdcard/...` into `C:/Program Files/Git/sdcard/...` for adb: use `MSYS_NO_PATHCONV=1`.
+  - Its `VsDevCmd.bat` calls `vswhere.exe` by name: `build.bat` puts the VS Installer folder on PATH first.
+  - Rewriting `build.bat` with Python's text mode turned it into LF; `.gitattributes` wants CRLF for `*.bat`, and
+    cmd's `goto` labels need it. Edit it with a CRLF-preserving tool.
+
+### VR plan — where things are
+
+**Camera, view, projection**
+- Game code reads D3D device fields directly: transforms at device +0xC60 + State·0x40, Xbox D3DTS order VIEW,
+  PROJECTION, TEXTURE0-3, WORLD0-3; viewport {X,Y,W,H,MinZ,MaxZ} at +0xEE0 (bp). In ba the device copy is written
+  by `D3DDevice_SetTransform` (`src/d3d/d3d8.cpp:725`, `XDK_CDevice_Transforms`), also into
+  `g_state.transforms[]` that the render thread copies (`render_thread.cpp:87-90`).
+- **World shaders get a combined WVP in VS constants**: FUN_0016F770 copies VIEW/PROJECTION/viewport into the
+  renderer context (`*0x2D67F4` +0x70/+0xB0/+0x170), multiplies (FUN_00022424) and uploads WVP with
+  SetVertexShaderConstant4 at slot 10 (= c-86) (bp). In ba, the four VS-constant HLE entry points
+  (`d3d8.cpp:899-927`) write `g_state.vsc[]`. → Phase 2 per-eye correction goes in clip space on draws using the
+  main camera: `P_eye · T_eye · P_game⁻¹`, or rebuild WVP from WORLD·VIEW_eye·PROJ_eye where WORLD is known.
+- First-person view matrix: player object (ebx in FUN_001E5FA0, also `*0x2D45D4 + 0x30`) builds it in FUN_001DFD90
+  (only caller 0x1E5FE1): yaw `[[obj+0x324]+0x18]` deg, pitch `+0x1C`, smoothed position +0xA0, eye height +0x104 =
+  y + [obj+0x2E0] - 0.2 (store at 0x1DFFEC). Rows at +0xD0 **left** (right-handed), +0xE0 up, +0xF0 forward,
+  +0x100 eye (bp). ba uses the same offsets (`hooks.cpp` kPlayerForward 0xF0, kPlayerEye 0x100).
+- Camera manager `*0x2D12B8` runs 14 controllers in FUN_002033A0; FUN_002007D0 copies the player matrix into its
+  quaternion +0x760 / position +0x770, built back into +0x7E0..+0x810 (bp). FOV in degrees at camera +0x750
+  (horizontal, near 1.2, aspect +0x74) (bp). ba hooks the FOV at 0x1BB2D6 (`FieldOfView`) and zoom at 0x1BB2BA.
+  → Phase 3 head pose: likely inject after FUN_001DFD90 / at FUN_002007D0 so body yaw drives movement and the head
+  pose only the rendered view. Co-op's spectate also writes these rows (player +0xD0) — Phase 11 overlap.
+- Gun is placed from the view matrix (0x14DE0 at 0x1E6150), pulled out of walls by line test FUN_001DAFF0 (bp).
+
+**Viewmodel (gun + arms)**
+- Draw list 5 (`kGunDrawList`, `src/game/layout.h:46`) = first-person models, drawn through FUN_00176F60 (ba hooks it
+  in `hooks.cpp:209`: `d3d::ViewScale(g_gun)` around the list). bp: list at renderer `*0x2D67F4 + 0xCAE4`, drawn by
+  FUN_001EE820 at 0x1EE97C (or 0x1EEB2B after the effects pass when `[[0x2D1990]+0x830D4] == 1`).
+- Muzzle flash / locators: ba moves them for the viewmodel FOV — `FlashSprite` 0x16B312, `GunEffect` 0x176C6E,
+  `GunEffectStart` 0x162A20, `TracerStart` 0x1E285F, muzzle matrix FUN_001D2860 (tracer callers 0x1DBAAB,
+  0x1DC4D4). Same points move effects to the hand in Phase 4.
+- Sway FUN_001E5FA0 eases the weapon (+0x4CC/+0x4D0) toward look values (bp); ba scales it at 0x1E6392/0x1E644A.
+
+**Aim and fire**
+- Player input FUN_001EC450 (ecx = player controller; binding table `*0x2F3BD4`): look +0xD8/+0xDC, then
+  FUN_001BD3F0(vertical, horizontal) integrates turn rates; aim flag +0x45, toggle mode +0x103 (bp).
+- Auto-aim pulls the view (FUN_001D1E40, 30 m query FUN_001CDA30 along camera matrix `[ebx+0x8C]+0xD0`) — not bullet
+  correction (bp). ba's `AimAssist` hooks 0x1ECE64/0x1DCDAB. Turn it off in VR.
+- Fire: weapon state machine FUN_001EEFD0 (state +0xD8, wait +0xDC; ba wraps it at `hooks.cpp:359`); ammo decrement
+  at 0x1EFBBB (clip, word +0x18) / 0x1EFBC5 (total +0x14) (bp+ba). Player fire request at player +0x32C (ba).
+- Bullets start from the game's own muzzle matrix (ba comment: "the game's own stays where bullets start").
+  **Not yet found**: the function that builds the fire ray (origin + direction) for hitscan and projectiles —
+  Phase 4 work, start from the shot struct (`bullet +0x70` → shot, shot +4 → weapon) and callers of FUN_001D2860.
+
+**Reload**
+- Weapon controller (char +0x29C) state +0xD8: 0 idle, 1 firing, 4 magazine reload (~1.5 s, entered at 0x1EF4E9 /
+  0x1BB3AC), 8 refill-to-end (refill is an animation event, handler near 0x1E89BE → FUN_001BAF70), 5/6 shotgun
+  shell-by-shell (0x1BB385, flag +0xC7) (bp). Jump table 0x1F0150, byte index 0x1F0188.
+- Ammo object at weapon +0xF4 (alt/underbarrel +0xF8): total +0x14, clip +0x18 (ba `hooks.cpp:322-326`).
+- Reload blur: post controller `*0x2D1990 + 0x830A0` mode 1, started by FP animation handler FUN_0017B130 for names
+  ending `101`/`501` (not `FP_RPG`) and `180` (shotgun loop start); `182` ends it (bp). ba switches it at 0x17B239
+  (`ReloadBlur`) / 0x17B31C (`ReloadBlurHold`).
+
+**Grenades**
+- Count: char +0x286 (uint16) (ba `cheats.cpp`).
+- Character animation event FUN_001E8830 (64-bit hash, then pointer to the character); the throw event takes a
+  grenade at 0x1E8934 (ba). **Spawn (position/velocity/fuse) not yet found** — Phase 6: follow from 0x1E8934.
+- Grenades are host-synced world objects in co-op (Phase 11).
+
+**Screen-space passes** (bp, mission 2 frame of reference: ~520 scene draws)
+1. scene (stereo), 2. depth downsample (640x480 Z24S8 read as A8R8G8B8) into 160x120/80x60, 3. blur ping-pong
+160x120↔80x60, 4. **DOF composite** (SRCALPHA into the back-buffer alias), 5. **first-person weapon**, 6. **bloom**
+(ONE/SRCALPHA add), 7. **colour grade** (dot(t0, green) × tint, alpha 0.1), 8. **HUD**.
+- **Light shafts / lamp cones**: drawn into 160x120 0x02DB0000 with the scene's view-projection, depth-tested
+  against a 160x120 depth copy — world-space geometry at low res: needs per-eye matrices too.
+- **Reload blur** = post mode 1 (above). **Fades and brightness** = the game's gamma ramp, FUN_001762B0 per frame
+  (bp); ba has an `Op::Gamma` on the render thread.
+- **HUD**: not Apt; the game's 2D overlay node list walked by FUN_00021260 (from FUN_000DA4B0), pre-transformed
+  640x480 `DrawVerticesUP` through the sprite flush 0x2AC1E < 0xD4CA1 (bp). Sniper scope (WpnScope.bin) and hit ring
+  (Ring.bin) are Apt. ba: `HudItem` hook at 0x2139D, `DrawOverlay` 0x20F8BF. → separate quad layer.
+- **FMV**: film player at game object `*0x2D45F0` + 0x2026C, state +0x1A8 (bp; ba `SkipVideo` 0x20F0DE). XMV
+  decoder. → virtual screen.
+- **Menus**: Apt (`FEMain.bin`, `PseMenu.bin` for pause); ba `MenuTick` 0x124351 etc. → virtual screen.
+
+**Frame step**
+- Fixed world step chosen at start-up (NTSC 1/30 at 0x2F3A38) (bp). ba instead keeps 1/30 and scales timers to the
+  real frame time (`FrameTime`, timer hook FUN_000BE3F0, physics `PhysicsTime` 0x1F11CD and many per-step fixes).
+  So any display rate already plays at speed in ba; 72 Hz needs no new step constant, but each "per frame" leftover
+  must keep using `FrameShare()`.
+
+**Render pipeline risk for stereo (ba)**
+- `render_thread.cpp` records calls on the game thread and replays them on a Vulkan thread, reading vertex, texture
+  and surface memory **at replay time**. Replaying a frame twice (per eye) means the second replay may see memory the
+  game already changed for the next frame. Phase 2 must either replay both eyes in one pass per draw (multiview /
+  two passes per command before the fence releases) or snapshot dynamic buffers. Multiview (VK_KHR_multiview,
+  Vulkan 1.1 core) with per-eye matrices in a push constant is the cleanest fit.

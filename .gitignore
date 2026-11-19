@@ -1,0 +1,63 @@
+# build
+/out/
+/build/
+*.zip
+*.pdb
+*.exe
+*.obj
+*.o
+
+# Android build: Gradle's caches, the native build, SDL cloned by Gradle, the SDK path
+/.gradle/
+/app/build/
+/app/.cxx/
+/third_party/
+/local.properties
+
+# recompiled code, derived from the game
+/generated/
+
+# user's own game files
+/assets/
+/iso/
+/extracted/
+
+# runtime files
+black.toml
+/logs/
+/hdd/
+/CrashDumps/
+
+# editors
+.vs/
+.vscode/
+.idea/
+
+# Local temporary folder
+.local
+
+# blackquest: user's files and anything derived from the game (rule: no game data in git, ever)
+/BLACK_HD_Reimagined_Texture_Pack/
+/BlackQuest_prompt.md
+/ref/
+/textures/
+/dumps/
+/sdk/
+*.iso
+*.xbe
+*.xbe.enc
+*.dds
+*.ktx
+*.ktx2
+*.apk
+*.aab
+*.idsig
+*.keystore
+*.jks
+*.spv
+*.pipelinecache
+local.properties
+/toolchain/
+
+# the pal patch carries game bytes: fetched at build time by CMakeLists.txt, never committed
+europe.patch
