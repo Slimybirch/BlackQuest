@@ -15,6 +15,10 @@
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 
+namespace d3d {
+void Overlay(bool on);
+}
+
 using namespace kernel;
 using namespace layout;
 
@@ -34,6 +38,7 @@ constexpr float kCentre = 0.5f;
 float g_anchor = kOff;
 float g_width = 640;
 uint32_t g_hud = 0;  // the player's HUD while its list draws
+bool g_overlay = false;  // a 2d layer over the whole screen is open: its draws go on the vr hud plane
 float g_inset = 0;   // 640x480 pixels a sprite's uv is pulled in by at each edge
 
 // The game takes the screen's shape once at boot: its flag, the view and the Flash stage follow the output.
@@ -198,6 +203,8 @@ X86_FUNC(sub_000D99A0) {
     g_width = float(width);
     bool native = from != kFromFlash && from != kFromHost;
     g_inset = native ? std::max(0.0f, 0.5f - 0.5f / app::RenderScale(480)) : 0;
+    g_overlay = display && width == R32(display) && from != kFromHost;
+    if (g_overlay) d3d::Overlay(true);
 }
 
 // End
@@ -206,6 +213,9 @@ X86_FUNC(sub_000D3740) {
     g_anchor = kOff;
     g_inset = 0;
     __imp__sub_000D3740(ctx, base);
+    // after: the layer's sprites may flush at its end
+    if (g_overlay) d3d::Overlay(false);
+    g_overlay = false;
 }
 
 // HUD and its components

@@ -29,6 +29,7 @@
 #include "common/options.h"
 #include "core/log.h"
 #include "d3d/gpu_frame.h"
+#include "d3d/stereo.h"
 #include "gpu/backend.h"
 #include "gpu/shaders.h"
 #include "gpu/texture.h"
@@ -38,6 +39,10 @@
 #include "kernel/memory.h"
 #include "vk_shader.h"
 #include "xr.h"
+
+namespace game {
+float VrViewLift();  // src/game/vr_body.cpp
+}
 
 namespace gpu {
 
@@ -883,6 +888,156 @@ constexpr size_t kTsProjection = 3;
 constexpr size_t kTsTexture0 = 16;
 constexpr size_t kTsWorld = 256;
 
+// blackquest stereo -----------------------------------------------------------------------------------------------
+
+// column-vector 4x4s here, m[row * 4 + col]
+void Mul4(const float* a, const float* b, float* o) {
+    float r[16];
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            r[i * 4 + j] = a[i * 4] * b[j] + a[i * 4 + 1] * b[4 + j] + a[i * 4 + 2] * b[8 + j] + a[i * 4 + 3] * b[12 + j];
+    std::memcpy(o, r, sizeof(r));
+}
+
+bool Invert4(const float* m, float* o) {
+    float inv[16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+    float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    if (std::fabs(det) < 1e-12f) return false;
+    for (int i = 0; i < 16; i++) o[i] = inv[i] / det;
+    return true;
+}
+
+constexpr float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+// game units per metre: assumed 1 until phase 2's scale check (the eye height the player matrix adds, 0.2 below
+// the head, reads as metres)
+constexpr float kUnitsPerMetre = 1.0f;
+// the view's raise over the headset's own height (user: 15 cm was too much, 5 cm); the view follows the headset up and
+// down, and game::VrViewLift gives back the game's camera drop while a real crouch crouches it (vr_body.cpp)
+constexpr float kEyeRaise = 0.05f;
+// the head-locked hud plane: metres ahead and half its width (30 degrees each side), its height by the screen's shape
+constexpr float kHudDistance = 1.5f;
+constexpr float kHudHalfWidth = 0.87f;
+
+// row-major 3x3 rotation of a unit quaternion (x, y, z, w)
+void QuatMatrix(const float* q, float* R) {
+    float xx = q[0] * q[0], yy = q[1] * q[1], zz = q[2] * q[2];
+    float xy = q[0] * q[1], xz = q[0] * q[2], yz = q[1] * q[2], wx = q[3] * q[0], wy = q[3] * q[1], wz = q[3] * q[2];
+    float r[9] = {1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy),
+                  2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx),
+                  2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)};
+    std::memcpy(R, r, sizeof(r));
+}
+
+// the 2d layer (hud, flash over play) on a plane fixed ahead of the head: its clip position, the target's as the
+// game drew it, becomes a point on the plane, seen by the eye from its offset off the head's middle. without it
+// each eye showed the hud at the same spot of its own (asymmetric) frustum, which doesn't fuse
+bool HudMatrix(int eye, float aspect, float* out) {
+    xr::EyeView ev, other;
+    if (!xr::RenderEye(eye, ev) || !xr::RenderEye(1 - eye, other)) return false;
+    float d[3] = {(ev.pos[0] - other.pos[0]) * 0.5f, (ev.pos[1] - other.pos[1]) * 0.5f,
+                  (ev.pos[2] - other.pos[2]) * 0.5f};
+    float R[9];
+    QuatMatrix(ev.quat, R);
+    float e[3];
+    for (int i = 0; i < 3; i++) e[i] = R[0 * 3 + i] * d[0] + R[1 * 3 + i] * d[1] + R[2 * 3 + i] * d[2];
+    float l = ev.tan[0], r = ev.tan[1], u = ev.tan[2], dn = ev.tan[3];
+    float wh = kHudHalfWidth, hh = kHudHalfWidth / aspect, z = kHudDistance + e[2];
+    // depth just off zero: in front of everything, inside vulkan's clip volume
+    float m[16] = {2 * wh / (r - l), 0, 0, (-2 * e[0] - (r + l) * z) / (r - l),
+                   0, 2 * hh / (u - dn), 0, (-2 * e[1] - (u + dn) * z) / (u - dn),
+                   0, 0, 0, 1e-4f * z,
+                   0, 0, 0, z};
+    std::memcpy(out, m, sizeof(m));
+    return true;
+}
+
+// the clip position as the game drew it for its one camera, moved to what an eye sees: back through the game's
+// viewport and projection to its view space, to the eye (head pose from the local space's origin, which the game
+// camera stands for), through the eye's own frustum with the game's depth rows, and the viewport again.
+// E = VP · P_eye · V_eye · P_game⁻¹ · VP⁻¹, column vectors; the shader's clip is D3D's (y up, z 0..1)
+// gun: the viewmodel hangs off the head, not the room: only the eye's offset from the head's middle moves it, so
+// it stays at the face wherever the player stands (the room's origin is where the session started)
+bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out) {
+    xr::EyeView ev;
+    if (!xr::RenderEye(eye, ev)) return false;
+    const float* P = s.transforms[kTsProjection].data();  // d3d rows: clip = v · P
+    float pc[16], vpc[16];
+    Transpose(P, pc);
+    // perspective only: w from the view depth, no constant w
+    if (pc[14] == 0 || pc[15] != 0) return false;
+    const auto& v = s.viewport;
+    float sx = float(v.w) / size.w, sy = float(v.h) / size.h;
+    float ox = (2.0f * v.x + v.w) / size.w - 1, oy = 1 - (2.0f * v.y + v.h) / size.h;
+    float vpm[16] = {sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, v.max_z - v.min_z, 0, ox, oy, v.min_z, 1};
+    Transpose(vpm, vpc);
+    float pinv[16], vpinv[16];
+    if (!Invert4(pc, pinv) || !Invert4(vpc, vpinv)) return false;
+    // the eye's frustum in the game's view space: x right, y up, depth d = f·z with f the sign w takes from z
+    float f = pc[14] > 0 ? 1.0f : -1.0f;
+    float l = ev.tan[0], r = ev.tan[1], u = ev.tan[2], dn = ev.tan[3];
+    float fx = pc[0] < 0 ? -1.0f : 1.0f, fy = pc[5] < 0 ? -1.0f : 1.0f;
+    float pe[16] = {fx * 2 / (r - l), 0, -fx * f * (r + l) / (r - l), 0,
+                    0, fy * 2 / (u - dn), -fy * f * (u + dn) / (u - dn), 0,
+                    pc[8], pc[9], pc[10], pc[11],
+                    pc[12], pc[13], pc[14], pc[15]};
+    // game view → openxr (S flips the depth axis when the game looks along +z), into the eye, and back
+    float R[9];
+    QuatMatrix(ev.quat, R);
+    float sz = -f;  // S = diag(1, 1, sz)
+    float px = ev.pos[0] * kUnitsPerMetre, py = (ev.pos[1] + kEyeRaise + ::game::VrViewLift()) * kUnitsPerMetre, pz = ev.pos[2] * kUnitsPerMetre;
+    xr::EyeView other;
+    if (gun && xr::RenderEye(1 - eye, other)) {
+        px = (ev.pos[0] - other.pos[0]) * 0.5f * kUnitsPerMetre;
+        py = (ev.pos[1] - other.pos[1]) * 0.5f * kUnitsPerMetre;
+        pz = (ev.pos[2] - other.pos[2]) * 0.5f * kUnitsPerMetre;
+    }
+    // V = S · Rᵀ · T(−p) · S
+    float S[3] = {1, 1, sz};
+    float view[16] = {};
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) view[i * 4 + j] = S[i] * R[j * 3 + i] * S[j];
+    for (int i = 0; i < 3; i++) view[i * 4 + 3] = -S[i] * (R[0 * 3 + i] * px + R[1 * 3 + i] * py + R[2 * 3 + i] * pz);
+    view[15] = 1;
+    float m[16];
+    Mul4(vpc, pe, m);
+    Mul4(m, view, m);
+    Mul4(m, pinv, m);
+    Mul4(m, vpinv, m);
+    std::memcpy(out, m, sizeof(m));
+    return true;
+}
+
+// the shaders' clip position through the matrix pushed with each draw: identity unless a stereo world draw
+std::string EyeHlsl(std::string src) {
+    bool any = false;
+    for (const char* var : {"q", "cp"}) {
+        std::string at = std::string("    o.pos = ") + var + ";\n";
+        size_t p = src.find(at);
+        if (p == std::string::npos) continue;
+        src.replace(p, at.size(), std::string("    o.pos = mul(eye_m, ") + var + ");\n");
+        any = true;
+    }
+    if (!any) return src;
+    // a cbuffer, not a struct variable: glslang makes the latter a member of $Global, a uniform nothing fills
+    return "[[vk::push_constant]] cbuffer EyePc { row_major float4x4 eye_m; };\n" + src;
+}
+
 void FillTransformConstants(const State& s, GuestExtent size, DrawConstants& c) {
     float wv[16], wvp[16];
     MatMul(s.transforms[kTsWorld].data(), s.transforms[kTsView].data(), wv);
@@ -997,6 +1152,9 @@ public:
     void Draw(const State& s, uint32_t prim, uint32_t start, uint32_t count, const uint8_t* indices) override;
     void Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects, uint32_t dst_points) override;
     void Present(const Surface& front) override;
+    // blackquest: the eye the next commands draw for (render thread)
+    void BeginEye(int eye);
+    bool Stereo() const { return stereo_; }
     void Sync(uint32_t data, uint32_t size) override;
     void SyncLate(uint32_t data) override;
     bool DeliverLate(uint32_t data) override;
@@ -1138,6 +1296,19 @@ private:
     void SavePipelineCache();
 
     bool xr_ = false;  // blackquest: drawing for the headset through openxr, not to an android window
+    // stereo: each eye its own render targets, the other eye's waiting in other_targets_ until BeginEye swaps them
+    bool stereo_ = false;
+    int eye_ = 0;
+    std::unordered_map<uint64_t, Target> other_targets_;
+    // a few seconds' draws, logged: all, world ones, world ones left unmoved; the last world draw's matrices
+    uint32_t stat_draws_ = 0, stat_world_ = 0, stat_unmoved_ = 0;
+    uint32_t stat_effect_ = 0, stat_gun_ = 0, stat_hud_ = 0, stat_flat_z_ = 0;
+    // per eye's replay: the world lists' projection, which effects drawn outside the lists share
+    float scene_proj_[2][16] = {};
+    bool scene_proj_ok_[2] = {};
+    bool last_theater_ = true;  // the last present went to the theater screen: no hud plane
+    uint32_t frame_world_ = 0;  // world draws since the last present: none puts the frame on the theater screen
+    float stat_proj_[16] = {};
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     uint32_t surface_epoch_ = 0;
@@ -1250,6 +1421,7 @@ bool VulkanBackend::Init(uint32_t width, uint32_t height) {
     xr_ = xr::Init();
     if (!CreateInstance() || !CreateSurface() || !PickDevice() || !CreateDevice()) return false;
     if (xr_ && !xr::CreateSession(instance_, pd_, dev_, qfam_)) return false;
+    stereo_ = xr_ && xr::Stereo();
     alloc_.Init(pd_, dev_);
     if (!CreateLayouts() || !CreateFrames() || !CreateSwapchain() || !CreateFixedImages()) return false;
     Begin();
@@ -1597,6 +1769,10 @@ bool VulkanBackend::CreateLayouts() {
     VkPipelineLayoutCreateInfo pi{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pi.setLayoutCount = 1;
     pi.pSetLayouts = &set_layout_;
+    // the eye matrix every draw pushes (EyeHlsl)
+    VkPushConstantRange eye{VK_SHADER_STAGE_VERTEX_BIT, 0, 64};
+    pi.pushConstantRangeCount = 1;
+    pi.pPushConstantRanges = &eye;
     VK_CHECK(vkCreatePipelineLayout(dev_, &pi, nullptr, &layout_));
     // pipelines from earlier runs: building them is what stutters on a phone
     std::vector<char> blob;
@@ -2628,6 +2804,7 @@ void VulkanBackend::EnsureVertexShader(const State& s, const Assembled& a, DrawS
             entry = "main_points";
         }
     }
+    src = EyeHlsl(std::move(src));
     sh.vs = Module(src, entry, vkshader::Stage::Vertex, sh.vh);
     shader_src_[sh.vkey] = sh.vh;
 }
@@ -2957,6 +3134,46 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     Color(SimpleState(s, kMBlendColor), bf);
     vkCmdSetBlendConstants(Cb(), bf);
     vkCmdSetStencilReference(Cb(), VK_STENCIL_FACE_FRONT_AND_BACK, SimpleState(s, kMStencilRef) & 0xFF);
+    // which camera a draw is through: the world's and the gun's move to the eye, the 2d layer's goes on the hud
+    // plane, the rest (post passes, shadow maps, other targets' 2d) stays where the game put it
+    float eye_m[16];
+    std::memcpy(eye_m, kIdentity, sizeof(eye_m));
+    const float* proj = s.transforms[kTsProjection].data();
+    int mark = int(s.transforms[4][0]);  // d3d::SceneDraws: 1 the world's draw lists, 2 the gun's
+    bool overlay = s.transforms[4][1] == 1.0f;
+    bool depth = s.rs[kRsZEnable] && CmpIndex(SimpleState(s, kMZFunc)) != 7;
+    bool persp = proj[11] != 0 && proj[15] == 0;
+    int pe = eye_ & 1;
+    // effects, casings and light shafts are drawn outside the lists, through the lists' projection
+    bool listed = mark == 1;
+    bool effect = !listed && mark != 2 && scene_proj_ok_[pe] && std::memcmp(proj, scene_proj_[pe], 64) == 0;
+    bool world = (listed || effect) && !a.pretransformed && depth && persp;
+    bool gun = mark == 2 && !a.pretransformed && depth && persp;
+    if (world && listed) {
+        std::memcpy(scene_proj_[pe], proj, 64);
+        scene_proj_ok_[pe] = true;
+    }
+    bool hud = overlay && !last_theater_ && !world && !gun;
+    // debug: a file named stereo_noeye in the app's folder keeps both eyes but leaves draws where the game put them
+    static const bool noeye = std::filesystem::exists(app::ExeDir() / "stereo_noeye");
+    if (stereo_ && !noeye && (world || gun || hud)) {
+        VkExtent2D se = xr::ScreenExtent();
+        bool ok = hud ? HudMatrix(eye_, float(se.width) / float(se.height), eye_m)
+                      : EyeMatrix(s, size, eye_, gun, eye_m);
+        if (!ok) {
+            std::memcpy(eye_m, kIdentity, sizeof(eye_m));
+            stat_unmoved_++;
+        }
+    }
+    stat_draws_++;
+    if (world) stat_world_++;
+    if (world && !listed) stat_effect_++;
+    if (gun) stat_gun_++;
+    if (hud) stat_hud_++;
+    if (a.pretransformed && depth && !overlay) stat_flat_z_++;
+    if ((world || gun) && eye_ == 0) frame_world_++;
+    if (stereo_ && world && listed && eye_ == 0) std::memcpy(stat_proj_, proj, sizeof(stat_proj_));
+    vkCmdPushConstants(Cb(), layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(eye_m), eye_m);
     if (a.buffer_count) vkCmdBindVertexBuffers(Cb(), 0, a.buffer_count, vbufs, voffs);
     if (a.index_count) {
         vkCmdBindIndexBuffer(Cb(), ib.buf, ib.off, a.index16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
@@ -3087,6 +3304,12 @@ void VulkanBackend::Sync(uint32_t data, uint32_t) {
     t.read = std::move(px);
     t.drawn = false;
     t.sig = MemSig(t.data, t.bytes);
+    // the other eye's copy matches guest memory as this read-back left it: not a cpu write to upload
+    if (auto o = other_targets_.find(it->first); o != other_targets_.end() && o->second.gw == t.gw && o->second.gh == t.gh) {
+        o->second.read = t.read;
+        o->second.drawn = false;
+        o->second.sig = t.sig;
+    }
 }
 
 void VulkanBackend::SyncLate(uint32_t data) {
@@ -3188,6 +3411,15 @@ bool VulkanBackend::AcquireImage(uint32_t& index) {
 }
 
 void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
+    // openxr's images differ in size (eyes, theater screen): this one's for the draw, the screen's again after
+    VkExtent2D keep = swap_extent_;
+    if (xr_) swap_extent_ = xr::ImageExtent(index);
+    struct Restore {
+        VkExtent2D& e;
+        VkExtent2D v;
+        ~Restore() { e = v; }
+    } restore{swap_extent_, keep};
+    bool eye_image = stereo_ && xr::ImageEye(index) != xr::kTheater;
     EndRender();
     VkCommandBuffer cb = Cb();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -3203,6 +3435,8 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     float aspect = game::Aspect();
     float w = float(swap_extent_.width), h = float(swap_extent_.height);
     float vw = std::min(w, h * aspect), vh = vw / aspect;
+    // an eye: the frame is drawn for that eye's whole field of view
+    if (eye_image) vw = w, vh = h;
     uint32_t filter = std::min(game::Opt().screen_filter, 8u);
     uint32_t crt = filter <= 2 ? filter : 0;
     bool fxaa = game::Opt().anti_aliasing == 1, ssaa = game::Opt().anti_aliasing == 2;
@@ -3275,7 +3509,8 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         SetScissor(0, 0, int32_t(w), int32_t(h));
         vkCmdDraw(cb, 3, 1, 0, 0);
     }
-    RenderUi();
+    // imgui makes one frame per call: in stereo the left eye has it (phase 7 puts menus on a panel of their own)
+    if (!stereo_ || xr::ImageEye(index) != 1) RenderUi();
     if (dynamic_)
         end_rendering_(cb);
     else
@@ -3296,7 +3531,7 @@ void VulkanBackend::RenderUi() {
     ui::NewFrame(float(swap_extent_.width), float(swap_extent_.height));
     ImGui::NewFrame();
     if (app::kGame.ui) app::kGame.ui(fps_);
-    touch::Draw();
+    if (!xr_) touch::Draw();  // no touch screen in the headset
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), Cb());
 }
@@ -3362,11 +3597,13 @@ void VulkanBackend::ApplySettings() {
     float want = app::RenderScale(guest_h_);
     if (std::fabs(want - scale_) <= 1e-4f) return;
     Submit(true, false);
-    for (auto& [key, t] : targets_) {
-        Retire(t.img);
-        Retire(t.fb);
+    for (auto* map : {&targets_, &other_targets_}) {
+        for (auto& [key, t] : *map) {
+            Retire(t.img);
+            Retire(t.fb);
+        }
+        map->clear();
     }
-    targets_.clear();
     draw_rt_ = draw_ds_ = nullptr;
     scale_ = want;
     LOGI("vulkan: render scale %.3f", scale_);
@@ -3394,13 +3631,51 @@ void VulkanBackend::Present(const Surface& front) {
     if (ramp_dirty_) UploadGammaRamp();
     if (!skin_tried_) UploadSkin();
     uint32_t index = 0;
-    if (xr_) {
+    if (stereo_) {
+        // both eyes' fronts: this eye's t, the other's from its own targets
+        Target* eyes[2] = {};
+        eyes[eye_] = t;
+        std::swap(targets_, other_targets_);
+        eyes[1 - eye_] = FindTarget(front, false);
+        std::swap(targets_, other_targets_);
+        bool begun = xr::BeginFrame();
+        // no world this frame (menus, films, loading): the left eye's frame on the theater screen instead
+        bool theater = frame_world_ == 0;
+        frame_world_ = 0;
+        last_theater_ = theater;
+        if (theater) scene_proj_ok_[0] = scene_proj_ok_[1] = false;
+        bool got[2] = {};
+        uint32_t idx[2] = {};
+        if (theater) {
+            got[0] = got[1] = begun && xr::AcquireScreen(xr::kTheater, idx[0]);
+            if (got[0]) DrawFrame(eyes[0], idx[0]);
+        } else {
+            for (int e = 0; e < 2; e++) {
+                got[e] = begun && xr::AcquireScreen(e, idx[e]);
+                if (got[e]) DrawFrame(eyes[e], idx[e]);
+            }
+        }
+        Submit(false, false);
+        if (theater && got[0]) xr::ReleaseScreen(xr::kTheater);
+        for (int e = 0; e < 2 && !theater; e++)
+            if (got[e]) xr::ReleaseScreen(e);
+        xr::EndFrame(got[0] && got[1], theater);
+        if (presents_ % 360 == 0) {
+            const float* p = stat_proj_;
+            // flat z: pretransformed depth-tested draws off the 2d layer (cpu-projected effects would show here)
+            LOGR("stereo: %u draws, %u world (%u effects), %u gun, %u hud, %u flat z, %u unmoved; front %ux%u; "
+                 "proj %.3f %.3f %.3f %.3f | %.3f %.3f",
+                 stat_draws_, stat_world_, stat_effect_, stat_gun_, stat_hud_, stat_flat_z_, stat_unmoved_,
+                 eyes[0] ? eyes[0]->w : 0, eyes[0] ? eyes[0]->h : 0, p[0], p[5], p[10], p[11], p[14], p[15]);
+            stat_draws_ = stat_world_ = stat_unmoved_ = stat_effect_ = stat_gun_ = stat_hud_ = stat_flat_z_ = 0;
+        }
+    } else if (xr_) {
         // the headset's frame: waits for its slot (72 hz), the game's frame on the screen quad, handed back after
         // the submit so the compositor reads finished pixels
-        bool shown = xr::BeginFrame() && xr::AcquireScreen(index);
+        bool shown = xr::BeginFrame() && xr::AcquireScreen(0, index);
         if (shown) DrawFrame(t, index);
         Submit(false, false);
-        if (shown) xr::ReleaseScreen();
+        if (shown) xr::ReleaseScreen(0);
         xr::EndFrame(shown);
     }
     bool shown = !xr_ && AcquireImage(index);
@@ -3445,6 +3720,14 @@ void VulkanBackend::Present(const Surface& front) {
 // the slot is not reused before the caller's wait: the title runs at most one present ahead
 void VulkanBackend::WaitGpuFrame(uint64_t n) { WaitValue(present_value_[n % (kFrames + 1)].load()); }
 
+void VulkanBackend::BeginEye(int eye) {
+    if (!stereo_ || eye == eye_) return;
+    EndRender();
+    std::swap(targets_, other_targets_);
+    draw_rt_ = draw_ds_ = nullptr;
+    eye_ = eye;
+}
+
 VulkanBackend* g_vulkan = nullptr;
 
 }  // namespace
@@ -3460,3 +3743,10 @@ void WaitGpuFrame(uint64_t n) {
 }
 
 }  // namespace gpu
+
+namespace stereo {
+int Eyes() { return gpu::g_vulkan && gpu::g_vulkan->Stereo() ? 2 : 1; }
+void BeginEye(int eye) {
+    if (gpu::g_vulkan) gpu::g_vulkan->BeginEye(eye);
+}
+}  // namespace stereo

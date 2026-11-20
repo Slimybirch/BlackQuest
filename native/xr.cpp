@@ -19,9 +19,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <atomic>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 
+#include "app/app.h"
 #include "core/input.h"
 #include "core/log.h"
 #include "kernel/kernel.h"
@@ -43,6 +46,21 @@ XrSession g_session = XR_NULL_HANDLE;
 XrSpace g_local = XR_NULL_HANDLE;
 XrSwapchain g_screen = XR_NULL_HANDLE;
 std::vector<VkImage> g_images;
+// stereo (phase 2): a swapchain per eye at the runtime's recommended size; ScreenImages is then both eyes' images,
+// the left eye's first
+XrSwapchain g_eye_chain[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
+uint32_t g_eye_images = 0;
+uint32_t g_screen_images = 0;  // the quad screen's, after both eyes' in g_images
+VkExtent2D g_eye_extent{};
+// the views the frame being drawn is drawn with (located a frame ahead: draws run before the present that waits
+// for the headset), and the ones just located for the next. the layer says which pose the pixels were drawn for,
+// the compositor reprojects the rest
+XrView g_render_views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+XrView g_next_views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+// the head's height in local space, latest located, for the game thread (vr_body.cpp)
+std::atomic<float> g_head_y{0};
+std::atomic<bool> g_head_valid{false};
+bool g_views_valid = false;
 VkFormat g_view_format = VK_FORMAT_R8G8B8A8_UNORM;
 XrSessionState g_state = XR_SESSION_STATE_UNKNOWN;
 bool g_running = false;
@@ -370,6 +388,39 @@ bool CreateVkDevice(VkPhysicalDevice pd, const VkDeviceCreateInfo& ci, VkDevice&
     return true;
 }
 
+// a swapchain per eye like the screen's, at the recommended size; false leaves the quad screen alone
+bool CreateEyes(XrSwapchainCreateInfo sc) {
+    uint32_t n = 0;
+    xrEnumerateViewConfigurationViews(g_instance, g_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &n, nullptr);
+    if (n != 2) return false;
+    XrViewConfigurationView v[2] = {{XR_TYPE_VIEW_CONFIGURATION_VIEW}, {XR_TYPE_VIEW_CONFIGURATION_VIEW}};
+    if (XR_FAILED(xrEnumerateViewConfigurationViews(g_instance, g_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+                                                    2, &n, v)))
+        return false;
+    sc.width = v[0].recommendedImageRectWidth;
+    sc.height = v[0].recommendedImageRectHeight;
+    std::vector<VkImage> all;
+    for (int e = 0; e < 2; e++) {
+        if (XR_FAILED(xrCreateSwapchain(g_session, &sc, &g_eye_chain[e]))) return false;
+        uint32_t count = 0;
+        xrEnumerateSwapchainImages(g_eye_chain[e], 0, &count, nullptr);
+        std::vector<XrSwapchainImageVulkan2KHR> images(count, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR});
+        xrEnumerateSwapchainImages(g_eye_chain[e], count, &count,
+                                   reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data()));
+        // both eyes index one list: the same count each
+        if (e && count != g_eye_images) return false;
+        g_eye_images = count;
+        for (const auto& im : images) all.push_back(im.image);
+    }
+    g_eye_extent = {sc.width, sc.height};
+    // the theater screen stays for frames without a world (menus, films, loading): its images after the eyes'
+    all.insert(all.end(), g_images.begin(), g_images.end());
+    g_images = std::move(all);
+    LOGR("xr: eyes %ux%u (max %ux%u), %u images each", sc.width, sc.height, v[0].maxImageRectWidth,
+         v[0].maxImageRectHeight, g_eye_images);
+    return true;
+}
+
 bool CreateSession(VkInstance instance, VkPhysicalDevice pd, VkDevice dev, uint32_t queue_family) {
     XrGraphicsBindingVulkan2KHR gb{XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR};
     gb.instance = instance;
@@ -418,7 +469,11 @@ bool CreateSession(VkInstance instance, VkPhysicalDevice pd, VkDevice dev, uint3
     XR_OK(xrEnumerateSwapchainImages(g_screen, n, &n, reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())));
     g_images.clear();
     for (const auto& im : images) g_images.push_back(im.image);
+    g_screen_images = n;
     LOGR("xr: screen %ux%u, %u images, %s", kScreenW, kScreenH, n, srgb ? "srgb" : "unorm");
+    // debug: a file named stereo_off in the app's folder keeps theater mode
+    if (std::filesystem::exists(app::ExeDir() / "stereo_off")) LOGR("xr: stereo off (stereo_off file)");
+    else if (!CreateEyes(sc)) LOGR("xr: no eye swapchains, theater mode only");
 
     if (!CreateActions()) LOGR("xr: no controller input");
     // a frame takes the lock for one display period at most, so this gets in between frames
@@ -435,7 +490,54 @@ bool CreateSession(VkInstance instance, VkPhysicalDevice pd, VkDevice dev, uint3
 
 const std::vector<VkImage>& ScreenImages() { return g_images; }
 VkFormat ScreenViewFormat() { return g_view_format; }
-VkExtent2D ScreenExtent() { return {kScreenW, kScreenH}; }
+bool Stereo() { return g_eye_images != 0; }
+bool HeadHeight(float& y) {
+    if (!Stereo() || !g_head_valid.load(std::memory_order_relaxed)) return false;
+    y = g_head_y.load(std::memory_order_relaxed);
+    return true;
+}
+int ImageEye(uint32_t index) {
+    if (!Stereo()) return kTheater;
+    return index < g_eye_images ? 0 : index < 2 * g_eye_images ? 1 : kTheater;
+}
+VkExtent2D ImageExtent(uint32_t index) {
+    return ImageEye(index) == kTheater ? VkExtent2D{kScreenW, kScreenH} : g_eye_extent;
+}
+VkExtent2D ScreenExtent() { return Stereo() ? g_eye_extent : VkExtent2D{kScreenW, kScreenH}; }
+
+bool RenderEye(int eye, EyeView& out) {
+    if (!g_views_valid) return false;
+    const XrView& v = g_render_views[eye & 1];
+    // debug: a file named stereo_nohead in the app's folder draws with the eyes' offset alone, no head pose, so
+    // a headset lying on a desk still looks down the game's camera (screenshots over adb)
+    static const bool nohead = std::filesystem::exists(app::ExeDir() / "stereo_nohead");
+    if (nohead) {
+        const XrVector3f& a = g_render_views[0].pose.position;
+        const XrVector3f& b = g_render_views[1].pose.position;
+        float half = 0.5f * std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+        out.pos[0] = eye ? half : -half;
+        out.pos[1] = out.pos[2] = 0;
+        out.quat[0] = out.quat[1] = out.quat[2] = 0;
+        out.quat[3] = 1;
+        out.tan[0] = std::tan(v.fov.angleLeft);
+        out.tan[1] = std::tan(v.fov.angleRight);
+        out.tan[2] = std::tan(v.fov.angleUp);
+        out.tan[3] = std::tan(v.fov.angleDown);
+        return true;
+    }
+    out.pos[0] = v.pose.position.x;
+    out.pos[1] = v.pose.position.y;
+    out.pos[2] = v.pose.position.z;
+    out.quat[0] = v.pose.orientation.x;
+    out.quat[1] = v.pose.orientation.y;
+    out.quat[2] = v.pose.orientation.z;
+    out.quat[3] = v.pose.orientation.w;
+    out.tan[0] = std::tan(v.fov.angleLeft);
+    out.tan[1] = std::tan(v.fov.angleRight);
+    out.tan[2] = std::tan(v.fov.angleUp);
+    out.tan[3] = std::tan(v.fov.angleDown);
+    return true;
+}
 
 bool BeginFrame() {
     g_frame_begun = false;
@@ -459,24 +561,51 @@ bool BeginFrame() {
     if (XR_FAILED(xrBeginFrame(g_session, nullptr))) return false;
     g_frame_begun = true;
     g_display_time = fs.predictedDisplayTime;
+    if (Stereo()) {
+        XrViewLocateInfo li{XR_TYPE_VIEW_LOCATE_INFO};
+        li.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        li.displayTime = fs.predictedDisplayTime;
+        li.space = g_local;
+        XrViewState vs{XR_TYPE_VIEW_STATE};
+        uint32_t n = 0;
+        XrView v[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+        constexpr XrViewStateFlags kTracked = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
+        if (XR_SUCCEEDED(xrLocateViews(g_session, &li, &vs, 2, &n, v)) && n == 2 &&
+            (vs.viewStateFlags & kTracked) == kTracked) {
+            g_next_views[0] = v[0];
+            g_next_views[1] = v[1];
+            g_head_y.store(0.5f * (v[0].pose.position.y + v[1].pose.position.y), std::memory_order_relaxed);
+            g_head_valid.store(true, std::memory_order_relaxed);
+            // the very first frame has nothing drawn for any pose yet
+            if (!g_views_valid) {
+                g_render_views[0] = v[0];
+                g_render_views[1] = v[1];
+                g_views_valid = true;
+            }
+        }
+    }
     ReadControls();
     return fs.shouldRender;
 }
 
-bool AcquireScreen(uint32_t& index) {
-    if (!g_frame_begun || XR_FAILED(xrAcquireSwapchainImage(g_screen, nullptr, &index))) return false;
+XrSwapchain Chain(int eye) { return Stereo() && eye != kTheater ? g_eye_chain[eye & 1] : g_screen; }
+
+bool AcquireScreen(int eye, uint32_t& index) {
+    XrSwapchain chain = Chain(eye);
+    if (!g_frame_begun || XR_FAILED(xrAcquireSwapchainImage(chain, nullptr, &index))) return false;
     XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
     wi.timeout = XR_INFINITE_DURATION;
-    if (XR_FAILED(xrWaitSwapchainImage(g_screen, &wi))) {
-        xrReleaseSwapchainImage(g_screen, nullptr);
+    if (XR_FAILED(xrWaitSwapchainImage(chain, &wi))) {
+        xrReleaseSwapchainImage(chain, nullptr);
         return false;
     }
+    if (Stereo()) index += eye == kTheater ? 2 * g_eye_images : uint32_t(eye & 1) * g_eye_images;
     return true;
 }
 
-void ReleaseScreen() { xrReleaseSwapchainImage(g_screen, nullptr); }
+void ReleaseScreen(int eye) { xrReleaseSwapchainImage(Chain(eye), nullptr); }
 
-void EndFrame(bool drawn) {
+void EndFrame(bool drawn, bool theater) {
     struct Unlock {
         ~Unlock() {
             if (g_frame_locked) g_session_lock.unlock();
@@ -485,6 +614,32 @@ void EndFrame(bool drawn) {
     } unlock;
     if (!g_frame_begun) return;
     g_frame_begun = false;
+    if (Stereo() && !theater) {
+        // the eyes as drawn: the views they were drawn with, then the next frame's draws take the ones just located
+        XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW},
+                                                  {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
+        for (int e = 0; e < 2; e++) {
+            pv[e].pose = g_render_views[e].pose;
+            pv[e].fov = g_render_views[e].fov;
+            pv[e].subImage.swapchain = g_eye_chain[e];
+            pv[e].subImage.imageRect = {{0, 0}, {int32_t(g_eye_extent.width), int32_t(g_eye_extent.height)}};
+        }
+        XrCompositionLayerProjection proj{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+        proj.space = g_local;
+        proj.viewCount = 2;
+        proj.views = pv;
+        const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&proj)};
+        XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
+        ei.displayTime = g_display_time;
+        ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        ei.layerCount = drawn && g_views_valid ? 1 : 0;
+        ei.layers = layers;
+        XrResult r = xrEndFrame(g_session, &ei);
+        if (XR_FAILED(r)) LOG_FIRST(4, "xr: xrEndFrame failed (%s)", ResultName(r));
+        g_render_views[0] = g_next_views[0];
+        g_render_views[1] = g_next_views[1];
+        return;
+    }
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
     quad.space = g_local;
     quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
@@ -501,6 +656,8 @@ void EndFrame(bool drawn) {
     ei.layers = layers;
     XrResult r = xrEndFrame(g_session, &ei);
     if (XR_FAILED(r)) LOG_FIRST(4, "xr: xrEndFrame failed (%s)", ResultName(r));
+    g_render_views[0] = g_next_views[0];
+    g_render_views[1] = g_next_views[1];
 }
 
 // Touch → the Xbox pad. sticks and triggers as they are; A B X Y on the same letters; grips as the black (right)

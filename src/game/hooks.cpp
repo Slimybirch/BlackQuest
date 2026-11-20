@@ -8,6 +8,7 @@
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
 #include "core/input.h"
+#include "d3d/stereo.h"
 #include "game/layout.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
@@ -18,6 +19,7 @@ using namespace layout;
 
 namespace d3d {
 void ViewScale(float xy);
+void SceneDraws(int kind);
 }
 
 namespace game {
@@ -193,6 +195,8 @@ static float g_gun = 1.0f;  // the gun's picture over the view's
 
 // The view of play, 70 over the zoom: the setting from the hip, the game's own once the aim is in.
 // ecx the weapon, xmm0 its zoom. Scripted cameras write theirs after this
+constexpr float kVrCullFov = 160;  // horizontal degrees: about 145 tall on the game's 16:9 view
+static float g_view_tan = 0.7f;    // tan of half the view the game would have had, before the vr cull view
 void FieldOfView(X86Context& ctx, uint8_t*) {
     uint32_t data = R32(ctx.ecx + kWeaponData);
     float aim = data ? G<float>(data + kDataAimZoom) : 1;
@@ -201,6 +205,14 @@ void FieldOfView(X86Context& ctx, uint8_t*) {
     float view = 1 + (Widen(game::Opt().fov) - 1) * hip;
     g_gun = view / (1 + (Widen(game::Opt().viewmodel_fov) - 1) * hip);
     float& fov = ctx.xmm[1].f[0];
+    // vr: the headset's view is drawn (vulkan.cpp undoes the game's projection), so the game's view is only what it
+    // culls by: wide enough for the head to look about the aim. the gun is drawn where it is, not rescaled
+    if (stereo::Eyes() == 2) {
+        g_gun = 1;
+        g_view_tan = std::tan(fov * kHalf) * view;
+        fov = kVrCullFov;
+        return;
+    }
     if (view != 1) fov = std::atan(std::tan(fov * kHalf) * view) / kHalf;
 }
 
@@ -208,9 +220,12 @@ void FieldOfView(X86Context& ctx, uint8_t*) {
 X86_EXTERN_FUNC(__imp__sub_00176F60);
 X86_FUNC(sub_00176F60) {
     if (ctx.esi == R32(kDisplay) + kDisplayDrawLists + kAlphaDrawList * kDrawListSize) game::EspCamera();
-    bool gun = g_gun != 1 && ctx.esi == R32(kDisplay) + kDisplayDrawLists + kGunDrawList * kDrawListSize;
+    bool gun_list = ctx.esi == R32(kDisplay) + kDisplayDrawLists + kGunDrawList * kDrawListSize;
+    bool gun = g_gun != 1 && gun_list;
     if (gun) d3d::ViewScale(g_gun);
+    d3d::SceneDraws(gun_list ? 2 : 1);
     __imp__sub_00176F60(ctx, base);
+    d3d::SceneDraws(0);
     if (gun) d3d::ViewScale(1);
 }
 
@@ -242,8 +257,32 @@ static uint32_t Follow(uint32_t matrix, uint32_t owner, bool axes) {
 
 constexpr uint32_t kEffectOwner = 0x44;
 
+// vr: the gun is drawn where it really sits, right of the aim line the flash sprite is put on (it's near the screen
+// centre, made for the flat picture): moved right onto the barrel (user: it showed 4-5 inches left)
+constexpr float kVrFlashRight = 0.115f;
+constexpr uint32_t kPlayerLeft = 0xD0;
+
 // the muzzle flash sprite, drawn with the matrix
-void FlashSprite(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, Player(), true); }
+void FlashSprite(X86Context& ctx, uint8_t*) {
+    if (stereo::Eyes() != 2 || !R32(kWorld)) {
+        ctx.eax = Follow(ctx.eax, Player(), true);
+        return;
+    }
+    static uint32_t copy = mem::AllocSystem(64, 16);
+    std::memcpy(HostPtr(copy), HostPtr(ctx.eax), 64);
+    float* at = &G<float>(copy + kMatrixPosition);
+    const float* left = &G<float>(Player() + kPlayerLeft);
+    for (int i = 0; i < 3; i++) at[i] -= left[i] * kVrFlashRight;
+    ctx.eax = copy;
+}
+
+// The view setup's tan of half its view (camera manager +0x16A0), which scales the distances that pick detail and
+// drop small things (cars far off went: user). In vr the game culls by a 160 degree view; its distances keep the
+// view it would have had. Only a vr cull view is that wide: a film's or blend's own value stays
+constexpr float kVrWideTan = 3.73f;  // tan 75 degrees
+void ViewTan(X86Context& ctx, uint8_t*) {
+    if (stereo::Eyes() == 2 && ctx.xmm[0].f[0] > kVrWideTan) ctx.xmm[0].f[0] = g_view_tan;
+}
 // effects that follow a locator of their owner (edi)
 void GunEffect(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, ctx.edi, false); }
 // effects that start at one

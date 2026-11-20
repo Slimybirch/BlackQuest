@@ -2,6 +2,9 @@
 // takes at call time (state changes, resource headers, indices, rects) and goes on; vertex, texture and surface memory
 // are read when the draw runs, as the console's GPU reads them after the call returns. The XDK's fences, busy checks
 // and locks wait for that.
+// blackquest stereo: a batch is drawn for the left eye, kept, and drawn again for the right before it counts as
+// done, so both eyes read the same guest memory; the right eye catches up at a present, when the title waits, or
+// after kMaxPending batches, which keeps the eye switches (render pass store and reload) to a few a frame.
 #include <arm_neon.h>
 #include <pthread.h>
 
@@ -17,6 +20,7 @@
 #include <vector>
 
 #include "core/diag.h"
+#include "d3d/stereo.h"
 #include "core/log.h"
 #include "gpu/backend.h"
 #include "kernel/kernel.h"
@@ -28,6 +32,8 @@ namespace {
 
 // commands handed over at once, so the render thread keeps close behind and a wait is short
 constexpr uint32_t kBatchCommands = 64;
+// stereo: batches the left eye may run ahead of the right
+constexpr size_t kMaxPending = 64;
 
 // resource headers the render thread reads: common, data, lock, format, size
 constexpr uint32_t kHeaderBytes = 20;
@@ -85,7 +91,7 @@ std::vector<Range> StateRanges() {
         {At(s, &s.index_buffer), At(s, &s.vs) - At(s, &s.index_buffer)},
         {At(s, &s.vsc), At(s, &s.rt) - At(s, &s.vsc)},
         {At(s, &s.scissor_count), At(s, &s.transforms) - At(s, &s.scissor_count)},
-        {At(s, &s.transforms[2]), 2 * sizeof(s.transforms[0])},
+        {At(s, &s.transforms[2]), 3 * sizeof(s.transforms[0])},  // view, projection, blackquest's scene mark
         {At(s, &s.transforms[16]), 4 * sizeof(s.transforms[0])},
         {At(s, &s.transforms[256]), sizeof(s.transforms[0])},
         {At(s, &s.material), sizeof(State) - At(s, &s.material)},
@@ -245,11 +251,11 @@ public:
     }
 
     uint32_t Fence() override { return uint32_t(cur_->id); }
-    bool FencePending(uint32_t fence) override { return fence > done_.load(); }
+    bool FencePending(uint32_t fence) override { return Poke(fence > done_.load()); }
     void WaitFence(uint32_t fence) override { Wait(fence, WaitFor::Fence, "fence"); }
     bool Busy(uint32_t resource) override {
         auto it = last_use_.find(resource);
-        return it != last_use_.end() && it->second > done_.load();
+        return Poke(it != last_use_.end() && it->second > done_.load());
     }
     void WaitResource(uint32_t resource) override {
         auto it = last_use_.find(resource);
@@ -409,7 +415,11 @@ private:
         auto t = Clock::now();
         {
             std::unique_lock lock(m_);
+            // stereo: a waiter has the right eye catch up now
+            waiting_++;
+            cv_.notify_one();
             done_cv_.wait(lock, [&] { return done_.load() >= id; });
+            waiting_--;
         }
         uint64_t ns = Ns(t);
         g_perf_wait_ns += ns;
@@ -420,37 +430,83 @@ private:
         }
     }
 
+    // a title polling a fence or busy resource instead of waiting: the right eye catches up all the same
+    bool Poke(bool busy) {
+        if (busy && stereo::Eyes() == 2) {
+            {
+                std::lock_guard lock(m_);
+                poked_ = true;
+            }
+            cv_.notify_one();
+        }
+        return busy;
+    }
+
+    void Finish(Batch* b) {
+        uint64_t id = b->id;
+        b->cmds.clear();
+        b->bytes.clear();
+        b->vs.clear();
+        b->ps.clear();
+        {
+            std::lock_guard lock(m_);
+            free_.push_back(b);
+            done_.store(id);
+        }
+        done_cv_.notify_all();
+    }
+
     void Run() {
         pthread_setname_np(pthread_self(), "render");
         for (;;) {
-            Batch* b;
+            Batch* b = nullptr;
+            bool waited;
             {
                 std::unique_lock lock(m_);
-                cv_.wait(lock, [&] { return stop_ || !queue_.empty(); });
-                if (queue_.empty()) break;
-                b = queue_.front();
-                queue_.pop_front();
+                cv_.wait(lock, [&] { return stop_ || !queue_.empty() || ((waiting_ || poked_) && !pending_.empty()); });
+                if (queue_.empty() && pending_.empty()) break;
+                if (!queue_.empty()) {
+                    b = queue_.front();
+                    queue_.pop_front();
+                }
+                waited = waiting_ != 0 || poked_;
+                poked_ = false;
             }
-            for (const Cmd& c : b->cmds) Execute(*b, c);
-            uint64_t id = b->id;
-            b->cmds.clear();
-            b->bytes.clear();
-            b->vs.clear();
-            b->ps.clear();
-            {
-                std::lock_guard lock(m_);
-                free_.push_back(b);
-                done_.store(id);
+            if (b && stereo::Eyes() == 1 && pending_.empty()) {
+                for (const Cmd& c : b->cmds) Execute(*b, c, kMono);
+                Finish(b);
+                continue;
             }
-            done_cv_.notify_all();
+            bool present = false;
+            if (b) {
+                stereo::BeginEye(0);
+                for (const Cmd& c : b->cmds) {
+                    Execute(*b, c, 0);
+                    present |= c.op == Op::Present;
+                }
+                pending_.push_back(b);
+            }
+            if (!present && !waited && pending_.size() < kMaxPending) continue;
+            stereo::BeginEye(1);
+            for (Batch* p : pending_) {
+                for (const Cmd& c : p->cmds) Execute(*p, c, 1);
+                Finish(p);
+            }
+            pending_.clear();
         }
         std::lock_guard lock(m_);
         exited_ = true;
         done_cv_.notify_all();
     }
 
-    void Execute(const Batch& b, const Cmd& c) {
+    // eye: kMono, or 0 / 1 in stereo. what leaves the GPU (read-backs into guest memory, reports, the gamma ramp,
+    // late copies) runs for the left eye alone; the present and a flush wait for the right, the last one drawn
+    static constexpr int kMono = -1;
+    void Execute(const Batch& b, const Cmd& c, int eye) {
         const uint8_t* data = b.bytes.data() + c.data;
+        bool once = eye <= 0;   // the left eye's, or mono
+        bool last = eye != 0;   // the right eye's, or mono
+        State& state_ = states_[eye == 1 ? 1 : 0];
         switch (c.op) {
             case Op::State: {
                 uint8_t* s = reinterpret_cast<uint8_t*>(&state_);
@@ -467,13 +523,27 @@ private:
             case Op::Draw: inner_->Draw(state_, c.a, c.b, c.c, c.d ? data : nullptr); break;
             case Op::Clear: inner_->Clear(state_, c.a, c.size ? data : nullptr, c.b, c.c, c.f, c.d); break;
             case Op::Copy: inner_->Copy(c.s1, c.s2, c.a, c.b, c.c); break;
-            case Op::Present: inner_->Present(c.s1); break;
-            case Op::Sync: inner_->Sync(c.a, 0); break;
-            case Op::RecordLate: inner_->RecordLate(c.a); break;
-            case Op::Flush: inner_->Flush(); break;
-            case Op::Gamma: inner_->SetGamma(data); break;
-            case Op::ClearReport: inner_->ClearReport(); break;
-            case Op::GetReport: inner_->GetReport(c.a); break;
+            case Op::Present:
+                if (last) inner_->Present(c.s1);
+                break;
+            case Op::Sync:
+                if (once) inner_->Sync(c.a, 0);
+                break;
+            case Op::RecordLate:
+                if (once) inner_->RecordLate(c.a);
+                break;
+            case Op::Flush:
+                if (last) inner_->Flush();
+                break;
+            case Op::Gamma:
+                if (once) inner_->SetGamma(data);
+                break;
+            case Op::ClearReport:
+                if (once) inner_->ClearReport();
+                break;
+            case Op::GetReport:
+                if (once) inner_->GetReport(c.a);
+                break;
         }
     }
 
@@ -505,8 +575,9 @@ private:
     uint64_t next_id_ = 0;
     uint64_t last_present_ = 0;
 
-    // the render thread
-    State state_;
+    // the render thread: the state as each eye's replay has it (mono uses the first)
+    State states_[2];
+    std::vector<Batch*> pending_;  // stereo: drawn for the left eye, not yet for the right
 
     std::mutex m_;
     std::condition_variable cv_;
@@ -516,6 +587,8 @@ private:
     std::atomic<uint64_t> done_{0};
     bool stop_ = false;
     bool exited_ = false;
+    uint32_t waiting_ = 0;  // title threads in Wait, under m_
+    bool poked_ = false;    // a title thread polled a busy fence or resource, under m_
 };
 
 }  // namespace

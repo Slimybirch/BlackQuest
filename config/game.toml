@@ -305,6 +305,15 @@ call = "FieldOfView"
 at = 0x16B312
 call = "FlashSprite"
 
+# blackquest: the view's tan stored at the view setups (FUN_002033A0, FUN_00203610), see ViewTan
+[[hook]]
+at = 0x2034CE
+call = "ViewTan"
+
+[[hook]]
+at = 0x203918
+call = "ViewTan"
+
 [[hook]]
 at = 0x176C6E
 call = "GunEffect"

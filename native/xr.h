@@ -26,18 +26,37 @@ bool CreateVkDevice(VkPhysicalDevice pd, const VkDeviceCreateInfo& ci, VkDevice&
 bool CreateSession(VkInstance instance, VkPhysicalDevice pd, VkDevice dev, uint32_t queue_family);
 
 // the virtual screen's swapchain: its images, the format to make their views with (raw bytes, the game's colours
-// are already gamma encoded), its size
+// are already gamma encoded), its size. in stereo the eyes' swapchains instead: the left eye's images, then the
+// right's, at one eye's size
 const std::vector<VkImage>& ScreenImages();
 VkFormat ScreenViewFormat();
 VkExtent2D ScreenExtent();
+bool Stereo();
+// the head's height in local space (metres), any thread; false before the first located view or without stereo
+bool HeadHeight(float& y);
+// which an image of ScreenImages is: eye 0 or 1, or the theater screen; and its size
+constexpr int kTheater = 2;
+int ImageEye(uint32_t index);
+VkExtent2D ImageExtent(uint32_t index);
+
+// an eye as the frame being drawn sees it, in the local space (openxr: metres, y up, -z ahead): position,
+// orientation (x y z w), tangents of the fov's left right up down angles (left and down negative)
+struct EyeView {
+    float pos[3];
+    float quat[4];
+    float tan[4];
+};
+// render thread; false before the headset is first tracked
+bool RenderEye(int eye, EyeView& out);
 
 // render thread, each present, in this order. BeginFrame polls the runtime's events, waits for the headset's next
 // frame (this paces the game at the display's rate) and says whether to draw one. AcquireScreen gives the image
-// to draw; after the draw's submit, ReleaseScreen; EndFrame always, with the screen shown when it was drawn
+// to draw (eye 0 or 1, or kTheater); after the draw's submit, ReleaseScreen; EndFrame always, with the screen shown
+// when it was drawn: the theater screen, or in stereo both eyes
 bool BeginFrame();
-bool AcquireScreen(uint32_t& index);
-void ReleaseScreen();
-void EndFrame(bool drawn);
+bool AcquireScreen(int eye, uint32_t& index);
+void ReleaseScreen(int eye);
+void EndFrame(bool drawn, bool theater = true);
 
 // the app quitting (sdl's thread): the session and instance handed back to the runtime first
 void Shutdown();

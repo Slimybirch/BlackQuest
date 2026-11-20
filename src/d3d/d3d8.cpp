@@ -247,6 +247,19 @@ void ViewScale(float xy) {
     UpdateViewportConstants();
 }
 
+// blackquest: draws from the game's draw lists, the world through its camera, are marked in transform slot 4
+// (unused by direct3d 8) for the renderer to move to each eye: 1 the world's lists, 2 the gun's, 0 none
+void SceneDraws(int kind) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_state.transforms[4][0] = float(kind);
+}
+
+// and the 2d layer's draws over the whole screen (hud, flash), which go on the head-locked hud plane
+void Overlay(bool on) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_state.transforms[4][1] = on ? 1.0f : 0.0f;
+}
+
 }  // namespace d3d
 
 using namespace d3d;

@@ -314,3 +314,98 @@ Two ways to get two eyes:
 - Order of work: (1) projection layer + per-eye swapchains showing the mono frame in both eyes; (2) per-eye target
   sets and the double replay; (3) the VS matrix with P_game⁻¹ and IPD from the views; (4) pass classification —
   HUD to a quad layer, post passes checked per eye; (5) world scale (units per metre) and render scale option.
+
+## 2026-11-19 — Phase 2, first stereo build (me)
+
+- `adb exec-out screencap -p` on the Quest 3 returns the compositor's output for both eyes (4128x2208, lens
+  warped): stereo can be checked over Wi-Fi without wearing the headset. `adb shell input keyevent KEYCODE_ENTER`
+  reaches the game's menus (keyboard Enter = confirm), but the main menu remembers its last choice (CREDITS after
+  one run), so Enter alone doesn't reliably reach a mission.
+- OpenXR: two swapchains at the recommended 1680x1760 per eye (max 8192), projection layer in LOCAL space with
+  the views located one frame ahead (draws run before the present that waits for the headset), the quad screen
+  kept: `xr::ScreenImages()` = left eye's 3, right eye's 3, screen's 3.
+- **glslang trap**: `[[vk::push_constant]] EyePc eye_pc;` (a struct variable) compiles to a member of the `$Global`
+  uniform block, so the matrix read zero and every vertex collapsed (black eyes). `[[vk::push_constant]] cbuffer
+  EyePc { row_major float4x4 eye_m; };` is a real push constant (checked with the NDK's glslc + spirv-dis).
+- **Which draws get the eye matrix**: depth test alone was wrong — menu/title draws (Apt, their own camera)
+  went through the device projection of another camera and left the screen. Now only draws made inside the game's
+  draw-list function `sub_00176F60` (hooked in `hooks.cpp` already for the viewmodel) count: `d3d::SceneDraws`
+  marks them in transform slot 4 (unused by D3D8; sent to the render thread with view/projection), and the draw must
+  also be depth tested, not ZFUNC ALWAYS, not pretransformed, with a perspective projection.
+- Frames with no marked world draw (menus, films, loading, briefings) go on the theater screen quad as in Phase 1;
+  frames with any go to the stereo layer. Menus checked over screencap: on the screen, both eyes, 72/72 fps.
+- Logged every 5 s at report level: `stereo: N draws, W world, U unmoved; front WxH; proj ...; eye ...`.
+- Debug files in the app folder (`Android/data/com.slimybirch.blackquest/files`), read at start:
+  `stereo_off` (theater only), `stereo_nohead` (eye offsets only, no head pose: desk screenshots),
+  `stereo_noeye` (both eyes, matrices left identity).
+- Not verified yet: a level in stereo (needs the user), the gun (draw list 5 is drawn with `d3d::ViewScale`, which
+  changes the viewport constants the eye matrix doesn't know about: may sit wrong until Phase 4), shadow maps (if a
+  light's camera is perspective and drawn through a draw list, it would wrongly get the eye matrix), and world
+  scale (1 unit = 1 m assumed, `kUnitsPerMetre` in vulkan.cpp).
+
+## 2026-11-19 — Phase 2, second build: pass classification (me, after the user's first level test)
+
+User's level test: depth good, smooth head look, 72 fps, menus float. Problems: gun far off to the left; buildings
+and enemies missing when the head turns off the aim (enemies still shoot); hud and effects (dust, bullets,
+explosions) doubled, not fused; view a little low.
+- **Culling**: the game culls by its own camera, 70° hip FOV widened to ~83 x 51° here (proj 1.132 / 2.116), while
+  the eye shows ~104 x 96° anywhere the head points. black-pc NOTES: the FOV at camera +0x750 is horizontal and
+  widening it (their --fov 100) widens culling with no gaps. In stereo the FOV hook (`FieldOfView`, 0x1BB2D6) now sets
+  160° (about 145° tall on the game's 16:9 view); the drawn view doesn't change since the eye matrix undoes the
+  game's projection. Scripted cameras write their own FOV after this, so cutscenes still cull narrow. Head turns past
+  ~70° off the aim still cull: the real fix is the Phase 3 decoupled camera following the head. Watch for lower LODs
+  if the game picks them by projected size.
+- **Effects**: black-pc NOTES name the effects pass FUN_00178C80 (particles FUN_0015B380) and shell casings
+  FUN_00173650, outside the draw-list function, so they had no scene mark and kept identity in both eyes. Now a
+  draw is world when it is marked (draw lists) **or** uses the exact projection of the last marked world draw of the
+  same eye's replay, and is depth tested, not pretransformed, perspective. Light shafts (scene projection, 160x120)
+  take the same path. The remembered projection is cleared after a theater frame.
+- **Gun**: `SceneDraws` now marks the gun list 2 (world lists 1). The gun's eye matrix uses only each eye's offset
+  from the head's middle, not the head's position in the room, so it no longer slides when the player stands away
+  from where the session started (LOCAL space origin), the likely cause of "off to the left". In stereo
+  `d3d::ViewScale` is left at 1 (g_gun = 1): the viewmodel FOV scale would have widened the gun's view-space place.
+- **HUD**: the 2D layer's Begin/End (sub_000D99A0 / sub_000D3740, hud.cpp) at the screen's width, game or Flash, set
+  `d3d::Overlay` (transform slot 4, [1]). In a frame after a world frame those draws get `HudMatrix`: the target's
+  clip position becomes a point on a head-locked plane 1.5 m ahead, ±30° wide, the screen's 16:9 tall, seen from each
+  eye's offset; depth 1e-4 so it's in front. Before, each eye showed it at the same spot of its own asymmetric
+  frustum, which doesn't fuse.
+- **Height**: the view follows the headset up and down (local space, origin where the session started) plus
+  `kEyeRaise` 0.05 m (user: 0.15 was too high, down 10 cm).
+- **Real crouch** (`src/game/vr_body.cpp`, user asked for it with the button kept): the game thread's pad filter
+  (port 0) reads the head height (`xr::HeadHeight`, from the located views) against the highest seen; 0.35 m under
+  it holds the crouch button (left stick click, the default binding, action 12 per black-pc) until back within
+  0.25 m. A toggle-crouch game stays down after the release, so 0.6 s later, still down, one 150 ms press stands it.
+  While that crouch is the headset's, `game::VrViewLift` = standing stance − stance (player +0x2E0, read 1.65
+  standing) is added back to the view, so the view drops by the player's real crouch only. The button alone crouches
+  the game's way. Logged every 5 s: `vr body: head, top, stance, stand, crouch real/ours, lift`.
+- The stats line (every 5 s) now counts `world (effects)`, `gun`, `hud`, `flat z` (pretransformed, depth tested,
+  off the 2D layer: CPU-projected effects would show there) and `unmoved`.
+- Checked here: builds, menus/films on the theater screen, no crash. One run reached the first level over adb
+  (Enter x4 from the title, Enter x3 over the films): ~20k effect draws, 1440 gun, 8640 hud, 0 `flat z`, 0 unmoved
+  per 5 s, cull projection 0.140 / 0.261. Later runs fell back to the title's attract films; the crouch isn't
+  tested in play (desk headset).
+
+Headset checklist (second level test):
+1. Look around a street: buildings/enemies stay drawn within ~70° of the aim; note where they pop.
+2. Dust, bullets, tracers, explosions, muzzle flash, smoke: single and at depth, not doubled.
+3. HUD (ammo, health, prompts, pause menu over play): one sharp image, readable, not doubled.
+4. The gun: where it sits, size, whether it moves when you step sideways.
+5. Height feels right; shadows/light shafts look the same in both eyes.
+6. After, pull the log (stats lines) for the `flat z` and `unmoved` counts.
+
+## 2026-11-19 — Phase 2, third build: far cars, muzzle flash (me, after the user's second level test)
+
+User: height right, real crouch works, nothing culled looking away, effects single, HUD sharp, gun in place. Left:
+the muzzle flash 4-5 inches left of the barrel; cars far off not drawn (their shadows sometimes were).
+- **Far cars**: the view setups store tan(half view) at camera manager `*0x2D12B8 + 0x16A0` (0x2034CE in
+  FUN_002033A0, 0x203918 in FUN_00203610; computed fov x 0.5 x pi/180, fptan, read off the recompiled listing). The
+  LOD pick multiplies the object's distance by it (FUN_001C8360 at 0x1C8419), as do ~15 other readers (particles,
+  character detail, aim assist 0x1DCDBF). With the 160° cull view that value went from ~0.88 to 5.67, so things
+  dropped detail and vanished 6x nearer. New hook `ViewTan` at both stores: in stereo, a value over tan 75° (only the
+  vr cull view is that wide) is replaced by the hip view's tan, which `FieldOfView` saves before widening. Culling
+  still uses the wide view (the setups' frustum comes from the stack copy, not +0x16A0).
+- **Muzzle flash**: a sprite on the aim line near the screen centre (black-pc NOTES), made for the flat picture; in
+  vr the gun is drawn where it really sits. `FlashSprite` in stereo moves a copy of its matrix 0.115 m right (minus
+  the player's left row +0xD0). The game's own matrix stays (bullets start there).
+- Checked here: recompiled (hook emitted before the store at 0x2034CE), builds, starts. Not seen in play (user
+  trusts the fixes).
