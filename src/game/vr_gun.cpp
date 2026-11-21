@@ -8,6 +8,7 @@
 // U^T (q + raise) in C, U = Ry(yaw) Rx(pitch) of the head angles the camera was built from (vr_body.cpp VrLook).
 // The game's camera rows (player +0xD0) are renderware's: right row = left on screen, up, at (det +1, user's view)
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -17,9 +18,12 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "app/app.h"
+#include "common/options.h"
 #include "core/log.h"
 #include "d3d/stereo.h"
 #include "game/layout.h"
@@ -283,14 +287,19 @@ void Rest(const Frame& f, int hand, float* rest) {
 // one rig (dumps, NOTES 2026-11-21): per arm the upper arm, the forearm (two bones on the left: the second
 // twists), the hand, then the fingers; the mesh's +x arm is the left one. pivots in the mesh's own space from vertices weighted to both
 // bones: the elbow and the wrist; the palm is the hand's middle
+// twist: how much of the hand's roll about the forearm each forearm bone takes (the wrist end takes most)
 struct ArmRig {
     int upper, fore[2], hand, finger_lo, finger_hi;
-    float elbow[3], wrist[3], palm[3], side;
+    float elbow[3], wrist[3], palm[3], side, twist[2];
 };
 const ArmRig kRig[2] = {
-    {9, {12, 15}, 18, 21, 63, {0.128f, -0.004f, -0.107f}, {0.116f, 0.005f, 0.137f}, {0.117f, -0.003f, 0.204f}, -1},
-    {66, {69, -1}, 72, 75, 129, {-0.128f, -0.004f, -0.107f}, {-0.118f, -0.015f, 0.145f}, {-0.118f, -0.003f, 0.205f}, 1},
+    {9, {12, 15}, 18, 21, 63, {0.128f, -0.004f, -0.107f}, {0.116f, 0.005f, 0.137f}, {0.117f, -0.003f, 0.204f}, -1,
+     {0.3f, 0.8f}},
+    {66, {69, -1}, 72, 75, 129, {-0.128f, -0.004f, -0.107f}, {-0.118f, -0.015f, 0.145f}, {-0.118f, -0.003f, 0.205f}, 1,
+     {0.5f, 0}},
 };
+// the free off hand's roll about its controller's pointing axis (user: 45° clockwise as seen down the arm)
+constexpr float kFreeHandRoll = -45.0f * 3.14159265f / 180;
 constexpr int kBone0 = 96 - 36;     // the constant (hardware order) of bone offset 0
 constexpr float kUpperArm = 0.28f;  // shoulder to elbow (the mesh only has the lower half of the upper arm)
 constexpr float kShoulderOut = 0.17f, kShoulderDown = 0.24f, kShoulderBack = 0.06f;  // from the head's middle
@@ -342,8 +351,230 @@ Aff Bone(const float (*c)[4], int off) {
 void SetBone(float (*c)[4], int off, const Aff& a) {
     for (int r = 0; r < 3; r++) std::memcpy(c[kBone0 + off + r], &a.m[r * 4], 16);
 }
+// rotation by angle about a unit axis, row-major
+void AxisAngle(const float* u, float t, float* R) {
+    float c = std::cos(t), s = std::sin(t), k = 1 - c;
+    float m[9] = {c + u[0] * u[0] * k,        u[0] * u[1] * k - u[2] * s, u[0] * u[2] * k + u[1] * s,
+                  u[1] * u[0] * k + u[2] * s, c + u[1] * u[1] * k,        u[1] * u[2] * k - u[0] * s,
+                  u[2] * u[0] * k - u[1] * s, u[2] * u[1] * k + u[0] * s, c + u[2] * u[2] * k};
+    std::memcpy(R, m, sizeof(m));
+}
+// the angle about axis from the forearm bone's y axis (turned by R, if given) to the hand bone's, both laid flat
+// across the axis: how far the hand is rolled against the forearm
+float HandRoll(const Aff& fore, const Aff& hand, const float* R, const float* axis) {
+    float fy[3] = {fore.m[1], fore.m[5], fore.m[9]}, hy[3] = {hand.m[1], hand.m[5], hand.m[9]};
+    if (R) {
+        float t[3];
+        for (int i = 0; i < 3; i++) t[i] = R[i * 3] * fy[0] + R[i * 3 + 1] * fy[1] + R[i * 3 + 2] * fy[2];
+        std::memcpy(fy, t, sizeof(t));
+    }
+    for (float* v : {fy, hy}) {
+        float d = v[0] * axis[0] + v[1] * axis[1] + v[2] * axis[2];
+        for (int i = 0; i < 3; i++) v[i] -= axis[i] * d;
+    }
+    float x[3];
+    Cross(fy, hy, x);
+    return std::atan2(x[0] * axis[0] + x[1] * axis[1] + x[2] * axis[2], fy[0] * hy[0] + fy[1] * hy[1] + fy[2] * hy[2]);
+}
 float Dist(const float* a, const float* b) {
     return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+}
+
+// ---- fingers: the game's finger bones curled by the controllers. A hand's fingers are found once per arms mesh
+// from its vertices (bones sharing vertices are joined; the pivot between two is where they share), then each
+// frame every joint is turned about the knuckle line from the game's pose to an angle between open and closed:
+// the grip closes the middle, ring and little fingers, the trigger the index (resting on it: half), the thumb
+// comes down when it touches the rest, the stick or a face button. Closed is the game's own pose on the gun when
+// the hand holds it, a fist when it's free
+struct Finger {
+    int n = 0;
+    int bone[3];
+    float pivot[3][3];  // mesh space: where each bone meets its parent
+    float dir[3][3];    // mesh space: each bone's direction (to the next pivot; the last to its own middle)
+};
+struct HandFingers {
+    bool ok = false;
+    Finger f[5];  // thumb, index, middle, ring, little
+};
+std::map<uint32_t, std::array<HandFingers, 2>> g_fingers;  // by the arms mesh's index count (render thread)
+
+constexpr float kDeg = 3.14159265f / 180;
+// open: a relaxed hand; fist: closed when free (flex at the knuckle, middle and end joints)
+constexpr float kOpenFlex[3] = {6 * kDeg, 8 * kDeg, 5 * kDeg};
+constexpr float kFistFlex[3] = {80 * kDeg, 95 * kDeg, 55 * kDeg};
+constexpr float kThumbOut = 40 * kDeg;  // the thumb lifted off when nothing touches it
+// the game's thumb sits twisted on the mesh: turned back about its own line (user: 10-15° clockwise; mirrored
+// between the hands)
+constexpr float kThumbTwist = 12 * kDeg;
+constexpr float kThumbRest = 0.6f;  // how far a free hand's thumb comes down when it touches (1: the game's pose)
+// the gun hand's middle, ring and little fingers: closed on the gun, a grip press (not over the shoulder) opens or
+// closes them (vr_body.cpp); closed again with each weapon
+std::atomic<bool> g_gun_fingers_open{false};
+
+void FindFingers(const uint8_t* vb, uint32_t stride, const void* indices, bool index16, uint32_t count, int32_t base,
+                 std::array<HandFingers, 2>& out) {
+    // pivots between bone pairs from vertices weighted to both (the second weight over a quarter), and centroids
+    std::map<std::pair<int, int>, std::array<double, 4>> pair;
+    std::map<int, std::array<double, 4>> cent;
+    std::vector<bool> seen;
+    for (uint32_t i = 0; i < count; i++) {
+        int64_t v = int64_t(index16 ? static_cast<const uint16_t*>(indices)[i] : static_cast<const uint32_t*>(indices)[i]) + base;
+        if (v < 0) continue;
+        if (size_t(v) >= seen.size()) seen.resize(size_t(v) + 1);
+        if (seen[size_t(v)]) continue;
+        seen[size_t(v)] = true;
+        const uint8_t* p = vb + size_t(v) * stride;
+        float pos[3];
+        std::memcpy(pos, p, 12);
+        const uint8_t* w = p + 12;
+        int16_t ix[4];
+        std::memcpy(ix, p + 16, 8);
+        int a = -1, b = -1;
+        for (int k = 0; k < 4; k++) {
+            if (!w[k]) continue;
+            auto& c = cent[ix[k]];
+            for (int j = 0; j < 3; j++) c[j] += pos[j] * w[k];
+            c[3] += w[k];
+            if (a < 0 || w[k] > w[a]) b = a, a = k;
+            else if (b < 0 || w[k] > w[b]) b = k;
+        }
+        if (a >= 0 && b >= 0 && w[b] > 60 && ix[a] != ix[b]) {
+            auto& c = pair[{std::min(ix[a], ix[b]), std::max(ix[a], ix[b])}];
+            for (int j = 0; j < 3; j++) c[j] += pos[j];
+            c[3] += 1;
+        }
+    }
+    auto pivot = [&](int x, int y, float* o) {
+        auto it = pair.find({std::min(x, y), std::max(x, y)});
+        if (it == pair.end() || it->second[3] < 2) return false;
+        for (int j = 0; j < 3; j++) o[j] = float(it->second[j] / it->second[3]);
+        return true;
+    };
+    for (int h = 0; h < 2; h++) {
+        const ArmRig& a = kRig[h];
+        HandFingers hf;
+        std::vector<Finger> chains;
+        std::set<int> used;
+        for (int root = a.finger_lo; root <= a.finger_hi; root += 3) {
+            Finger f;
+            if (used.count(root) || !pivot(a.hand, root, f.pivot[0])) continue;
+            f.bone[0] = root, f.n = 1;
+            used.insert(root);
+            // down the finger: the next bone sharing vertices with this one, higher in the list
+            while (f.n < 3) {
+                int next = -1;
+                for (int b = f.bone[f.n - 1] + 3; b <= a.finger_hi && next < 0; b += 3)
+                    if (!used.count(b) && pivot(f.bone[f.n - 1], b, f.pivot[f.n])) next = b;
+                if (next < 0) break;
+                f.bone[f.n++] = next;
+                used.insert(next);
+            }
+            for (int k = 0; k < f.n; k++) {
+                float to[3];
+                if (k + 1 < f.n) {
+                    std::memcpy(to, f.pivot[k + 1], 12);
+                } else {
+                    auto& c = cent[f.bone[k]];
+                    for (int j = 0; j < 3; j++) to[j] = float(c[j] / std::max(c[3], 1.0));
+                }
+                for (int j = 0; j < 3; j++) f.dir[k][j] = to[j] - f.pivot[k][j];
+                Normalize(f.dir[k]);
+            }
+            chains.push_back(f);
+        }
+        if (chains.size() < 5) {
+            out[h] = hf;
+            continue;
+        }
+        // the thumb: the chain rooted nearest the wrist; then index to little by distance from the thumb's root
+        auto wrist_dist = [&](const Finger& f) { return Dist(f.pivot[0], a.wrist); };
+        std::sort(chains.begin(), chains.end(), [&](const Finger& x, const Finger& y) { return wrist_dist(x) < wrist_dist(y); });
+        hf.f[0] = chains[0];
+        std::vector<Finger> rest(chains.begin() + 1, chains.end());
+        std::sort(rest.begin(), rest.end(), [&](const Finger& x, const Finger& y) {
+            return Dist(x.pivot[0], hf.f[0].pivot[0]) < Dist(y.pivot[0], hf.f[0].pivot[0]);
+        });
+        for (int i = 0; i < 4; i++) hf.f[i + 1] = rest[i];
+        hf.ok = true;
+        out[h] = hf;
+        LOGR("vr arms: %s hand fingers: thumb %d, index %d, middle %d, ring %d, little %d (%zu chains)",
+             h ? "right" : "left", hf.f[0].bone[0], hf.f[1].bone[0], hf.f[2].bone[0], hf.f[3].bone[0],
+             hf.f[4].bone[0], chains.size());
+    }
+}
+
+void RotOf(const Aff& a, const float* v, float* o) {
+    for (int i = 0; i < 3; i++) o[i] = a.m[i * 4] * v[0] + a.m[i * 4 + 1] * v[1] + a.m[i * 4 + 2] * v[2];
+}
+float SignedAngle(const float* a, const float* b, const float* axis) {
+    float x[3];
+    Cross(a, b, x);
+    return std::atan2(x[0] * axis[0] + x[1] * axis[1] + x[2] * axis[2], a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
+}
+
+// one hand's fingers curled in G (before the hand is moved): curl 0 open .. 1 closed per finger (thumb: down)
+void CurlFingers(float (*c)[4], const HandFingers& hf, int h, const float* curl, bool on_gun) {
+    const ArmRig& a = kRig[h];
+    Aff hb = Bone(c, a.hand);
+    // the knuckle line, across the hand from the little finger to the index, in G
+    float lat_m[3], lat[3];
+    for (int j = 0; j < 3; j++) lat_m[j] = hf.f[1].pivot[0][j] - hf.f[4].pivot[0][j];
+    Normalize(lat_m);
+    RotOf(hb, lat_m, lat);
+    Normalize(lat);
+    // flexing curls toward the palm: the axis turned so the game's grip (curled) reads positive
+    float sum = 0;
+    for (int i = 1; i < 5; i++) {
+        float hd[3], d[3], wr[3];
+        for (int j = 0; j < 3; j++) wr[j] = hf.f[i].pivot[0][j] - a.wrist[j];
+        Normalize(wr);
+        RotOf(hb, wr, hd);
+        RotOf(Bone(c, hf.f[i].bone[0]), hf.f[i].dir[0], d);
+        sum += SignedAngle(hd, d, lat);
+    }
+    if (sum < 0)
+        for (float& v : lat) v = -v;
+    for (int i = 0; i < 5; i++) {
+        const Finger& f = hf.f[i];
+        Aff acc = kIdentityAff;  // what the joints above did, in G
+        float prev[3];
+        {
+            float wr[3];
+            for (int j = 0; j < 3; j++) wr[j] = f.pivot[0][j] - a.wrist[j];
+            Normalize(wr);
+            RotOf(hb, wr, prev);
+        }
+        for (int k = 0; k < f.n; k++) {
+            Aff b = Bone(c, f.bone[k]);
+            float d[3], p[3];
+            RotOf(b, f.dir[k], d);
+            Normalize(d);
+            Apply(b, f.pivot[k], p);
+            if (i == 0 && k == 0) {
+                // the thumb's twist, about its own line at its root
+                float T[9];
+                AxisAngle(d, kThumbTwist * a.side, T);
+                acc = Pivot(T, p, p);
+            }
+            float flex = SignedAngle(prev, d, lat), want;
+            if (i == 0) {
+                // the thumb, lifted at its root away from the palm (the other way about the knuckle line from the
+                // fingers' curl) with the joints above eased straight. Down on the gun is the game's own pose; on a
+                // free hand it rests partway, the game's free pose lies flat and looks broken (user)
+                float lift = on_gun ? 1 - curl[0] : 1 - curl[0] * kThumbRest;
+                want = flex + (k == 0 ? kThumbOut : -flex * 0.7f) * lift;
+            } else {
+                float closed = on_gun ? flex : std::max(flex, kFistFlex[std::min(k, 2)]);
+                want = kOpenFlex[std::min(k, 2)] + (closed - kOpenFlex[std::min(k, 2)]) * curl[i];
+            }
+            float R[9];
+            AxisAngle(lat, want - flex, R);
+            Aff turn = Pivot(R, p, p);
+            acc = Compose(acc, turn);
+            SetBone(c, f.bone[k], Compose(acc, b));
+            std::memcpy(prev, d, sizeof(d));
+        }
+    }
 }
 
 }  // namespace
@@ -358,6 +589,15 @@ bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot,
     bool on = hand == 0 && g_left_on.load(std::memory_order_relaxed);
     float AC[9], hc[3];
     if (!HandInCamera(yaw, pitch, on ? 1 : hand, AC, hc)) return false;
+    if (hand == 0 && !on) {
+        // the free off hand rolled about the controller's pointing axis: AC · Rz
+        float c = std::cos(kFreeHandRoll), s = std::sin(kFreeHandRoll);
+        for (int i = 0; i < 3; i++) {
+            float x = AC[i * 3], y = AC[i * 3 + 1];
+            AC[i * 3] = x * c + y * s;
+            AC[i * 3 + 1] = -x * s + y * c;
+        }
+    }
     float G[9];
     GunAxes(f, G);
     // rot = AC · Gᵀ, the hand's rest on the gun put on its controller
@@ -373,9 +613,56 @@ bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot,
 // its controller (the gun hand on the gun's grip; the off hand on the gun where the game holds it, or on its own
 // controller), the shoulders by the head, the elbows bent between (two bones, elbows down and out). The draw keeps
 // the gun's K, so a bone B becomes D⁻¹ Δ D B, D the gun's drawing (G → C: x and z flipped, then K), Δ the change in C
-bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4]) {
+// mesh: the arms' vertices and indices as drawn, to find the fingers from (once per mesh)
+bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
+                const void* indices, bool index16, uint32_t index_count, int32_t base_vertex) {
     float kr[9], kp[3];
     if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
+    // the fingers, from the controllers, before anything moves the hands
+    auto found = g_fingers.find(index_count);
+    if (found == g_fingers.end() && vb && indices) {
+        std::array<HandFingers, 2> hf;
+        FindFingers(vb, stride, indices, index16, index_count, base_vertex, hf);
+        found = g_fingers.emplace(index_count, hf).first;
+    }
+    {
+        xr::Hand in[2];
+        float head_unused[3];
+        if (found != g_fingers.end() && xr::Hands(in[0], in[1], head_unused)) {
+            // dev_curl in the app folder: "grip trigger thumb" (0..1) for both hands, to see the fingers without
+            // the controllers
+            static float fake[3] = {-1, -1, -1};
+            static bool read = false;
+            if (!read) {
+                read = true;
+                if (FILE* fc = std::fopen((app::ExeDir() / "dev_curl").string().c_str(), "r")) {
+                    if (std::fscanf(fc, "%f %f %f", &fake[0], &fake[1], &fake[2]) != 3) fake[0] = -1;
+                    std::fclose(fc);
+                }
+            }
+            static float eased[2][5] = {};
+            static auto last = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.1f);
+            last = now;
+            float k = 1 - std::exp(-dt * 18);  // about 55 ms to close
+            for (int h = 0; h < 2; h++) {
+                if (!found->second[h].ok) continue;
+                float g = in[h].grip, t = in[h].trigger, th = in[h].thumb_touch ? 1.0f : 0.0f;
+                if (fake[0] >= 0) g = fake[0], t = fake[1], th = fake[2];
+                float idx = std::max(t, in[h].trigger_touch ? 0.35f : 0.0f);
+                // a hand gripping the gun closes every finger on it, whatever else is pressed (the gun hand by its
+                // toggle, the off hand while it holds); otherwise the fingers follow the controller
+                bool held = h == 1 ? !g_gun_fingers_open.load(std::memory_order_relaxed)
+                                   : g_left_on.load(std::memory_order_relaxed);
+                if (fake[0] >= 0) held = false;
+                float want[5] = {th, idx, g, g, g};
+                if (held) std::fill(want, want + 5, 1.0f);
+                for (int i = 0; i < 5; i++) eased[h][i] += (want[i] - eased[h][i]) * k;
+                CurlFingers(c, found->second[h], h, eased[h], held || h == 1);
+            }
+        }
+    }
     float krs[9];
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++) krs[i * 3 + j] = kr[i * 3 + j] * (j == 1 ? 1.0f : -1.0f);  // K · S, S = (-1, 1, -1)
@@ -459,8 +746,11 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4]) {
         float R[9];
         RotateOnto(u0, u1, R);
         SetBone(c, a.upper, Compose(Dinv, Compose(Pivot(R, s0, s1), up)));
-        // forearm bones: each from its own drawn elbow → wrist onto elbow → wrist
-        for (int fb : a.fore) {
+        // forearm bones: each from its own drawn elbow → wrist onto elbow → wrist, then twisted about that line by a
+        // share of how much more the hand rolled about the forearm than in the game's pose
+        Aff hand_new = Compose(hand_delta, hd);
+        for (int k = 0; k < 2; k++) {
+            int fb = a.fore[k];
             if (fb < 0) continue;
             Aff fa = Compose(D, Bone(c, fb));
             float fe[3], fw[3];
@@ -470,7 +760,13 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4]) {
             Normalize(f0);
             Normalize(f1);
             RotateOnto(f0, f1, R);
-            SetBone(c, fb, Compose(Dinv, Compose(Pivot(R, fe, e1), fa)));
+            float roll = HandRoll(fa, hand_new, R, f1) - HandRoll(fa, hd, nullptr, f0);
+            roll = std::remainder(roll, 2 * 3.14159265f);
+            float T[9], RT[9];
+            AxisAngle(f1, roll * a.twist[k], T);
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) RT[i * 3 + j] = T[i * 3] * R[j] + T[i * 3 + 1] * R[3 + j] + T[i * 3 + 2] * R[6 + j];
+            SetBone(c, fb, Compose(Dinv, Compose(Pivot(RT, fe, e1), fa)));
         }
         // the hand and its fingers, moved together
         Aff hand_b = Compose(Dinv, hand_delta);
@@ -481,7 +777,7 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4]) {
 }
 
 // game thread: take or let go of the gun with the off hand: a grip press within reach of where it holds the gun
-// takes hold, the next press lets go (a toggle: the button needn't be held). On a long gun, holding it aims the
+// takes hold; letting go of the grip lets go, or with toggle grip the next press. On a long gun, holding it aims the
 // barrel along the line between the hands
 void LeftHold(const Frame& f) {
     float yaw, pitch, rot[9], pos[3], AC[9], hc[3];
@@ -502,9 +798,11 @@ void LeftHold(const Frame& f) {
         float g = hand[0].grip;
         bool press = g > 0.6f && !was;
         was = g > 0.6f;
-        if (press && on) {
+        // hold (the default): held while the grip is; toggle (VR settings): the next press lets go
+        bool toggle = Opt().vr_grip_toggle;
+        if (on && (toggle ? press : g < 0.4f)) {
             on = false;
-        } else if (press && near) {
+        } else if (!on && press && near) {
             on = true;
             xr::Pulse(0, 0.5f, 0.04f);
         }
@@ -550,6 +848,7 @@ void VrGunFrame(X86Context& ctx) {
         g_frame = f;
         if (code != g_code) {
             g_code = code;
+            g_gun_fingers_open.store(false);  // a new weapon comes out held
             LOGR("vr gun: weapon %s, grip %.2f back %.2f down, fore-grip %.2f%s", code.c_str(), g.back, g.down, g.fore,
                  it == kGrips.end() ? " (default)" : "");
         }
@@ -598,6 +897,9 @@ bool VrGunMap(float* m, bool axes) {
     }
     return true;
 }
+
+// game thread: a grip press of the gun hand that wasn't a weapon switch opens or closes its fingers on the gun
+void VrToggleGunFingers() { g_gun_fingers_open.store(!g_gun_fingers_open.load()); }
 
 // the left hand holds the gun (any thread)
 bool VrLeftOnGun() { return g_left_on.load(std::memory_order_relaxed); }

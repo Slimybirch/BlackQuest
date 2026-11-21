@@ -44,7 +44,8 @@
 namespace game {
 float VrViewLift();  // src/game/vr_body.cpp
 bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot, float* pos);  // src/game/vr_gun.cpp
-bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4]);  // src/game/vr_gun.cpp: own hands
+bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
+                const void* indices, bool index16, uint32_t index_count, int32_t base_vertex);  // vr_gun.cpp: own hands
 bool VrMeleeHidden();  // src/game/vr_body.cpp: a melee swing is on
 }
 
@@ -3151,8 +3152,11 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     Alloc vc;
     if (stereo_ && s.transforms[4][0] == 2.0f && s.transforms[4][4] == 1.0f && IsArms(a.index_count)) {
         auto posed = s.vsc;
+        uint32_t data = s.streams[0].vb ? mem::VirtualFromPhysical(kernel::R32(s.streams[0].vb + 4)) : 0;  // kResData
+        const uint8_t* vb = data ? static_cast<const uint8_t*>(kernel::HostPtr(data)) : nullptr;
         ::game::VrPoseArms(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
-                           reinterpret_cast<float (*)[4]>(posed.data()));
+                           reinterpret_cast<float (*)[4]>(posed.data()), vb, s.streams[0].stride, a.index_src,
+                           a.index16, a.index_count, a.base_vertex);
         vc = Constants(posed.data(), sizeof(posed));
     } else {
         vc = Constants(s.vsc.data(), sizeof(s.vsc));

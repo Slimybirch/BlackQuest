@@ -251,7 +251,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn };
+             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip };
 
 using rows::Kind;
 using rows::Row;
@@ -322,6 +322,7 @@ constexpr Row kGeneralRows[] = {
 constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "VR"},
     {Kind::Value, kVrTurn, "TURNING"},
+    {Kind::Value, kVrGrip, "OFF-HAND GRIP"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -531,6 +532,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "SMOOTH");
             return true;
         }
+        case kVrGrip:
+            // blackquest: the off hand holds the gun while the grip is held, or a press takes it and the next lets go
+            if (step) o.vr_grip_toggle = !o.vr_grip_toggle;
+            std::snprintf(text, sizeof(text), o.vr_grip_toggle ? "TOGGLE" : "HOLD");
+            return true;
         case kGameSpeed:
             // 25% to 200% in steps of 25
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));

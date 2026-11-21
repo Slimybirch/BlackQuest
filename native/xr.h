@@ -44,6 +44,9 @@ struct Hand {
     bool aim_ok;     // the aim pose's orientation (x y z w): -z where the controller points, +y its top
     float aim[4];
     float grip;      // the grip button, 0..1
+    float trigger;   // 0..1
+    bool thumb_touch;    // the thumb on the rest, the stick or a face button
+    bool trigger_touch;  // the index finger on the trigger
 };
 bool Hands(Hand& left, Hand& right, float head[3]);
 // the view's raise over the headset's own height (user: 15 cm was too much, 5 cm); shared by the renderer and the

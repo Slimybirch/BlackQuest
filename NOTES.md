@@ -657,3 +657,41 @@ articulated elbows, and the hands to work the parts each reload animation uses.
 - Seen in the headset with fake hands (AK): free left arm ends at the left controller, right arm up to the grip;
   with dev_lefton both hands on the gun (left on the handguard), the barrel aimed from the right hand toward the
   left, the flash at the muzzle. Elbows bend down and out. Not seen: pistols, twist, real controllers.
+
+## 2026-11-21 — Phase 4 closed; rough edges (me, after the user's test)
+User: hands, melee, pistols and two-handed aim (any grip angle) all good. Committed Phase 4 (cbccf25, the
+user's go-ahead). Then: the free off hand turned 45° clockwise; off-hand grip **hold** by default with a VR
+SETTINGS row OFF-HAND GRIP (HOLD / TOGGLE, `vr_grip_toggle` in black.toml).
+- Free off hand: AC · Rz(-45°) in VrGunPose for hand 0 off the gun, a roll about the controller's pointing axis
+  (clockwise looking down the arm). If the user meant another axis, this is the one constant (kFreeHandRoll).
+- Forearm twist: after the minimal rotation, each forearm bone turns about the elbow→wrist line by a share of how
+  much more the hand rolls against the forearm than in the game's pose (bone y axes laid flat across the line):
+  left arm 12 30%, 15 (the twist bone) 80%; right arm 69 50%.
+- Built, not yet seen (the headset was off adb).
+
+## 2026-11-21 — Fingers from the controllers (me)
+User asked for open free-hand poses that close naturally on the gun: grip closes middle/ring/little, trigger the
+index, thumb by the thumb rest. Looked at RoboHands-UnityXR (no licence file; some models paid third-party; a
+Unity/Blender rig) and stewdio/vr-hands (MIT, but WebXR hand tracking with no poses or angles): neither usable, so
+the poses are procedural on the game's own finger bones.
+- Inputs: new OpenXR actions `thumb_touch` (thumbrest, stick, A/B/X/Y touch) and `trigger_touch`; xr::Hand has
+  trigger, thumb_touch, trigger_touch.
+- Fingers are found once per arms mesh from its vertices (`FindFingers`): bones sharing vertices are joined, the
+  pivot between two is where they share; chains of up to 3 from the hand bone; the thumb is the chain rooted nearest
+  the wrist, index to little by distance from the thumb's root (the left hand's finger bones differ between the AK
+  and the pistol, so nothing is hard-coded but the ranges).
+- `CurlFingers`: each joint turned about the knuckle line (little→index root, oriented so the game's grip reads
+  as flexed) from the game's angle to open (6/8/5°) .. closed (the game's own pose when the hand holds the gun, a
+  fist 80/95/55° when free). Thumb: down = the game's pose; up = lifted 40° at the root, the joints above eased
+  straight. Index rests half closed with the finger on the trigger. Eased (~55 ms).
+- `dev_curl` in the app folder: "grip trigger thumb" for both hands. Built; not yet seen.
+- User test: the thumb was backwards (down without a touch, up on the rest) and twisted on the mesh. Fixed: the
+  lift goes the other way about the knuckle line; a 12° twist about the thumb's own line at its root (clockwise
+  down the thumb on the right hand, mirrored on the left: kThumbTwist).
+- Gun hand (user's choice): its middle/ring/little fingers close on the gun by a **toggle**: a right grip press
+  that isn't the over-the-shoulder switch opens or closes them (closed with each new weapon); the gun never
+  leaves the hand, the grip still does use/pick-up. The off hand keeps the OFF-HAND GRIP option.
+- User test: gripping must close every finger on the gun whatever is pressed; the free thumb's rest looked broken
+  (laid flat). Now a hand that grips (the gun hand by its toggle, the off hand while it holds) has all five fingers
+  in the game's pose on the gun; otherwise they follow the controller. A free thumb on a touch comes down 60% of
+  the way (kThumbRest), not to the game's flat pose.

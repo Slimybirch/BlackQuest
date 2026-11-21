@@ -65,13 +65,20 @@
 - [x] user test 4: vibration felt; AK grip set by the user (0.68 back, baked in; vr_grips.txt cleared)
 - [x] own hands first build: bones posed (IK elbows, shoulders by the head), grips from the game's palms, toggle
       grip, two-handed aim; not yet seen in the headset
-- [ ] own hands: forearm twist following the hand; scale check vs the controllers; the left hand's open pose
-      when off the gun (the game's is closed on a fore-grip)
+- [x] Phase 4 committed (cbccf25); user: hands, melee, pistols, two-handed aim good
+- [x] free off hand rolled 45°, forearm twist, OFF-HAND GRIP hold/toggle row (built, not yet seen)
+- [ ] own hands: an open pose for the free off hand (the game's is closed on a fore-grip): needs a finger pose
+      from somewhere (another animation's bones, or curl the finger bones ourselves)
 - [ ] own hands (user, 2026-11-21): the game's arms mesh posed by our bones (it is GPU-skinned, bones from c-36):
       each hand on its controller, two-bone IK for the elbows, the game's finger poses kept. Grabbing a gun snaps
       the gun hand to its grip and the off hand to the game's own fore-grip hold, wherever the controller is (the
       game's hand bones on the gun give both, so no per-weapon grip table or GRIP rows once this works)
 - [ ] reload by hand: which gun bones each reload animation moves (magazine, bolt...) are the parts to grab
+- [ ] Phase 5 (user): magazines are taken from the chest with the **trigger** (not the grip)
+- [ ] later (user): the AK's ejection port and charging handle are modelled on its left (inside) side; real AKs
+      have them on the right. Possible: draw the AK mirrored across its barrel's vertical plane (a reflection in
+      its K; flip the cull winding for that draw), and send its casings out of the right side. Check which other
+      guns are modelled mirrored, and that the sights and markings still read right
 - [ ] projectiles: RPG and grenade launcher from the gun
 - [ ] hide the head-locked crosshair; aiming in (LT) in vr: zoom off, gun stays in the hand
 - [ ] arms: forearms trailing the hands look odd (trim/hide option); the hand lets go briefly in melee; left-handed option

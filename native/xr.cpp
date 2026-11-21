@@ -87,6 +87,8 @@ XrPath g_hand[2] = {XR_NULL_PATH, XR_NULL_PATH};  // left, right
 XrAction g_stick = XR_NULL_HANDLE, g_trigger = XR_NULL_HANDLE, g_grip = XR_NULL_HANDLE, g_thumb = XR_NULL_HANDLE;
 XrAction g_a = XR_NULL_HANDLE, g_b = XR_NULL_HANDLE, g_x = XR_NULL_HANDLE, g_y = XR_NULL_HANDLE;
 XrAction g_menu = XR_NULL_HANDLE;
+// capacitive touch, for the hands' fingers: the thumb on anything (rest, stick, face buttons), the index on the trigger
+XrAction g_thumb_touch = XR_NULL_HANDLE, g_trigger_touch = XR_NULL_HANDLE;
 XrAction g_pose = XR_NULL_HANDLE;  // grip poses, for the gestures (vr_body.cpp)
 XrSpace g_hand_space[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
 XrAction g_aim = XR_NULL_HANDLE;  // aim poses: where the gun in the hand points (vr_gun.cpp)
@@ -103,6 +105,7 @@ struct Controls {
     float trigger[2] = {};
     float grip[2] = {};
     bool thumb[2] = {};
+    bool thumb_touch[2] = {}, trigger_touch[2] = {};
     bool a = false, b = false, x = false, y = false, menu = false;
     // local space, metres and metres a second: the hands' grips and the head's middle
     bool hand_ok[2] = {};
@@ -182,6 +185,8 @@ bool CreateActions() {
         !MakeAction("x", "X", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_x) ||
         !MakeAction("y", "Y", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_y) ||
         !MakeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_menu) ||
+        !MakeAction("thumb_touch", "Thumb resting", XR_ACTION_TYPE_BOOLEAN_INPUT, true, g_thumb_touch) ||
+        !MakeAction("trigger_touch", "Finger on trigger", XR_ACTION_TYPE_BOOLEAN_INPUT, true, g_trigger_touch) ||
         !MakeAction("grip_pose", "Hand", XR_ACTION_TYPE_POSE_INPUT, true, g_pose) ||
         !MakeAction("aim_pose", "Aim", XR_ACTION_TYPE_POSE_INPUT, true, g_aim) ||
         !MakeAction("haptic", "Rumble", XR_ACTION_TYPE_VIBRATION_OUTPUT, true, g_haptic))
@@ -195,6 +200,11 @@ bool CreateActions() {
         {g_a, "/user/hand/right/input/a/click"},                {g_b, "/user/hand/right/input/b/click"},
         {g_x, "/user/hand/left/input/x/click"},                 {g_y, "/user/hand/left/input/y/click"},
         {g_menu, "/user/hand/left/input/menu/click"},
+        {g_thumb_touch, "/user/hand/left/input/thumbrest/touch"},  {g_thumb_touch, "/user/hand/right/input/thumbrest/touch"},
+        {g_thumb_touch, "/user/hand/left/input/thumbstick/touch"}, {g_thumb_touch, "/user/hand/right/input/thumbstick/touch"},
+        {g_thumb_touch, "/user/hand/left/input/x/touch"},          {g_thumb_touch, "/user/hand/left/input/y/touch"},
+        {g_thumb_touch, "/user/hand/right/input/a/touch"},         {g_thumb_touch, "/user/hand/right/input/b/touch"},
+        {g_trigger_touch, "/user/hand/left/input/trigger/touch"},  {g_trigger_touch, "/user/hand/right/input/trigger/touch"},
         {g_pose, "/user/hand/left/input/grip/pose"},            {g_pose, "/user/hand/right/input/grip/pose"},
         {g_aim, "/user/hand/left/input/aim/pose"},              {g_aim, "/user/hand/right/input/aim/pose"},
         {g_haptic, "/user/hand/left/output/haptic"},            {g_haptic, "/user/hand/right/output/haptic"},
@@ -254,6 +264,8 @@ void ReadControls() {
             c.trigger[h] = FloatOf(g_trigger, g_hand[h]);
             c.grip[h] = FloatOf(g_grip, g_hand[h]);
             c.thumb[h] = BoolOf(g_thumb, g_hand[h]);
+            c.thumb_touch[h] = BoolOf(g_thumb_touch, g_hand[h]);
+            c.trigger_touch[h] = BoolOf(g_trigger_touch, g_hand[h]);
         }
         c.a = BoolOf(g_a);
         c.b = BoolOf(g_b);
@@ -608,6 +620,9 @@ bool Hands(Hand& left, Hand& right, float head[3]) {
         out[h]->aim_ok = c.aim_ok[h];
         std::memcpy(out[h]->aim, c.aim[h], sizeof(c.aim[h]));
         out[h]->grip = c.grip[h];
+        out[h]->trigger = c.trigger[h];
+        out[h]->thumb_touch = c.thumb_touch[h];
+        out[h]->trigger_touch = c.trigger_touch[h];
     }
     std::memcpy(head, c.head, sizeof(c.head));
     return true;

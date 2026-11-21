@@ -71,6 +71,7 @@ struct Body {
 }  // namespace
 
 bool VrMeleeHidden() { return NowMs() < g.melee_hide_until; }
+void VrToggleGunFingers();  // vr_gun.cpp
 
 // the head angles (radians) the player's camera was last built from, while in play
 bool VrLookAngles(float& yaw, float& pitch) {
@@ -116,6 +117,7 @@ void VrControls(input::Pad& pad) {
             g.grip_switch = back > kShoulderBack && right > kShoulderRight && d[1] > kShoulderDown;
             if (g.grip_switch) g.switch_until = now + kPulse;
         }
+        if (!g.grip_switch) VrToggleGunFingers();  // own hands: the grip opens or closes the gun hand
     }
     g.grip_was = grip;
     if (grip && !g.grip_switch) pad.analog[2] = 255;

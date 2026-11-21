@@ -24,6 +24,7 @@ struct Options {
     uint32_t anti_aliasing = 0;  // 0 off, 1 FXAA as the frame goes onto the screen, 2 SSAA: twice the resolution
     bool hdr = false;  // a tone map that brings back the colours the console's overbright look burns out
     uint32_t draw_distance = 1;  // times the game's LOD and draw distances
+    bool vr_grip_toggle = false;  // vr: the off hand's grip takes the gun with a press and lets go with the next (user)
     uint32_t vr_snap_turn = 0;  // vr: degrees a flick of the right stick turns the body; 0 turns smoothly (user)
     // the render resolution follows the frame rate (native/dynamic_resolution.cpp): down when it falls under the
     // target, up again once it holds the target this many seconds; within min and max, percent of the screen's
