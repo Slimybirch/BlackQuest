@@ -23,6 +23,7 @@ void SceneDraws(int kind);
 }
 
 namespace game {
+bool VrMeleeHidden();  // vr_body.cpp
 void EspCamera();  // esp.cpp
 }
 
@@ -221,6 +222,8 @@ X86_EXTERN_FUNC(__imp__sub_00176F60);
 X86_FUNC(sub_00176F60) {
     if (ctx.esi == R32(kDisplay) + kDisplayDrawLists + kAlphaDrawList * kDrawListSize) game::EspCamera();
     bool gun_list = ctx.esi == R32(kDisplay) + kDisplayDrawLists + kGunDrawList * kDrawListSize;
+    // vr: the player's own arm swing is the melee; the game's swing of the gun and arms isn't drawn (vr_body.cpp)
+    if (gun_list && game::VrMeleeHidden()) return;
     bool gun = g_gun != 1 && gun_list;
     if (gun) d3d::ViewScale(g_gun);
     d3d::SceneDraws(gun_list ? 2 : 1);
@@ -257,31 +260,30 @@ static uint32_t Follow(uint32_t matrix, uint32_t owner, bool axes) {
 
 constexpr uint32_t kEffectOwner = 0x44;
 
-// vr: the gun is drawn where it really sits, right of the aim line the flash sprite is put on (it's near the screen
-// centre, made for the flat picture): moved right onto the barrel (user: it showed 4-5 inches left)
-constexpr float kVrFlashRight = 0.115f;
-constexpr uint32_t kPlayerLeft = 0xD0;
+// vr: the flash sprite sits on the aim line near the screen's centre, made for the flat picture, and no offset put
+// it on the barrel in vr (user: 4-5 in left, then 2 in right, then 4 in right). The gun list has its own muzzle mesh
+// on the barrel, so in vr the sprite is shrunk to nothing
+constexpr float kVrFlashScale = 1e-4f;
 
 // the muzzle flash sprite, drawn with the matrix
 void FlashSprite(X86Context& ctx, uint8_t*) {
-    if (stereo::Eyes() != 2 || !R32(kWorld)) {
+    if (stereo::Eyes() != 2) {
         ctx.eax = Follow(ctx.eax, Player(), true);
         return;
     }
     static uint32_t copy = mem::AllocSystem(64, 16);
     std::memcpy(HostPtr(copy), HostPtr(ctx.eax), 64);
-    float* at = &G<float>(copy + kMatrixPosition);
-    const float* left = &G<float>(Player() + kPlayerLeft);
-    for (int i = 0; i < 3; i++) at[i] -= left[i] * kVrFlashRight;
+    for (uint32_t i = 0; i < 12; i++) G<float>(copy + i * 4) *= kVrFlashScale;
     ctx.eax = copy;
 }
 
-// The view setup's tan of half its view (camera manager +0x16A0), which scales the distances that pick detail and
-// drop small things (cars far off went: user). In vr the game culls by a 160 degree view; its distances keep the
-// view it would have had. Only a vr cull view is that wide: a film's or blend's own value stays
-constexpr float kVrWideTan = 3.73f;  // tan 75 degrees
-void ViewTan(X86Context& ctx, uint8_t*) {
-    if (stereo::Eyes() == 2 && ctx.xmm[0].f[0] > kVrWideTan) ctx.xmm[0].f[0] = g_view_tan;
+// The view setups store tan(half view) at camera manager +0x16A0 and ~15 readers scale distances by it. In vr the
+// game's view is 160 degrees for culling, so the LOD pick (FUN_001C8360, its compare at 0x1C8427) saw everything
+// 6x farther and far cars vanished. Only that pick is given back the hip view: changing the stored value for all its
+// readers (the first try) lost the explosions' fire (user)
+static float VrDistance() {
+    if (stereo::Eyes() != 2) return 1;
+    return g_view_tan / std::tan(kVrCullFov * kHalf);
 }
 // effects that follow a locator of their owner (edi)
 void GunEffect(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, ctx.edi, false); }
@@ -604,6 +606,11 @@ void ShardStep(X86Context& ctx, uint8_t*) {
 // limit that much longer. Characters, props, pickups, ground cover, particles and bullet holes
 static float Reach() { return float(std::clamp(game::Opt().draw_distance, 1u, 8u)); }
 void DistanceShorter(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach(); }
+void LodDistance(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= VrDistance() / Reach(); }
+// a particle's fade distances (near fade start, far cut, their ramps) scale by the view's [+0x50], one over its half
+// width at the near plane: the 160 degree vr view made it 6x smaller, which turned the smoke's near fade inside out
+// and hid it (user: explosions showed fire, no smoke). xmm1 holds it from 0x16DF4D to 0x16DFFB
+void ParticleView(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] /= VrDistance(); }
 void DistanceShorterSquared(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach() * Reach(); }
 void LimitLonger(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= Reach(); }
 void CharacterDetail(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] /= Reach(); }

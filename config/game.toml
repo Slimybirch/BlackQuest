@@ -305,14 +305,11 @@ call = "FieldOfView"
 at = 0x16B312
 call = "FlashSprite"
 
-# blackquest: the view's tan stored at the view setups (FUN_002033A0, FUN_00203610), see ViewTan
+# blackquest: the head drives the player's look before its view is built (FUN_001E5FA0 → FUN_001DFD90), see VrLook
 [[hook]]
-at = 0x2034CE
-call = "ViewTan"
+at = 0x1E5FE1
+call = "VrLook"
 
-[[hook]]
-at = 0x203918
-call = "ViewTan"
 
 [[hook]]
 at = 0x176C6E
@@ -436,7 +433,7 @@ call = "CharacterDetail"
 
 [[hook]]
 at = 0x1C8427
-call = "DistanceShorter"
+call = "LodDistance"
 
 [[hook]]
 at = 0x1CA677
@@ -497,6 +494,11 @@ call = "PropLimit"
 [[hook]]
 at = 0x16DFFB
 call = "ParticleFade"
+
+# blackquest: the particle fade's view scale back to the hip view's in vr, see ParticleView
+[[hook]]
+at = 0x16DF4D
+call = "ParticleView"
 
 [[hook]]
 at = 0x160919

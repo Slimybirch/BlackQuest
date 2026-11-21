@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "d3d/stereo.h"
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
 #include "core/log.h"
@@ -50,7 +51,8 @@ void MouseLook(X86Context& ctx, uint8_t*) {
 }
 
 // false with the keyboard or mouse used last: no pull of the view to a target, no shots bent to one
-bool AimAssist(X86Context&, uint8_t*) { return !input::KeyboardActive(); }
+// in vr too: the view is the head's, a pull would turn the body (and the aim follows the head)
+bool AimAssist(X86Context&, uint8_t*) { return !input::KeyboardActive() && stereo::Eyes() != 2; }
 
 // ebx the player's controller past the game's toggle aim, scopes and all
 void HoldAim(X86Context& ctx, uint8_t*) {

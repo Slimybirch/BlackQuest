@@ -999,6 +999,20 @@ bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out) 
     // game view → openxr (S flips the depth axis when the game looks along +z), into the eye, and back
     float R[9];
     QuatMatrix(ev.quat, R);
+    // phase 3: the game's camera already looks where the head did when the frame was simulated (vr_body.cpp
+    // VrLook, angles in transform slot 4): the eye turns and moves by what's left, in that camera's frame
+    float U[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    if (s.transforms[4][4] == 1.0f) {
+        float cy = std::cos(s.transforms[4][2]), sy = std::sin(s.transforms[4][2]);
+        float cp = std::cos(s.transforms[4][3]), sp = std::sin(s.transforms[4][3]);
+        // Ry(yaw) Rx(pitch)
+        float u[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
+        std::memcpy(U, u, sizeof(u));
+        float r[9];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) r[i * 3 + j] = U[0 * 3 + i] * R[0 * 3 + j] + U[1 * 3 + i] * R[1 * 3 + j] + U[2 * 3 + i] * R[2 * 3 + j];
+        std::memcpy(R, r, sizeof(r));
+    }
     float sz = -f;  // S = diag(1, 1, sz)
     float px = ev.pos[0] * kUnitsPerMetre, py = (ev.pos[1] + kEyeRaise + ::game::VrViewLift()) * kUnitsPerMetre, pz = ev.pos[2] * kUnitsPerMetre;
     xr::EyeView other;
@@ -1006,6 +1020,12 @@ bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out) 
         px = (ev.pos[0] - other.pos[0]) * 0.5f * kUnitsPerMetre;
         py = (ev.pos[1] - other.pos[1]) * 0.5f * kUnitsPerMetre;
         pz = (ev.pos[2] - other.pos[2]) * 0.5f * kUnitsPerMetre;
+    }
+    {
+        float w[3] = {px, py, pz};
+        px = U[0] * w[0] + U[3] * w[1] + U[6] * w[2];
+        py = U[1] * w[0] + U[4] * w[1] + U[7] * w[2];
+        pz = U[2] * w[0] + U[5] * w[1] + U[8] * w[2];
     }
     // V = S · Rᵀ · T(−p) · S
     float S[3] = {1, 1, sz};

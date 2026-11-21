@@ -59,6 +59,7 @@ XrView g_render_views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
 XrView g_next_views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
 // the head's height in local space, latest located, for the game thread (vr_body.cpp)
 std::atomic<float> g_head_y{0};
+std::atomic<float> g_head_yaw{0}, g_head_pitch{0};
 std::atomic<bool> g_head_valid{false};
 bool g_views_valid = false;
 VkFormat g_view_format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -83,6 +84,8 @@ XrPath g_hand[2] = {XR_NULL_PATH, XR_NULL_PATH};  // left, right
 XrAction g_stick = XR_NULL_HANDLE, g_trigger = XR_NULL_HANDLE, g_grip = XR_NULL_HANDLE, g_thumb = XR_NULL_HANDLE;
 XrAction g_a = XR_NULL_HANDLE, g_b = XR_NULL_HANDLE, g_x = XR_NULL_HANDLE, g_y = XR_NULL_HANDLE;
 XrAction g_menu = XR_NULL_HANDLE;
+XrAction g_pose = XR_NULL_HANDLE;  // grip poses, for the gestures (vr_body.cpp)
+XrSpace g_hand_space[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
 
 // what the controllers last said, for the game thread
 struct Controls {
@@ -92,6 +95,11 @@ struct Controls {
     float grip[2] = {};
     bool thumb[2] = {};
     bool a = false, b = false, x = false, y = false, menu = false;
+    // local space, metres and metres a second: the hands' grips and the head's middle
+    bool hand_ok[2] = {};
+    float hand[2][3] = {}, hand_vel[2][3] = {};
+    bool head_ok = false;
+    float head[3] = {};
 };
 std::mutex g_controls_lock;
 Controls g_controls;
@@ -158,7 +166,8 @@ bool CreateActions() {
         !MakeAction("b", "B", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_b) ||
         !MakeAction("x", "X", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_x) ||
         !MakeAction("y", "Y", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_y) ||
-        !MakeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_menu))
+        !MakeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_menu) ||
+        !MakeAction("grip_pose", "Hand", XR_ACTION_TYPE_POSE_INPUT, true, g_pose))
         return false;
     // the touch profile: quest 3's touch plus controllers take it too
     const std::pair<XrAction, const char*> map[] = {
@@ -169,6 +178,7 @@ bool CreateActions() {
         {g_a, "/user/hand/right/input/a/click"},                {g_b, "/user/hand/right/input/b/click"},
         {g_x, "/user/hand/left/input/x/click"},                 {g_y, "/user/hand/left/input/y/click"},
         {g_menu, "/user/hand/left/input/menu/click"},
+        {g_pose, "/user/hand/left/input/grip/pose"},            {g_pose, "/user/hand/right/input/grip/pose"},
     };
     std::vector<XrActionSuggestedBinding> b;
     for (const auto& [action, path] : map) b.push_back({action, Path(path)});
@@ -181,6 +191,13 @@ bool CreateActions() {
     ai.countActionSets = 1;
     ai.actionSets = &g_set;
     XR_OK(xrAttachSessionActionSets(g_session, &ai));
+    for (int h = 0; h < 2; h++) {
+        XrActionSpaceCreateInfo sc{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+        sc.action = g_pose;
+        sc.subactionPath = g_hand[h];
+        sc.poseInActionSpace.orientation.w = 1;
+        if (XR_FAILED(xrCreateActionSpace(g_session, &sc, &g_hand_space[h]))) g_hand_space[h] = XR_NULL_HANDLE;
+    }
     return true;
 }
 
@@ -222,6 +239,25 @@ void ReadControls() {
         c.x = BoolOf(g_x);
         c.y = BoolOf(g_y);
         c.menu = BoolOf(g_menu);
+        constexpr XrSpaceLocationFlags kPos = XR_SPACE_LOCATION_POSITION_VALID_BIT;
+        for (int h = 0; h < 2 && g_local && g_display_time; h++) {
+            if (!g_hand_space[h]) continue;
+            XrSpaceVelocity v{XR_TYPE_SPACE_VELOCITY};
+            XrSpaceLocation l{XR_TYPE_SPACE_LOCATION, &v};
+            if (XR_FAILED(xrLocateSpace(g_hand_space[h], g_local, g_display_time, &l)) || !(l.locationFlags & kPos))
+                continue;
+            c.hand_ok[h] = true;
+            c.hand[h][0] = l.pose.position.x, c.hand[h][1] = l.pose.position.y, c.hand[h][2] = l.pose.position.z;
+            if (v.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT)
+                c.hand_vel[h][0] = v.linearVelocity.x, c.hand_vel[h][1] = v.linearVelocity.y,
+                c.hand_vel[h][2] = v.linearVelocity.z;
+        }
+        if (g_views_valid) {
+            c.head_ok = true;
+            c.head[0] = 0.5f * (g_next_views[0].pose.position.x + g_next_views[1].pose.position.x);
+            c.head[1] = 0.5f * (g_next_views[0].pose.position.y + g_next_views[1].pose.position.y);
+            c.head[2] = 0.5f * (g_next_views[0].pose.position.z + g_next_views[1].pose.position.z);
+        }
     }
     std::lock_guard lock(g_controls_lock);
     g_controls = c;
@@ -491,6 +527,28 @@ bool CreateSession(VkInstance instance, VkPhysicalDevice pd, VkDevice dev, uint3
 const std::vector<VkImage>& ScreenImages() { return g_images; }
 VkFormat ScreenViewFormat() { return g_view_format; }
 bool Stereo() { return g_eye_images != 0; }
+bool Hands(Hand& left, Hand& right, float head[3]) {
+    Controls c;
+    {
+        std::lock_guard lock(g_controls_lock);
+        c = g_controls;
+    }
+    if (!c.live || !c.head_ok) return false;
+    Hand* out[2] = {&left, &right};
+    for (int h = 0; h < 2; h++) {
+        out[h]->ok = c.hand_ok[h];
+        std::memcpy(out[h]->pos, c.hand[h], sizeof(c.hand[h]));
+        std::memcpy(out[h]->vel, c.hand_vel[h], sizeof(c.hand_vel[h]));
+    }
+    std::memcpy(head, c.head, sizeof(c.head));
+    return true;
+}
+bool HeadAngles(float& yaw, float& pitch) {
+    if (!Stereo() || !g_head_valid.load(std::memory_order_relaxed)) return false;
+    yaw = g_head_yaw.load(std::memory_order_relaxed);
+    pitch = g_head_pitch.load(std::memory_order_relaxed);
+    return true;
+}
 bool HeadHeight(float& y) {
     if (!Stereo() || !g_head_valid.load(std::memory_order_relaxed)) return false;
     y = g_head_y.load(std::memory_order_relaxed);
@@ -575,6 +633,14 @@ bool BeginFrame() {
             g_next_views[0] = v[0];
             g_next_views[1] = v[1];
             g_head_y.store(0.5f * (v[0].pose.position.y + v[1].pose.position.y), std::memory_order_relaxed);
+            {
+                // the head's look: forward = R (0, 0, -1); yaw about +y (left positive), pitch up positive
+                const XrQuaternionf& q = v[0].pose.orientation;
+                float fx = -2 * (q.x * q.z + q.w * q.y), fy = -2 * (q.y * q.z - q.w * q.x);
+                float fz = -(1 - 2 * (q.x * q.x + q.y * q.y));
+                g_head_yaw.store(std::atan2(-fx, -fz), std::memory_order_relaxed);
+                g_head_pitch.store(std::asin(std::clamp(fy, -1.0f, 1.0f)), std::memory_order_relaxed);
+            }
             g_head_valid.store(true, std::memory_order_relaxed);
             // the very first frame has nothing drawn for any pose yet
             if (!g_views_valid) {

@@ -409,3 +409,75 @@ the muzzle flash 4-5 inches left of the barrel; cars far off not drawn (their sh
   the player's left row +0xD0). The game's own matrix stays (bullets start there).
 - Checked here: recompiled (hook emitted before the store at 0x2034CE), builds, starts. Not seen in play (user
   trusts the fixes).
+
+## 2026-11-19 — Phase 3, first build: the head drives the look (me)
+
+Phase 2 committed (7256333, user's go-ahead). Design choice for Phase 3 item 1: rather than keep the game's camera
+on the body yaw (which would bring back the culling of anything ~70° off it), the **head drives the game's look**
+and the right stick turns a body offset. The game's view, culling, aim and walking direction follow the head; the
+renderer turns each eye only by what the head did since the frame was simulated. Phase 4 moves the aim to the hand.
+- Hook `VrLook` at 0x1E5FE1 (the call to FUN_001DFD90, the player view builder, in FUN_001E5FA0; ebx the character,
+  checked == `*0x2D45D4 + 0x30`). Look angles at `[ebx+0x324]` +0x18 yaw / +0x1C pitch, degrees (black-pc NOTES);
+  the listing shows the recoil kick `[ebx+0x4C4]` taken off the pitch just before the call and put back after.
+  Yaw rows (c,0,-s)(0,1,0)(s,0,c) with forward (sin, 0, cos): yaw grows turning left, the same way as the head's yaw
+  about local +y. Written: yaw = body + head yaw, pitch = sign x head pitch. Body = its first offset, then plus
+  whatever the game turned since the last write (smooth turning, scripted turns), wrapped to ±180.
+- The pitch's sign isn't read off the code: each frame the player's built forward row (+0xF0, y) is compared with
+  the head pitch written last time, and the sign flips when they disagree (logged `vr look: ... sign`).
+- `d3d::VrLookUsed` puts the head yaw/pitch used into transform slot 4 [2], [3] (flag [4]); `EyeMatrix` replaces the
+  eye's rotation and position by Uᵀ R and Uᵀ p, U = Ry(yaw) Rx(pitch): what's left is the head's motion since the
+  sim (latency), its roll and the room-scale offset. The gun's offset is turned the same way, so the gun stays at
+  the face, pointing where the head does.
+- Right stick in play (view built in the last 250 ms): Y dropped (the head pitches); X a snap turn of
+  `vr_snap_turn` degrees (black.toml, default 45; 0 = the game's smooth turning), re-armed under a third of the throw.
+- Auto-aim (`AimAssist`, 0x1ECE64 / 0x1DCDAB) off in stereo: its pull would turn the body.
+- Checked: recompiled and builds. Not seen in play (adb didn't reach a level this time).
+
+## 2026-11-19 — Phase 3, second build: explosions, flash, touch scheme (me, after the user's Phase 3 test)
+
+User: smooth; view, aim, up/down and walking follow the head; far cars back. Explosions lost part of their effect
+(first report: a car went up in smoke with no fire; then: the fire shows, not the smoke). Flash ~2 inches right.
+- **Explosions**: the change since the build where effects were right was `ViewTan`, which replaced the stored
+  tan(half view) (`+0x16A0`) for all ~15 readers. They all scale a distance by it (0x16087D particle counts, 0x17C00D
+  effect priority, 0x17DAC3 effect distance pick, 0x1BDF55, 0x1C4DD8, 0x1C5647 character detail, 0x1CCAC7/0x1CCB47,
+  0x1DCDBF aim assist), so some effect choice went another way. Not pinned down (adb couldn't hold a level long
+  enough to watch one). `ViewTan` is gone; only the LOD pick in FUN_001C8360 is compensated, at its compare 0x1C8427
+  (`LodDistance` = the old `DistanceShorter` x hip tan / tan 80°). Cars far off should stay; if the smoke is still
+  missing, the effect isn't the tan's.
+- Flash: 0.065 m right instead of 0.115.
+- **Touch scheme** (user's): in play, right stick up/down = d-pad up/down (firing mode / health pack); right grip = X
+  (pick up, use; the grip had been the black button, which the game's controls don't use); right grip closed with
+  the hand behind the face's plane, right of the head, higher than 0.35 m under it (head yaw frame) = d-pad right,
+  a weapon switch; either hand moving away from the head faster than 2.5 m/s = B (melee), re-armed after 0.6 s.
+  Hand grips come from a new OpenXR pose action (`/input/grip/pose`) located in local space with velocities each
+  frame (`xr::Hands`).
+- User: the melee should not play the game's animation, the arms' own swing is the animation, but still hit as a
+  melee. Not done: needs the melee's damage call (weapon state machine FUN_001EEFD0 / the melee animation event) so
+  the hit can run without the animation. For now the swing presses B.
+- A bug caught here: the snap-turn block cleared the right stick's Y before the controls read it.
+
+## 2026-11-19 — Phase 3, third build: smoke, flash, melee, smooth turn (me, after the user's tests)
+
+User: smoke still missing (fire shows), far cars fine; flash 4 in right at 0.065 m; snap turn works but smooth is
+preferred; stick up/down, grip, shoulder switch and melee gesture work ("not too easy or too hard"); melee should
+not play the game's animation, the hit lands where you aim.
+- **Smoke**: particle setup FUN near 0x16DF00 scales each type's fade distances (+0xC0 near start, +0xC4 far cut,
+  +0xC8/+0xCC ramps) by the renderer view's `[[*0x2D67F4+0xD590]+0x50]`. The 30° setup at 0x15ABA0..0x15ABF5 shows
+  what that field is: 1 / (near x tan(half view)), the same struct. The 160° vr view made it ~6x smaller, so a near
+  start floored by the view's +0x84 could pass the scaled ramp and the near fade went negative: invisible. Hook
+  `ParticleView` at 0x16DF4D (xmm1 just loaded, used to 0x16DFFB) divides it by `VrDistance()` (hip tan / tan 80°).
+- **Flash**: three offsets gave 4-5 in left, 2 in right, 4 in right: not a fixed sideways error. The gun list has
+  its own muzzle mesh on the barrel, so in vr the sprite's axes are scaled by 1e-4 (drawn as nothing).
+- **Smooth turn** default: `vr_snap_turn` = 0 (black.toml can set degrees).
+- **Melee**: the button sets controller +0x4B on the press edge (0x1ECB3C reads binding slot 32, `[edi+0x80]`);
+  FUN_001F0650 (weapon requests: aim +0x45, melee +0x4B, +0x44) passes it to FUN_001F0210. The hit most likely lands
+  on the animation's event, so the animation runs; in vr the gun list (draw list 5) isn't drawn for 650 ms after any
+  melee press, so the player's own swing is the only one seen and the game's hit still lands where they aim.
+
+## 2026-11-20 — Phase 3 closed (user's retest)
+
+User: explosions perfect (smoke back); melee good, the 650 ms hide is long enough for the arm's own swing to stand in
+for the game's; smooth turning as the default. The flash sprite (hidden) wanted back: "I like the game's muzzle
+flash", at the barrel's end. The cause of the three earlier offsets, found for Phase 4: the gun list is drawn with
+the head's eye (only the eyes' half separation) and the sprite with the room's eye (the head's place in the room +
+the 5 cm raise), so the sprite sat off by wherever the player stood. Fixed with the gun in the hand (Phase 4 notes).

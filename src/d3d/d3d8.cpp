@@ -254,6 +254,15 @@ void SceneDraws(int kind) {
     g_state.transforms[4][0] = float(kind);
 }
 
+// and the head angles (local space, radians) the player's view was built from this frame (vr_body.cpp VrLook): the
+// renderer turns the eye by only what the head did since
+void VrLookUsed(float yaw, float pitch) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_state.transforms[4][2] = yaw;
+    g_state.transforms[4][3] = pitch;
+    g_state.transforms[4][4] = 1.0f;
+}
+
 // and the 2d layer's draws over the whole screen (hud, flash), which go on the head-locked hud plane
 void Overlay(bool on) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);

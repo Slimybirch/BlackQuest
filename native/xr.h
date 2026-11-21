@@ -34,6 +34,15 @@ VkExtent2D ScreenExtent();
 bool Stereo();
 // the head's height in local space (metres), any thread; false before the first located view or without stereo
 bool HeadHeight(float& y);
+// the head's look in local space (radians): yaw about +y, left positive; pitch, up positive
+bool HeadAngles(float& yaw, float& pitch);
+// the hands' grips and the head's middle in local space (metres, metres a second), from the last frame's sync
+struct Hand {
+    bool ok;
+    float pos[3];
+    float vel[3];
+};
+bool Hands(Hand& left, Hand& right, float head[3]);
 // which an image of ScreenImages is: eye 0 or 1, or the theater screen; and its size
 constexpr int kTheater = 2;
 int ImageEye(uint32_t index);
