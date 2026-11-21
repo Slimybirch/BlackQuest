@@ -7,7 +7,9 @@
 
 #include <imgui.h>
 
+#include "common/menu.h"
 #include "host.h"
+#include "xr.h"
 
 namespace ui {
 
@@ -130,6 +132,32 @@ void NewFrame(float width, float height) {
     SDL_JoystickID* ids = SDL_GetGamepads(&count);
     SDL_Gamepad* pad = count ? SDL_GetGamepadFromID(ids[0]) : nullptr;
     SDL_free(ids);
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // without it imgui ignores every pad key for moving
+    xr::MenuInput in{};
+    if (xr::Active() && xr::MenuControls(in)) {
+        // the headset: the right controller points and its trigger clicks; the left stick moves and steps, A presses
+        // (B closes the panel: xr.cpp). imgui draws the cursor itself: there's no system one in the headset
+        io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+        io.AddKeyEvent(ImGuiKey_GamepadFaceDown, in.a);
+        io.AddKeyEvent(ImGuiKey_GamepadDpadLeft, in.stick[0] < -0.5f);
+        io.AddKeyEvent(ImGuiKey_GamepadDpadRight, in.stick[0] > 0.5f);
+        io.AddKeyEvent(ImGuiKey_GamepadDpadUp, in.stick[1] > 0.5f);
+        io.AddKeyEvent(ImGuiKey_GamepadDpadDown, in.stick[1] < -0.5f);
+        static bool pointed = false, held = false;
+        in.pointing = in.pointing && app::MenuOpen();  // no cursor over the game's own screens
+        io.MouseDrawCursor = in.pointing;
+        if (in.pointing) {
+            io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+            io.AddMousePosEvent(in.u * width, in.v * height);
+        } else if (pointed) {
+            io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        }
+        pointed = in.pointing;
+        bool down = in.trigger && (in.pointing || held);  // a press starts on the quad, a release lands anywhere
+        if (down != held) io.AddMouseButtonEvent(0, down);
+        held = down;
+        return;
+    }
     if (!pad) return;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     struct Map {

@@ -6,7 +6,10 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 
+#include "app/app.h"
+#include "common/menu.h"
 #include "core/log.h"
 #include "core/input.h"
 #include "game/layout.h"
@@ -52,6 +55,7 @@ struct Body {
     float written = 0;       // the yaw last written, to find what the game turned since (smooth turning)
     float pitch_sign = 1;    // the game's pitch against the head's, checked on its built view
     float last_pitch = 0;    // the head's pitch last written, radians
+    float last_yaw = 0;
     int64_t play_ms = 0;     // the player's view was last built (play, not menus or films)
     bool flicked = false;
     // vr controls in play (user's scheme)
@@ -67,6 +71,14 @@ struct Body {
 }  // namespace
 
 bool VrMeleeHidden() { return NowMs() < g.melee_hide_until; }
+
+// the head angles (radians) the player's camera was last built from, while in play
+bool VrLookAngles(float& yaw, float& pitch) {
+    if (!g.look || NowMs() - g.play_ms > 250) return false;
+    yaw = g.last_yaw;
+    pitch = g.last_pitch;
+    return true;
+}
 
 float VrViewLift() { return g_lift.load(std::memory_order_relaxed); }
 
@@ -128,8 +140,35 @@ void VrControls(input::Pad& pad) {
     g.b_was = b;
 }
 
+// dev testing without the controllers in hand (files in the app's folder): dev_autostart presses A through the
+// menus till play; dev_autofire pulls the trigger now and then in play, dev_automelee hits B
+void DevPad(input::Pad& pad) {
+    static const bool start = std::filesystem::exists(app::ExeDir() / "dev_autostart");
+    static const bool fire = std::filesystem::exists(app::ExeDir() / "dev_autofire");
+    int64_t now = NowMs();
+    bool play = now - g.play_ms < 2000;
+    if (start && !play && now % 1500 < 150) pad.analog[0] = 255;
+    if (fire && play && now % 3000 < 400) pad.analog[7] = 255;
+    // dev_firehold: the trigger held down in play (automatic fire, for catching the flash in a screenshot)
+    static const bool hold = std::filesystem::exists(app::ExeDir() / "dev_firehold");
+    if (hold && play) pad.analog[7] = 255;
+    if (hold) Opt().infinite_ammo = true;  // or the gun runs dry in seconds
+    // dev_menu: the settings panel opens once, 5 s into play (or 20 s after boot without autostart: the title)
+    static const bool menu = std::filesystem::exists(app::ExeDir() / "dev_menu");
+    static int64_t boot = now, first_play = 0;
+    static bool opened = false;
+    if (play && !first_play) first_play = now;
+    if (menu && !opened && ((first_play && now - first_play > 5000) || (!start && now - boot > 20000))) {
+        opened = true;
+        if (!app::MenuOpen()) app::ToggleMenu();
+    }
+    static const bool melee = std::filesystem::exists(app::ExeDir() / "dev_automelee");
+    if (melee && play && now % 2000 < 150) pad.analog[1] = 255;
+}
+
 // game thread, each pad poll of port 0
 void VrPad(input::Pad& pad) {
+    DevPad(pad);
     // in play the head looks up and down; the right stick turns the body, a flick a step (or smoothly: the game's)
     if (NowMs() - g.play_ms < 250) {
         uint32_t snap = Opt().vr_snap_turn;
@@ -222,6 +261,7 @@ void VrLook(X86Context& ctx, uint8_t*) {
     game_pitch = g.pitch_sign * pitch * kDeg;
     g.written = game_yaw;
     g.last_pitch = pitch;
+    g.last_yaw = yaw;
     g.play_ms = NowMs();
     d3d::VrLookUsed(yaw, pitch);
 }

@@ -24,6 +24,7 @@
 #include "common/options.h"
 #include "common/translations.h"
 #include "game/weapons.h"
+#include "xr.h"
 
 // native/gyro.cpp: aiming by turning the phone
 namespace gyro {
@@ -250,7 +251,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate };
+             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn };
 
 using rows::Kind;
 using rows::Row;
@@ -319,6 +320,8 @@ constexpr Row kGeneralRows[] = {
 
 // a page of its own, apart from the recomp's settings
 constexpr Row kCheatRows[] = {
+    {Kind::Heading, -1, "VR"},
+    {Kind::Value, kVrTurn, "TURNING"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -517,6 +520,17 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (o.rapid_fire <= 1) std::snprintf(text, sizeof(text), "OFF");
             else std::snprintf(text, sizeof(text), "%uX", o.rapid_fire);
             return true;
+        case kVrTurn: {
+            // blackquest: smooth (the game's own turn), or a step a flick
+            constexpr uint32_t kTurns[] = {0, 30, 45, 90};
+            size_t at = 0;
+            for (size_t i = 0; i < std::size(kTurns); i++)
+                if (kTurns[i] == o.vr_snap_turn) at = i;
+            if (step) o.vr_snap_turn = kTurns[(at + std::size(kTurns) + size_t(step)) % std::size(kTurns)];
+            if (o.vr_snap_turn) std::snprintf(text, sizeof(text), "SNAP %u", o.vr_snap_turn);
+            else std::snprintf(text, sizeof(text), "SMOOTH");
+            return true;
+        }
         case kGameSpeed:
             // 25% to 200% in steps of 25
             if (step) o.game_speed = uint32_t(StepRange(int(o.game_speed), 25, 200, 25, step));
@@ -845,6 +859,14 @@ void DrawWeapons() {
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
         ImGui::TextWrapped("%s", Ui("Start or continue a level to choose its weapons.", false).c_str());
         ImGui::PopStyleColor();
+        // what only works in a level, shown greyed till then
+        Section("SUPPLIES");
+        float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3;
+        ImGui::BeginDisabled();
+        ImGui::Button(Ui("FILL AMMUNITION").c_str(), ImVec2(bw, 0));
+        ImGui::SameLine();
+        ImGui::Button(Ui("FILL MEDKITS").c_str(), ImVec2(bw, 0));
+        ImGui::EndDisabled();
         return;
     }
     constexpr int kColumns = 3;
@@ -947,7 +969,7 @@ void DrawPanel() {
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
-        DrawTitle("CHEATS");
+        DrawTitle(xr::Active() ? "VR SETTINGS" : "CHEATS");
         ImGui::Separator();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         // a scrollbar a thumb can take, not the desktop's thin one

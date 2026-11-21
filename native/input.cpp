@@ -225,6 +225,7 @@ Pad Poll(int port) {
 // the motors run until set again
 void Rumble(int port, uint16_t left, uint16_t right) {
     if (app::kGame.rumble) app::kGame.rumble(port, left, right);
+    if (port == 0 && xr::Active()) xr::Rumble(left, right);  // the touch controllers, the headset's pad
     std::lock_guard lock(g_lock);
     if (port >= 0 && port < 4 && g_pads[port]) SDL_RumbleGamepad(g_pads[port], left, right, 0);
 }

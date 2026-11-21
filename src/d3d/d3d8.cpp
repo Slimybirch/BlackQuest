@@ -263,6 +263,12 @@ void VrLookUsed(float yaw, float pitch) {
     g_state.transforms[4][4] = 1.0f;
 }
 
+// and the gun's frame in the camera's (vr_gun.cpp Frame, 11 floats), for the gun list moved to the hand; null: none
+void VrGunUsed(const float* frame) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    for (int i = 0; i < 11; i++) g_state.transforms[4][5 + i] = frame ? frame[i] : 0.0f;
+}
+
 // and the 2d layer's draws over the whole screen (hud, flash), which go on the head-locked hud plane
 void Overlay(bool on) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);

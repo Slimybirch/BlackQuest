@@ -481,3 +481,179 @@ for the game's; smooth turning as the default. The flash sprite (hidden) wanted 
 flash", at the barrel's end. The cause of the three earlier offsets, found for Phase 4: the gun list is drawn with
 the head's eye (only the eyes' half separation) and the sprite with the room's eye (the head's place in the room +
 the 5 cm raise), so the sprite sat off by wherever the player stood. Fixed with the gun in the hand (Phase 4 notes).
+
+## 2026-11-20 — Phase 4, first build: the gun in the hand (me)
+
+- **How**: the game still poses its first person list (gun, arms, muzzle mesh) ahead of its camera. The renderer
+  draws that list through one rigid transform K, from the gun's grip in the camera's frame (the anchor) to the
+  right controller, seen with the room's eye like the world (vulkan.cpp EyeMatrix, `hand`). Frames: C = the game
+  camera's in openxr axes; a local point q is U^T (q + raise) in C, U from the head angles the camera was built from.
+  K: v → U^T A (v − anchor) + U^T (hand + raise), A the aim pose's orientation, the grip pose's position.
+- **Anchor**: the player's muzzle each frame from FUN_001D2860 (thiscall, ecx the player, out [esp+4]: a locator of
+  the model at [player+0x328] times [player+0x420] times the camera rows at player+0xD0; called with CallGuest from
+  the gun list's hook), into C with the rows (right, up, forward, eye at +0xD0/+0xE0/+0xF0/+0x100), 0.28 m behind and
+  0.07 m under it (one guess for all weapons), followed with a 0.25 s lag (a kick or swing still shows, a weapon
+  switch jumps). Passed to the renderer in transform slot 4 [5..8] (`d3d::VrGunUsed`). Log `vr gun: muzzle ...`.
+- **Shots**: the player's bullet spawn 0x1DB7B0 (ecx origin; stack gun, dir, range, speed, flags; one call at
+  0x1DC0D1, black-seamless-coop's notes) is wrapped: origin = the muzzle moved by K, direction = the game's
+  (spread kept) turned by K's rotation. Projectiles (RPG, launcher) not done yet.
+- **Flash and effects**: the sprite (FlashSprite 0x16B312), the gun's effects (GunEffect, GunEffectStart) and the
+  tracers' muzzle matrix go through the same K (`game::VrGunMap`), so the game's own flash is back, on the barrel.
+- **Haptics**: the game's rumble (port 0) to the controllers, left motor left hand, right motor right
+  (`/output/haptic`, `xr::Rumble`).
+- Unchanged: the view and walking follow the head; melee hides the list for 650 ms; the hud's crosshair is still
+  head-locked (meaningless now; to hide).
+
+## 2026-11-20 — Phase 4, second build: handles, the gun's own frame, left arm, shots, flash (me, after the user's test)
+
+User (first build): gun too far back (hand at the action, not the handle; each gun differs); it points along the
+controller but shoots where the head looks; the flash in a random place; melee still hides the gun; both arms on
+the right controller, wanted apart. Tested here without the user: the headset on the desk, adb screenshots
+(`adb shell screencap -p`, the compositor's two eyes) and the dev markers below.
+- **The camera rows are renderware's**: det(rows) = +1 and the first row is screen-left (right = at × up). The first
+  build read it as right, so every game-thread mapping (flash, effects, tracers, shot) was mirrored sideways: the
+  "random" flash. `ToCamera`/`ToWorld` flip it.
+- **Shots**: the owner check read the wrong field (the spawn's first argument isn't the weapon: owner 0x0064003B),
+  so no shot was ever moved. Now keyed on the spawn's return address 0x1DC0D6 (its one player call, checked in the
+  recompiled code); log `vr gun: shot from the hand`.
+- **The gun's own frame**: the muzzle matrix from FUN_001D2860 is renderware too (x left, y up, z along the barrel)
+  and moves with the gun's animation (raise, kick, the melee swing: seen 31° in a shot). K now maps that frame onto
+  the controller, so the game's animation of the gun is taken out: steady in the hand through melee (screenshots), so
+  melee no longer hides it in the hand (still hidden head-locked, no controller).
+- **Handles per weapon**: `weapons::HeldCode()` (the table code, weapons.cpp); `kGrips` in vr_gun.cpp: muzzle → handle
+  along the barrel and under it, and → fore-grip, from real guns at about viewmodel size (pistol 0.13 back, AK 0.45,
+  M16 0.50, shotguns 0.55-0.58...). Checked on the tutorial's pistol side on (dev_fakehands_side): the hand on the
+  grip. The flash locator sits exactly on the muzzle in the gun's frame (0.081 -0.070 -0.433 against 0.081 -0.071
+  -0.436), so it is drawn on the barrel's tip.
+- **Left arm**: the gun list is two draws, the gun (5905 indices) and both arms (2927, one mesh: hidden by a dev file
+  in turn). On two handed guns the arms draw is drawn twice, each kept by a clip plane (SV_ClipDistance0 from a plane
+  pushed after the eye matrix: push constants 80 bytes, `shaderClipDistance` on), the gun hand's part with the gun's K,
+  the left arm's with the left controller's K (its rest the fore-grip). The plane stands along the gun from 6 cm
+  left of the handle to 5 cm right of the fore-grip. Pistols stay one piece (the left hand cups the right).
+- Gun frame to the renderer: transform slot 4 [5..15] (handle, forward, up, fore-grip distance, flags).
+- Dev markers (files in the app's folder, testing without the controllers in hand): `dev_autostart` presses A through
+  the menus, `dev_autofire` / `dev_automelee` pulse RT / B in play, `dev_fakehands` holds both hands still in front of
+  the view (`dev_fakehands_side` turns the gun side on), `dev_twohand` splits any gun's arms. Remove them after.
+
+## 2026-11-20 — VR settings panel (cheats in the headset) (me)
+
+User: the cheats are needed for testing each level; a trimmed version of the planned VR settings, cheats toggleable,
+open from the main menu and in play (paused).
+- **Open/close**: left grip held + the menu button, anywhere (title, pause, play); while open the menu button or B
+  closes it and the game's pad gets nothing (xr::ApplyPad).
+- **Where**: in menus (theater frames) imgui already drew over the game's frame on the theater screen; in stereo it
+  had drawn into the left eye only. Now imgui never draws into an eye: over play the screen's swapchain is drawn with
+  imgui alone over a transparent clear and submitted as a second, alpha blended quad layer (premultiplied: imgui over
+  zero), 1.6 m wide, 1.2 m ahead of where the head looked when it opened, upright, facing it (xr::EndFrame `panel`).
+- **Navigation**: the left stick moves (up/down) and steps values (left/right), A presses (ui::NewFrame, when no SDL
+  controller), through ImGui's gamepad nav.
+- **Content**: the base port's cheats panel (CHEATS, titled VR SETTINGS in the headset) with a VR heading on top:
+  TURNING smooth / snap 30 / 45 / 90 (`vr_snap_turn`). Cheat toggles work anywhere (unlock missions from the title);
+  give-a-weapon and the supplies are greyed outside a level.
+- Dev marker `dev_menu`: opens the panel 5 s into play (with dev_autostart) or 20 s after boot (the title).
+- Not yet seen in the headset: the headset slept before the build could be installed.
+
+## 2026-11-20 — Phase 4, third build: shot aim, AK grip, pointer, reload blur (me, after the user's test)
+User test: shots leave the barrels and hit up close; haptics felt. At range the AK lands left of centre, and
+aiming in doesn't shoot where the barrel points. AK hand ~4" too far forward. The panel couldn't be navigated.
+- **Shot direction**: was the game's direction mapped by K. The game aims from its camera along the view (spread
+  added), but the viewmodel's barrel isn't parallel to the view (toe-in, and different again when aiming in), so K
+  turned the shot a constant angle off the drawn barrel: right up close, a growing miss with range. Now the
+  direction is taken into C (where the view is −z) and turned by the gun hand's aim orientation (AC), which is
+  the drawn barrel's forward: `VrGunAim`. The origin still goes through K (the muzzle as drawn); the spread is
+  kept, as the offset from the view.
+- **AK grip**: AK1/AK5 back 0.45 → 0.55 m from the muzzle.
+- **Reload blur**: the `ReloadBlur` hook returns false while xr is active, whatever the option says.
+- **Panel input**: `ImGuiConfigFlags_NavEnableGamepad` was never set (the Android menu was driven by touch), so
+  imgui dropped the pad keys. Set now. Added a pointer: the right aim pose's ray is taken into the quad imgui was
+  last shown on (the theater screen, or the panel over play; xr.cpp records its pose and size each EndFrame), the
+  hit becomes the imgui mouse, the right trigger its button, and imgui draws the cursor (`MouseDrawCursor`), only
+  while the menu is open. The aim pose's position is now read as well (`aim_pos`).
+- Checked in the headset with fake hands (side on), AK1 given by `dev_give`, trigger held by `dev_firehold`:
+  the hand sits on the pistol grip just behind the magazine, and the game's flash bursts from the muzzle. Hip fire
+  with the hand straight ahead hit around the view's middle at the far windows.
+- New dev markers (app folder): `dev_give` holds a weapon code (`AK1`), given ~4 s into a level and retried till
+  it's in hand; `dev_firehold` holds the trigger in play and turns infinite ammo on.
+
+## 2026-11-21 — Phase 4, fourth build: left arm free, recoil, haptics, grip rows (me, after the user's test)
+User test: aiming in shoots right, long range better, the menu pointer works. Rifles' hand still off; the left arm
+never leaves the gun; the left elbow rises in melee; no recoil at all; no vibration felt.
+- **Left arm stuck on rifles**: the split matched the arms by one index count, 2927, the pistol's arms. Logged per
+  weapon (`vulkan: gun list draws a mesh of N indices`, with dev_give cycling weapons): arms PST 2927, AK1 2921,
+  SHG 2923, M16 2921, SMG 2919; guns 5156 to 6773. Textures move between frames (streamed), so the arms are now
+  any gun list mesh of 2880 to 2970 indices (`IsArms`).
+- **Left hand on and off the gun**: off, the left arm follows the left controller (as the split meant). A fresh
+  left grip press within 15 cm of the fore-grip as drawn takes hold: the left arm is then drawn with the gun hand's
+  K, where the game holds it; releasing the grip lets go (`LeftHold`, game thread). While near or holding, the
+  left grip is kept from the game's white button (`xr::TakeLeftGrip`). Pistols split too now (all kGrips two
+  handed), with the plane along the barrel 2.5 cm left of the grip (the old across-the-gun plane degenerated to
+  one across the barrel when the fore-grip sits at the handle).
+- **Melee elbow**: the arms are skinned, so the swing animates the left arm whatever K does; its piece is not
+  drawn while a swing is on (`VrMeleeHidden`).
+- **Recoil**: the game keeps each gun's view kick at player +0x4C4 (degrees, dying away; RecoilDecay's value,
+  the no recoil cheat zeroes it). In vr the view is the head's, so it never showed. Now the gun hand turns up about
+  the grip by 1.5x the kick and comes back 6 mm a degree (`HandInCamera`); the shot direction uses the unkicked
+  hand, since the game's own direction already carries the kick. The strongest kick per gun goes to the log
+  (`vr gun: AK1 kicked up to N degrees`) for tuning.
+- **Haptics**: a 60 ms buzz on the gun hand each shot, 0.45 plus 0.08 a degree of kick, and on the left hand at 70%
+  when it holds the gun. The game's rumble is now resent as 120 ms buzzes every 80 ms instead of one infinite
+  duration. In ~50 s of held fire the game sent no rumble at all (`xr: game rumble` never logged): its firing
+  rumble may be off or absent; the per-shot buzz doesn't depend on it.
+- **Grip rows**: VR SETTINGS has GRIP FORWARD and GRIP HEIGHT (1 cm a step) for the gun in hand, kept in
+  `vr_grips.txt` in the app folder, to be baked into kGrips.
+- New dev markers: `dev_fakeleft_low` (the left hand by the hip), `dev_lefton` (the left hand held on the gun);
+  `dev_give` takes a list (10 s each). Not verified in the headset: its cameras saw too little light ("images too
+  dark", 3DoF), every screencap black.
+
+## 2026-11-21 — Own hands: first look (me, after the user's test)
+User: vibration felt; rifle grip changed in VR SETTINGS (vr_grips.txt, to bake into kGrips once the headset is
+reachable again); moving the gun hand's grip offsets the hands (the arms mesh is rigid to the gun, so moving the
+gun in the hand moves the arms with it). Wants the game's arms replaced by our own that look the same, with
+articulated elbows, and the hands to work the parts each reload animation uses.
+- Diagnostic built (not yet run): for each gun list mesh the vertex shader's inputs, length and constants set, and
+  for the arms whether their vertices change frame to frame. VS-skinned (bone matrices in constants, weights and
+  indices in the stream) means our hands can be the game's own arms mesh posed by our bones; CPU-skinned means
+  reading the mesh's bind pose ourselves.
+- **Result: the gun list is skinned on the GPU.** All gun list meshes (guns and arms) share one vertex shader
+  (hash 28B8D86D1CECC165, 56 instructions). Stride 36: v0 position float3 +0, v1 weights PBYTE4 +12, v4 bone
+  indices (bytes) +16, v2 normal packed +24, v9 uv float2 +28. The arms' vertices don't change (2 of 600 draws), so
+  the animation is all in the constants. Bone matrices are 3 rows (4x3) each from **c-36**; a vertex's index byte
+  is the register offset (0, 9, 12, ... in steps of 3). The AK's guns also come as bones, so the reload parts
+  (magazine, bolt) can be found the same way.
+- AK arms (2921 indices, 1465 vertices; model space metres-ish, x right, z forward): index 0 the root (845
+  vertices, identity); right arm 9 upper arm (z -0.19), 12 forearm (-0.02), 15 wrist (0.13), 18 hand (0.18), 21-63
+  fingers and thumb (0.20-0.31); left arm 66 upper arm (x -0.12, z -0.18), 69 forearm (0.11), 72 hand (0.21),
+  90-129 fingers. The view-projection rows sit at c-86..c-83, the camera at c-82..c-79.
+- Dumps (`dev_dumpgun`: the program, constants, indices and vertices of each gun list mesh, once each) are game
+  data: they stay on the headset and in the scratchpad, never in git.
+
+## 2026-11-21 — Own hands, first build (me)
+- **The bone indices are SHORT4** (D3DVSDT 0x45 at +16), not bytes; read as shorts, the skin is the plain palette
+  `c[-36 + index]`, 3 rows a bone, model-space vertices (joint gap 0.025 at base c-36, 0.08+ anywhere else).
+  The vertex shader (disassembled with a small nv2a reader, scratchpad `vsh.py`): `arl a0.x, v4` then 4 weighted
+  `mul/mad c[a0.x-36..-34]`, `dp4` with v0, projection rows c-86..c-83; c-82..c-80 the camera's axes for the
+  environment map. Bones output the game's view space G = C with z flipped.
+- Rig (AK 2921 and pistol 2927 the same): right 9 upper arm, 12 forearm, 15 forearm twist, 18 hand, 21-63
+  fingers; left 66 upper arm, 69 forearm, 72 hand, 75-129 fingers. Pivots (mesh space): right elbow
+  (0.128 -0.004 -0.107), wrist (0.116 0.005 0.137); left elbow (-0.128 -0.004 -0.107), wrist (-0.118 -0.015
+  0.145). Forearm 0.245 m: life size.
+- `VrPoseArms` (vr_gun.cpp), called by the renderer on the arms' draw with a copy of the constants: the draw keeps
+  the gun's K, and each posed bone becomes D⁻¹ Δ D B (D: G → C, z flip then K). The gun hand keeps the game's hand
+  on the grip; the off hand on the gun likewise, off it moved by its controller's K over the gun's. Shoulders from
+  the head's middle (17 cm out, 24 down, 6 back, the head's yaw); upper arm 0.28 m; out of reach the shoulder
+  comes to the hand. Elbow by two-bone IK, pole down/out/back; upper arm and forearm bones turned onto the new lines
+  about their joints (minimal rotation: no twist yet); hand and fingers moved together.
+- Grip points from the game's own hands: each frame the arms are drawn, the palms (S·B·palm, C before K) become
+  the rests VrGunPose puts on the controllers (eased, held during a melee swing). kGrips is only the first frame's
+  fallback now; the GRIP rows and vr_grips.txt are gone. The clip-plane split is gone.
+- Off hand: **toggle grip** (a press near where it holds the gun takes hold, the next press lets go); on a long
+  gun, holding aims the barrel from the gun hand toward the off hand (the shot too); pistols are held, not aimed.
+- Not yet seen in the headset (it went offline after the build).
+- **Mirror**: the arms came out on the wrong sides with the gun 20 cm off. The shader's projection (c-86) has x
+  -1.13, the d3d projection transform (what EyeMatrix inverts) +1.13, so G is x left: C = G with x **and** z
+  flipped, and the mesh's +x arm (bones 9-63, the one with the twist bone) is the left. With that, the game's
+  palms land within 2-8 cm of the old kGrips handles (AK right palm 0.065 -0.224 -0.162 vs handle -0.016 -0.243
+  -0.182; pistol 0.183 -0.231 -0.166 vs 0.207 -0.263 -0.247).
+- Seen in the headset with fake hands (AK): free left arm ends at the left controller, right arm up to the grip;
+  with dev_lefton both hands on the gun (left on the handguard), the barrel aimed from the right hand toward the
+  left, the flash at the muzzle. Elbows bend down and out. Not seen: pistols, twist, real controllers.

@@ -25,6 +25,7 @@
 #include <thread>
 
 #include "app/app.h"
+#include "common/menu.h"
 #include "core/input.h"
 #include "core/log.h"
 #include "kernel/kernel.h"
@@ -39,6 +40,8 @@ constexpr uint32_t kScreenW = 1920;
 constexpr uint32_t kScreenH = 1080;
 constexpr float kScreenMetres = 3.2f;
 constexpr float kScreenDistance = 2.6f;
+constexpr float kPanelMetres = 1.6f;    // the settings panel over play: its quad's width, and how far ahead
+constexpr float kPanelDistance = 1.2f;
 
 XrInstance g_instance = XR_NULL_HANDLE;
 XrSystemId g_system = XR_NULL_SYSTEM_ID;
@@ -86,6 +89,12 @@ XrAction g_a = XR_NULL_HANDLE, g_b = XR_NULL_HANDLE, g_x = XR_NULL_HANDLE, g_y =
 XrAction g_menu = XR_NULL_HANDLE;
 XrAction g_pose = XR_NULL_HANDLE;  // grip poses, for the gestures (vr_body.cpp)
 XrSpace g_hand_space[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
+XrAction g_aim = XR_NULL_HANDLE;  // aim poses: where the gun in the hand points (vr_gun.cpp)
+XrSpace g_aim_space[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
+XrAction g_haptic = XR_NULL_HANDLE;
+std::atomic<uint32_t> g_rumble{0};  // left << 16 | right, the game's last, sent by the render thread
+std::atomic<uint32_t> g_pulse[2];   // a buzz asked for: amplitude (0..255) << 16 | milliseconds
+std::atomic<bool> g_left_grip_taken{false};  // the left grip holds the gun, not the white button
 
 // what the controllers last said, for the game thread
 struct Controls {
@@ -98,11 +107,17 @@ struct Controls {
     // local space, metres and metres a second: the hands' grips and the head's middle
     bool hand_ok[2] = {};
     float hand[2][3] = {}, hand_vel[2][3] = {};
+    bool aim_ok[2] = {};
+    float aim[2][4] = {};
+    float aim_pos[2][3] = {};  // the aim pose's origin (the menu's pointer)
     bool head_ok = false;
     float head[3] = {};
 };
 std::mutex g_controls_lock;
 Controls g_controls;
+// the quad imgui was last shown on (the theater screen or the settings panel), for the pointer. render thread
+XrPosef g_ui_pose{{0, 0, 0, 1}, {0, 0, 0}};
+XrExtent2Df g_ui_size{};
 
 const char* ResultName(XrResult r) {
     static char buf[XR_MAX_RESULT_STRING_SIZE];
@@ -167,7 +182,9 @@ bool CreateActions() {
         !MakeAction("x", "X", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_x) ||
         !MakeAction("y", "Y", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_y) ||
         !MakeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false, g_menu) ||
-        !MakeAction("grip_pose", "Hand", XR_ACTION_TYPE_POSE_INPUT, true, g_pose))
+        !MakeAction("grip_pose", "Hand", XR_ACTION_TYPE_POSE_INPUT, true, g_pose) ||
+        !MakeAction("aim_pose", "Aim", XR_ACTION_TYPE_POSE_INPUT, true, g_aim) ||
+        !MakeAction("haptic", "Rumble", XR_ACTION_TYPE_VIBRATION_OUTPUT, true, g_haptic))
         return false;
     // the touch profile: quest 3's touch plus controllers take it too
     const std::pair<XrAction, const char*> map[] = {
@@ -179,6 +196,8 @@ bool CreateActions() {
         {g_x, "/user/hand/left/input/x/click"},                 {g_y, "/user/hand/left/input/y/click"},
         {g_menu, "/user/hand/left/input/menu/click"},
         {g_pose, "/user/hand/left/input/grip/pose"},            {g_pose, "/user/hand/right/input/grip/pose"},
+        {g_aim, "/user/hand/left/input/aim/pose"},              {g_aim, "/user/hand/right/input/aim/pose"},
+        {g_haptic, "/user/hand/left/output/haptic"},            {g_haptic, "/user/hand/right/output/haptic"},
     };
     std::vector<XrActionSuggestedBinding> b;
     for (const auto& [action, path] : map) b.push_back({action, Path(path)});
@@ -197,6 +216,8 @@ bool CreateActions() {
         sc.subactionPath = g_hand[h];
         sc.poseInActionSpace.orientation.w = 1;
         if (XR_FAILED(xrCreateActionSpace(g_session, &sc, &g_hand_space[h]))) g_hand_space[h] = XR_NULL_HANDLE;
+        sc.action = g_aim;
+        if (XR_FAILED(xrCreateActionSpace(g_session, &sc, &g_aim_space[h]))) g_aim_space[h] = XR_NULL_HANDLE;
     }
     return true;
 }
@@ -251,6 +272,51 @@ void ReadControls() {
             if (v.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT)
                 c.hand_vel[h][0] = v.linearVelocity.x, c.hand_vel[h][1] = v.linearVelocity.y,
                 c.hand_vel[h][2] = v.linearVelocity.z;
+        }
+        for (int h = 0; h < 2 && g_local && g_display_time; h++) {
+            XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
+            if (!g_aim_space[h] || XR_FAILED(xrLocateSpace(g_aim_space[h], g_local, g_display_time, &l)) ||
+                !(l.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+                continue;
+            c.aim_ok[h] = true;
+            c.aim[h][0] = l.pose.orientation.x, c.aim[h][1] = l.pose.orientation.y;
+            c.aim[h][2] = l.pose.orientation.z, c.aim[h][3] = l.pose.orientation.w;
+            c.aim_pos[h][0] = l.pose.position.x, c.aim_pos[h][1] = l.pose.position.y;
+            c.aim_pos[h][2] = l.pose.position.z;
+        }
+        // haptics: a shot's buzz, else the game's rumble. Sent again every 80 ms as 120 ms buzzes while it lasts:
+        // the quest runtime cuts an infinite duration short, which left the game's rumble mostly unfelt
+        {
+            using clock = std::chrono::steady_clock;
+            static clock::time_point until[2], resend[2];
+            static uint32_t sent = 0;
+            auto now = clock::now();
+            uint32_t rumble = g_rumble.load(std::memory_order_relaxed);
+            bool changed = rumble != sent;
+            sent = rumble;
+            for (int h = 0; h < 2; h++) {
+                XrHapticActionInfo hi{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, g_haptic, g_hand[h]};
+                XrHapticVibration vib{XR_TYPE_HAPTIC_VIBRATION};
+                vib.frequency = XR_FREQUENCY_UNSPECIFIED;
+                if (uint32_t p = g_pulse[h].exchange(0); p) {
+                    vib.amplitude = float(p >> 16) / 255.0f;
+                    vib.duration = int64_t(p & 0xFFFF) * 1000000;
+                    until[h] = now + std::chrono::milliseconds(p & 0xFFFF);
+                    xrApplyHapticFeedback(g_session, &hi, reinterpret_cast<XrHapticBaseHeader*>(&vib));
+                    continue;
+                }
+                if (now < until[h]) continue;  // a buzz still running
+                float amp = float(h ? rumble & 0xFFFF : rumble >> 16) / 65535.0f;
+                if (amp <= 0) {
+                    if (changed) xrStopHapticFeedback(g_session, &hi);
+                    continue;
+                }
+                if (!changed && now < resend[h]) continue;
+                resend[h] = now + std::chrono::milliseconds(80);
+                vib.amplitude = std::min(amp, 1.0f);
+                vib.duration = 120 * 1000000LL;
+                xrApplyHapticFeedback(g_session, &hi, reinterpret_cast<XrHapticBaseHeader*>(&vib));
+            }
         }
         if (g_views_valid) {
             c.head_ok = true;
@@ -539,8 +605,63 @@ bool Hands(Hand& left, Hand& right, float head[3]) {
         out[h]->ok = c.hand_ok[h];
         std::memcpy(out[h]->pos, c.hand[h], sizeof(c.hand[h]));
         std::memcpy(out[h]->vel, c.hand_vel[h], sizeof(c.hand_vel[h]));
+        out[h]->aim_ok = c.aim_ok[h];
+        std::memcpy(out[h]->aim, c.aim[h], sizeof(c.aim[h]));
+        out[h]->grip = c.grip[h];
     }
     std::memcpy(head, c.head, sizeof(c.head));
+    return true;
+}
+void Rumble(uint16_t left, uint16_t right) {
+    uint32_t v = uint32_t(left) << 16 | right;
+    if (v && g_rumble.load(std::memory_order_relaxed) != v) LOG_FIRST(8, "xr: game rumble %u %u", left, right);
+    g_rumble.store(v, std::memory_order_relaxed);
+}
+void TakeLeftGrip(bool taken) { g_left_grip_taken.store(taken, std::memory_order_relaxed); }
+void Pulse(int hand, float amplitude, float seconds) {
+    if (hand < 0 || hand > 1) return;
+    uint32_t a = uint32_t(std::clamp(amplitude, 0.0f, 1.0f) * 255), ms = uint32_t(std::clamp(seconds, 0.0f, 1.0f) * 1000);
+    if (a && ms) g_pulse[hand].store(a << 16 | ms);
+}
+namespace {
+// v rotated by the unit quaternion q (or by its inverse)
+XrVector3f Rotate(const XrQuaternionf& q, XrVector3f v, bool inverse = false) {
+    float qx = inverse ? -q.x : q.x, qy = inverse ? -q.y : q.y, qz = inverse ? -q.z : q.z;
+    float tx = 2 * (qy * v.z - qz * v.y), ty = 2 * (qz * v.x - qx * v.z), tz = 2 * (qx * v.y - qy * v.x);
+    return {v.x + q.w * tx + (qy * tz - qz * ty), v.y + q.w * ty + (qz * tx - qx * tz),
+            v.z + q.w * tz + (qx * ty - qy * tx)};
+}
+}  // namespace
+
+bool MenuControls(MenuInput& in) {
+    Controls c;
+    {
+        std::lock_guard lock(g_controls_lock);
+        c = g_controls;
+    }
+    if (!c.live) return false;
+    in.stick[0] = c.stick[0][0];
+    in.stick[1] = c.stick[0][1];
+    in.a = c.a;
+    in.trigger = c.trigger[1] > 0.5f;
+    in.pointing = false;
+    if (c.aim_ok[1] && g_ui_size.width > 0) {
+        // the right aim ray in the quad's own space: the quad is z = 0, facing +z
+        const XrPosef& p = g_ui_pose;
+        XrQuaternionf aq{c.aim[1][0], c.aim[1][1], c.aim[1][2], c.aim[1][3]};
+        XrVector3f d = Rotate(p.orientation, Rotate(aq, {0, 0, -1}), true);
+        XrVector3f o = Rotate(p.orientation,
+                              {c.aim_pos[1][0] - p.position.x, c.aim_pos[1][1] - p.position.y,
+                               c.aim_pos[1][2] - p.position.z},
+                              true);
+        if (o.z > 0 && d.z < -1e-3f) {
+            float t = -o.z / d.z;
+            float x = o.x + d.x * t, y = o.y + d.y * t;
+            in.u = x / g_ui_size.width + 0.5f;
+            in.v = 0.5f - y / g_ui_size.height;
+            in.pointing = in.u >= 0 && in.u <= 1 && in.v >= 0 && in.v <= 1;
+        }
+    }
     return true;
 }
 bool HeadAngles(float& yaw, float& pitch) {
@@ -671,7 +792,7 @@ bool AcquireScreen(int eye, uint32_t& index) {
 
 void ReleaseScreen(int eye) { xrReleaseSwapchainImage(Chain(eye), nullptr); }
 
-void EndFrame(bool drawn, bool theater) {
+void EndFrame(bool drawn, bool theater, bool panel) {
     struct Unlock {
         ~Unlock() {
             if (g_frame_locked) g_session_lock.unlock();
@@ -694,11 +815,37 @@ void EndFrame(bool drawn, bool theater) {
         proj.space = g_local;
         proj.viewCount = 2;
         proj.views = pv;
-        const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&proj)};
+        // the settings panel: placed where the head looked as it opened, upright, facing it
+        static bool placed = false;
+        static XrPosef at{};
+        if (!panel) placed = false;
+        if (panel && !placed && g_views_valid) {
+            placed = true;
+            const XrPosef& h = g_render_views[0].pose;
+            const XrQuaternionf& q = h.orientation;
+            float fx = -2 * (q.x * q.z + q.w * q.y), fz = -(1 - 2 * (q.x * q.x + q.y * q.y));  // -z rotated
+            float yaw = std::atan2(-fx, -fz), l = std::sqrt(fx * fx + fz * fz);
+            if (l < 1e-3f) fx = 0, fz = -1, l = 1;
+            at.position = {0.5f * (h.position.x + g_render_views[1].pose.position.x) + fx / l * kPanelDistance,
+                           0.5f * (h.position.y + g_render_views[1].pose.position.y) - 0.1f,
+                           0.5f * (h.position.z + g_render_views[1].pose.position.z) + fz / l * kPanelDistance};
+            at.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
+        }
+        XrCompositionLayerQuad over{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        over.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;  // imgui over clear: premultiplied
+        over.space = g_local;
+        over.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        over.subImage.swapchain = g_screen;
+        over.subImage.imageRect = {{0, 0}, {int32_t(kScreenW), int32_t(kScreenH)}};
+        over.pose = at;
+        over.size = {kPanelMetres, kPanelMetres * kScreenH / kScreenW};
+        const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&proj),
+                                                        reinterpret_cast<XrCompositionLayerBaseHeader*>(&over)};
         XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
         ei.displayTime = g_display_time;
         ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        ei.layerCount = drawn && g_views_valid ? 1 : 0;
+        ei.layerCount = drawn && g_views_valid ? (panel && placed ? 2 : 1) : 0;
+        if (panel && placed) g_ui_pose = over.pose, g_ui_size = over.size;
         ei.layers = layers;
         XrResult r = xrEndFrame(g_session, &ei);
         if (XR_FAILED(r)) LOG_FIRST(4, "xr: xrEndFrame failed (%s)", ResultName(r));
@@ -714,6 +861,7 @@ void EndFrame(bool drawn, bool theater) {
     quad.pose.orientation.w = 1;
     quad.pose.position = {0, 0, -kScreenDistance};
     quad.size = {kScreenMetres, kScreenMetres * kScreenH / kScreenW};
+    g_ui_pose = quad.pose, g_ui_size = quad.size;
     const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad)};
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
     ei.displayTime = g_display_time;
@@ -742,6 +890,23 @@ void ApplyPad(int port, input::Pad& p) {
     static clock::time_point start_until;
     auto now = clock::now();
     bool start = false, back = false;
+    // the settings panel (blackquest's cheats and vr settings): left grip held + the menu button, anywhere; while
+    // it's open the menu button or B closes it and the game gets nothing
+    static bool combo = false, b_was = false;
+    bool b_edge = c.b && !b_was;
+    b_was = c.b;
+    if (c.menu && !menu_was && (c.grip[0] > 0.6f || app::MenuOpen())) {
+        combo = true;
+        app::ToggleMenu();
+    } else if (b_edge && app::MenuOpen()) {
+        app::ToggleMenu();
+    }
+    if (combo || app::MenuOpen()) {
+        if (!c.menu) combo = false;
+        menu_was = c.menu;
+        back_sent = true;  // the press that opened or closed it is no START
+        return;
+    }
     if (c.menu && !menu_was) {
         menu_down = now;
         back_sent = false;
@@ -763,7 +928,8 @@ void ApplyPad(int port, input::Pad& p) {
     p.rx = further(p.rx, axis(c.stick[1][0]));
     p.ry = further(p.ry, axis(c.stick[1][1]));
     const uint8_t a[8] = {uint8_t(c.a ? 255 : 0), uint8_t(c.b ? 255 : 0), uint8_t(c.x ? 255 : 0),
-                          uint8_t(c.y ? 255 : 0), analog(c.grip[1]), analog(c.grip[0]),
+                          uint8_t(c.y ? 255 : 0), analog(c.grip[1]),
+                          analog(g_left_grip_taken.load(std::memory_order_relaxed) ? 0.0f : c.grip[0]),
                           analog(c.trigger[0]), analog(c.trigger[1])};
     for (int i = 0; i < 8; i++) p.analog[i] = std::max(p.analog[i], a[i]);
     if (start) p.buttons |= 1 << 4;

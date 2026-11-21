@@ -14,6 +14,8 @@
 #include "xdk/hle.h"
 #include "xdk/layout.h"
 
+#include "xr.h"
+
 using namespace kernel;
 using namespace layout;
 
@@ -24,6 +26,9 @@ void SceneDraws(int kind);
 
 namespace game {
 bool VrMeleeHidden();  // vr_body.cpp
+void VrGunFrame(X86Context& ctx);  // vr_gun.cpp
+bool VrGunInHand();
+bool VrGunMap(float* m, bool axes);
 void EspCamera();  // esp.cpp
 }
 
@@ -222,10 +227,12 @@ X86_EXTERN_FUNC(__imp__sub_00176F60);
 X86_FUNC(sub_00176F60) {
     if (ctx.esi == R32(kDisplay) + kDisplayDrawLists + kAlphaDrawList * kDrawListSize) game::EspCamera();
     bool gun_list = ctx.esi == R32(kDisplay) + kDisplayDrawLists + kGunDrawList * kDrawListSize;
-    // vr: the player's own arm swing is the melee; the game's swing of the gun and arms isn't drawn (vr_body.cpp)
-    if (gun_list && game::VrMeleeHidden()) return;
+    // vr: the player's own arm swing is the melee. in the hand the gun keeps still through the game's swing
+    // (vr_gun.cpp); head-locked (no controller) the swing isn't drawn (vr_body.cpp)
+    if (gun_list && game::VrMeleeHidden() && !game::VrGunInHand()) return;
     bool gun = g_gun != 1 && gun_list;
     if (gun) d3d::ViewScale(g_gun);
+    if (gun_list) game::VrGunFrame(ctx);
     d3d::SceneDraws(gun_list ? 2 : 1);
     __imp__sub_00176F60(ctx, base);
     d3d::SceneDraws(0);
@@ -251,8 +258,14 @@ constexpr uint32_t kMatrixPosition = 48;  // the last of a matrix's four rows
 
 // A locator's matrix moved onto the gun's picture, as a copy: the game's own stays where bullets start
 static uint32_t Follow(uint32_t matrix, uint32_t owner, bool axes) {
-    if (g_gun == 1 || matrix == 0x5655C0 || owner != Player()) return matrix;
+    if (matrix == 0x5655C0 || owner != Player()) return matrix;
     static uint32_t copy = mem::AllocSystem(64, 16);
+    // vr: the gun is in the hand (vr_gun.cpp)
+    if (stereo::Eyes() == 2) {
+        std::memcpy(HostPtr(copy), HostPtr(matrix), 64);
+        return game::VrGunMap(&G<float>(copy), axes) ? copy : matrix;
+    }
+    if (g_gun == 1) return matrix;
     std::memcpy(HostPtr(copy), HostPtr(matrix), 64);
     for (uint32_t row = axes ? 0 : kMatrixPosition; row < 64; row += 16) OnGun(copy + row, row == kMatrixPosition);
     return copy;
@@ -260,22 +273,10 @@ static uint32_t Follow(uint32_t matrix, uint32_t owner, bool axes) {
 
 constexpr uint32_t kEffectOwner = 0x44;
 
-// vr: the flash sprite sits on the aim line near the screen's centre, made for the flat picture, and no offset put
-// it on the barrel in vr (user: 4-5 in left, then 2 in right, then 4 in right). The gun list has its own muzzle mesh
-// on the barrel, so in vr the sprite is shrunk to nothing
-constexpr float kVrFlashScale = 1e-4f;
-
-// the muzzle flash sprite, drawn with the matrix
-void FlashSprite(X86Context& ctx, uint8_t*) {
-    if (stereo::Eyes() != 2) {
-        ctx.eax = Follow(ctx.eax, Player(), true);
-        return;
-    }
-    static uint32_t copy = mem::AllocSystem(64, 16);
-    std::memcpy(HostPtr(copy), HostPtr(ctx.eax), 64);
-    for (uint32_t i = 0; i < 12; i++) G<float>(copy + i * 4) *= kVrFlashScale;
-    ctx.eax = copy;
-}
+// the muzzle flash sprite, drawn with the matrix (a locator of the gun). vr: the offsets tried before (user: 4-5 in
+// left, 2 in right, 4 in right) were the head's place in the room: the sprite is drawn with the room's eye, the gun
+// with the head's. Now both go to the hand (Follow → vr_gun.cpp)
+void FlashSprite(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, Player(), true); }
 
 // The view setups store tan(half view) at camera manager +0x16A0 and ~15 readers scale distances by it. In vr the
 // game's view is 160 degrees for culling, so the LOD pick (FUN_001C8360, its compare at 0x1C8427) saw everything
@@ -314,7 +315,9 @@ X86_FUNC(sub_001D2860) {
     uint32_t from = R32(ctx.esp);
     uint32_t out = R32(ctx.esp + 4);
     __imp__sub_001D2860(ctx, base);
-    if (g_gun != 1 && (from == kFromTracerA || from == kFromTracerB)) OnGun(out + kMatrixPosition, true);
+    bool tracer = from == kFromTracerA || from == kFromTracerB;
+    if (tracer && stereo::Eyes() == 2) game::VrGunMap(&G<float>(out), true);
+    else if (g_gun != 1 && tracer) OnGun(out + kMatrixPosition, true);
 }
 
 // Recoil dies away by a factor a frame. ebx the player: the kick a shot leaves (0x1EFE58) is spent here before
@@ -661,7 +664,8 @@ void DrawListRoom(X86Context&, uint8_t*) {
 }
 
 // reload animations start the screen blur
-bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur; }
+// (never in the headset: a full view blur there is sickening)
+bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur && !xr::Active(); }
 
 // the blur holds for the animation's frames times the last frame's time: frames of the game's frame rate instead
 constexpr uint32_t kAnimationFrames = 0x1C;

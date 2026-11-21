@@ -41,8 +41,20 @@ struct Hand {
     bool ok;
     float pos[3];
     float vel[3];
+    bool aim_ok;     // the aim pose's orientation (x y z w): -z where the controller points, +y its top
+    float aim[4];
+    float grip;      // the grip button, 0..1
 };
 bool Hands(Hand& left, Hand& right, float head[3]);
+// the view's raise over the headset's own height (user: 15 cm was too much, 5 cm); shared by the renderer and the
+// gun in the hand, which must agree on where the room is
+constexpr float kEyeRaise = 0.05f;
+// game thread: the game's rumble on the controllers (left motor the left hand, right the right), 0..65535
+void Rumble(uint16_t left, uint16_t right);
+// any thread: a short buzz on a hand (0 left, 1 right), over the game's rumble: a shot's kick
+void Pulse(int hand, float amplitude, float seconds);
+// game thread: the left grip holds the gun (the left hand is at it or on it): kept from the game's white button
+void TakeLeftGrip(bool taken);
 // which an image of ScreenImages is: eye 0 or 1, or the theater screen; and its size
 constexpr int kTheater = 2;
 int ImageEye(uint32_t index);
@@ -65,7 +77,20 @@ bool RenderEye(int eye, EyeView& out);
 bool BeginFrame();
 bool AcquireScreen(int eye, uint32_t& index);
 void ReleaseScreen(int eye);
-void EndFrame(bool drawn, bool theater = true);
+void EndFrame(bool drawn, bool theater = true, bool panel = false);
+// the settings panel over play (stereo): the screen's swapchain on a quad 1 m ahead of where the head looked when it
+// opened, alpha blended over the eyes
+// render thread: the touch controllers for the settings panel's navigation (left stick, A), and the right
+// controller's pointer: where its ray meets the quad imgui was last shown on (0..1 across and down; false: off it)
+// and its trigger. false when not live
+struct MenuInput {
+    float stick[2];
+    bool a;
+    bool pointing;
+    float u, v;
+    bool trigger;
+};
+bool MenuControls(MenuInput& in);
 
 // the app quitting (sdl's thread): the session and instance handed back to the runtime first
 void Shutdown();

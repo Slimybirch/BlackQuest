@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "app/app.h"
 #include "core/log.h"
 #include "game/layout.h"
 #include "kernel/disc.h"
@@ -966,11 +967,61 @@ void FillMedkits() { g_medkits = true; }
 
 void SetAutoSuppressor(bool on) { g_auto_suppressor = on; }  // add its declaration to game/weapons.h
 
+// the table code of the weapon in the player's hand ("AK1", "PST"...), empty when none; game thread (vr_gun.cpp)
+std::string HeldCode() {
+    Level l;
+    if (!ReadLevel(l)) return {};
+    uint32_t held = R32(l.inventory + kInvHeld);
+    if (!held) return {};
+    int type = G<uint8_t>(held + kWeaponType);
+    return type < l.count ? CodeOf(Decode(EntryKey(l, type))) : std::string();
+}
+
 }  // namespace weapons
+
+// dev testing in the headset without the controllers: dev_give in the app's folder holds weapon codes ("AK1", or
+// several: each for 10 s, then the next), given once a level has run a few seconds, retried till it's in hand
+void DevGive(X86Context& ctx) {
+    static std::vector<std::string> list = [] {
+        std::ifstream f(app::ExeDir() / "dev_give");
+        std::vector<std::string> v;
+        for (std::string c; f >> c;) v.push_back(c);
+        return v;
+    }();
+    static double since = 0, last = 0, got = 0;
+    static int tries = 0;
+    static size_t at = 0;
+    Level l;
+    if (list.empty() || tries >= 10 || !ReadLevel(l)) {
+        since = 0;
+        return;
+    }
+    double now = Seconds();
+    if (!since) since = now;
+    if (now - since < 4 || now - last < 2) return;
+    const std::string& want = list[at];
+    if (weapons::HeldCode() == want) {
+        if (!got) got = now;
+        if (now - got > 10 && at + 1 < list.size()) at++, got = 0, tries = 0;
+        return;
+    }
+    last = now;
+    tries++;
+    for (int t = 0; t < l.count; t++)
+        if (CodeOf(Decode(EntryKey(l, t))) == want) {
+            LOGR("weapons: dev_give %s (try %d)", want.c_str(), tries);
+            DoGive(ctx, t);
+            return;
+        }
+    LOGR("weapons: dev_give %s: not in this level's table", want.c_str());
+    if (at + 1 < list.size()) at++, tries = 0;
+    else tries = 10;
+}
 
 // game thread, each menu and HUD tick (hooks.cpp MenuTick)
 void WeaponsTick(X86Context& ctx) {
     static int tick;
+    DevGive(ctx);
     if (int type = g_give.exchange(-1); type >= 0) DoGive(ctx, type);
     if (g_fill.exchange(false)) DoFill();
     if (g_medkits.exchange(false)) DoFillMedkits();

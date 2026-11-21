@@ -48,6 +48,46 @@
 - [ ] comfort: vignette when moving, turn speed, seated mode
 - [ ] camera shake / head bob off (option to keep a little); cutscene cameras on the theater screen
 
+## Phase 4 (motion-controller aiming, gun in the hand)
+- [x] gun list moved to the right controller (K in EyeMatrix), anchor from the muzzle (vr_gun.cpp)
+- [x] player bullets from the muzzle along the gun (0x1DB7B0); flash sprite, gun effects, tracers on the barrel
+- [x] game rumble → controller haptics
+- [x] user test 1: gun too far back, shots from the head, flash random, melee hid the gun, arms together
+- [x] fixes: renderware rows (mirror), shot hook keyed on 0x1DC0D6, gun locked to its muzzle frame, handles per
+      weapon (kGrips), left arm split to the left controller, melee keeps the gun in the hand
+- [x] user test 2: shots from the barrels, haptics felt, near shots right; AK grip 4" too far forward, AK left of
+      centre at range and off when aiming in, reload blur unwanted
+- [x] fixes: AK grip back 0.10 m, shot direction from the hand's aim (game spread kept), reload blur off in vr
+- [x] user test 3: aiming in and range fine; rifle hands off; left arm stuck; melee elbow; no recoil; no rumble
+- [x] fixes: arms by index range, left hand takes/lets go of the gun by grip, pistols split, left arm hidden in
+      melee, the game's kick on the gun, per-shot buzz, rumble resent, GRIP FORWARD / HEIGHT rows
+- [ ] check in the headset (needs light): left arm off and on, recoil per gun, buzz, melee elbow
+- [x] user test 4: vibration felt; AK grip set by the user (0.68 back, baked in; vr_grips.txt cleared)
+- [x] own hands first build: bones posed (IK elbows, shoulders by the head), grips from the game's palms, toggle
+      grip, two-handed aim; not yet seen in the headset
+- [ ] own hands: forearm twist following the hand; scale check vs the controllers; the left hand's open pose
+      when off the gun (the game's is closed on a fore-grip)
+- [ ] own hands (user, 2026-11-21): the game's arms mesh posed by our bones (it is GPU-skinned, bones from c-36):
+      each hand on its controller, two-bone IK for the elbows, the game's finger poses kept. Grabbing a gun snaps
+      the gun hand to its grip and the off hand to the game's own fore-grip hold, wherever the controller is (the
+      game's hand bones on the gun give both, so no per-weapon grip table or GRIP rows once this works)
+- [ ] reload by hand: which gun bones each reload animation moves (magazine, bolt...) are the parts to grab
+- [ ] projectiles: RPG and grenade launcher from the gun
+- [ ] hide the head-locked crosshair; aiming in (LT) in vr: zoom off, gun stays in the hand
+- [ ] arms: forearms trailing the hands look odd (trim/hide option); the hand lets go briefly in melee; left-handed option
+- [ ] two handed: the left arm only follows the left controller; aiming by the line between the hands still to do
+- [ ] two-handed weapons (key, user 2026-11-20), pistols included. Long guns (rifles, shotguns, launchers): the
+      off hand grips the fore-grip (grip button near it) and the gun aims along the line between the hands (gun
+      hand the pivot, its roll kept). Pistols: the off hand cups the gun hand (grip near it); the hands are too
+      close for a line to aim by, so the hold steadies the gun instead (less jitter, smoothed aim) and the off
+      hand is drawn on the grip. Off the grip: one-handed, as now. Hold/toggle/proximity option; optional
+      virtual stock for long guns
+- [ ] picking weapons up by hand (key, user 2026-11-20): reach to a weapon on the ground or in the world and grip
+      it to take it, instead of standing on it and pressing X. Needs the pickups' positions (world weapon list
+      / the pickup test behind X) and a grab radius (~20 cm) around the hand; the grab then fires the game's own
+      pickup for that item. Highlight in reach. X stays as a fallback
+- [ ] scope as a lens (Wishlist); recoil kick on the hand model
+
 ## VR controls (user, 2026-11-19)
 - [x] right stick down → medpack (D-pad down)
 - [x] right stick up → D-pad up (firing mode)
@@ -70,6 +110,10 @@
 - [ ] scoped weapons (Phase 4, with the gun in the hand): the scope as a lens. The zoomed view is rendered to a
       small target and drawn on the scope's glass, so aiming means bringing the scope up to your eye; never zoom
       the whole headset view. The game's own scope overlay and zoom are off in VR.
+- [x] first cut (2026-11-20): left grip + menu opens a panel with the cheats and TURNING, title and play (NOTES)
+- [x] user: couldn't move through it (imgui's gamepad nav was never enabled); now also the right controller's
+      pointer, trigger clicks
+- [ ] user: pointer, stick navigation, panel placement/readability, cheats from the title
 - [ ] VR Settings window (Phase 7; replaces the planned VR options page): its own window on the virtual screen,
       opened from the pause menu and from beside the main menu (the same window). Settings that only apply in
       play (cheats, for one) are shown greyed out outside a level. Laser pointer and stick navigation. Pages:
@@ -89,8 +133,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       hand's hip (option: left / right / off hand). Insert on letting go near the magazine well, or on touching it
       (option, ~15 cm radius). Then a rack/chamber step only when the gun was emptied (Black's empty reload).
       The game's reload runs when the mag goes in, with its animation hidden; the reload button stays as an option
-- [ ] two-handed aiming: the off hand on the fore-grip steadies the gun along the line between the hands. Grip by
-      holding, toggling, or just having the hand near it (option). Optional virtual stock (shouldered offset)
+- [ ] two-handed aiming: see Phase 4
 - [ ] haptics: firing (by weapon), hits taken, reload steps, pickups; a strength slider
 - [ ] gun against walls: the muzzle pulled back or the gun lowered when it would go into a wall (option)
 - [ ] grenades from a belt (Phase 6): grab one from the chest/hip with the off hand, pull, throw

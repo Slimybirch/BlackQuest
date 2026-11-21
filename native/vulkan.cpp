@@ -26,6 +26,7 @@
 
 #include "app/app.h"
 #include "common/aspect.h"
+#include "common/menu.h"
 #include "common/options.h"
 #include "core/log.h"
 #include "d3d/gpu_frame.h"
@@ -42,6 +43,9 @@
 
 namespace game {
 float VrViewLift();  // src/game/vr_body.cpp
+bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot, float* pos);  // src/game/vr_gun.cpp
+bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4]);  // src/game/vr_gun.cpp: own hands
+bool VrMeleeHidden();  // src/game/vr_body.cpp: a melee swing is on
 }
 
 namespace gpu {
@@ -924,12 +928,15 @@ bool Invert4(const float* m, float* o) {
 }
 
 constexpr float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+// the first person arms' mesh in the gun list (both arms; the gun is the other draw): 2919 to 2927 indices on every
+// weapon logged (pistol, AK, shotgun, M16, SMG), the guns 5156 to 6773. textures move, so the count it is
+constexpr bool IsArms(uint32_t indices) { return indices >= 2880 && indices <= 2970; }
 // game units per metre: assumed 1 until phase 2's scale check (the eye height the player matrix adds, 0.2 below
 // the head, reads as metres)
 constexpr float kUnitsPerMetre = 1.0f;
-// the view's raise over the headset's own height (user: 15 cm was too much, 5 cm); the view follows the headset up and
-// down, and game::VrViewLift gives back the game's camera drop while a real crouch crouches it (vr_body.cpp)
-constexpr float kEyeRaise = 0.05f;
+// the view's raise over the headset's own height: xr::kEyeRaise. the view follows the headset up and down, and
+// game::VrViewLift gives back the game's camera drop while a real crouch crouches it (vr_body.cpp)
+using xr::kEyeRaise;
 // the head-locked hud plane: metres ahead and half its width (30 degrees each side), its height by the screen's shape
 constexpr float kHudDistance = 1.5f;
 constexpr float kHudHalfWidth = 0.87f;
@@ -973,7 +980,9 @@ bool HudMatrix(int eye, float aspect, float* out) {
 // E = VP · P_eye · V_eye · P_game⁻¹ · VP⁻¹, column vectors; the shader's clip is D3D's (y up, z 0..1)
 // gun: the viewmodel hangs off the head, not the room: only the eye's offset from the head's middle moves it, so
 // it stays at the face wherever the player stands (the room's origin is where the session started)
-bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out) {
+// arm: the gun list's arms split between the hands (1 the gun hand's part, 0 the left arm), plane then the clip
+// plane on the game's clip position that keeps that part (EyeHlsl)
+bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out, int arm = -1, float* plane = nullptr) {
     xr::EyeView ev;
     if (!xr::RenderEye(eye, ev)) return false;
     const float* P = s.transforms[kTsProjection].data();  // d3d rows: clip = v · P
@@ -1014,6 +1023,13 @@ bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out) 
         std::memcpy(R, r, sizeof(r));
     }
     float sz = -f;  // S = diag(1, 1, sz)
+    // phase 4: the gun list moved to the hand by K (vr_gun.cpp), then seen from the room like the world
+    float krot[9], kpos[3];
+    bool hand = gun && s.transforms[4][4] == 1.0f &&
+                ::game::VrGunPose(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5], arm == 0 ? 0 : 1, krot,
+                                  kpos);
+    if (hand) gun = false;
+    if (arm >= 0 && !hand) return false;
     float px = ev.pos[0] * kUnitsPerMetre, py = (ev.pos[1] + kEyeRaise + ::game::VrViewLift()) * kUnitsPerMetre, pz = ev.pos[2] * kUnitsPerMetre;
     xr::EyeView other;
     if (gun && xr::RenderEye(1 - eye, other)) {
@@ -1034,6 +1050,17 @@ bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out) 
         for (int j = 0; j < 3; j++) view[i * 4 + j] = S[i] * R[j * 3 + i] * S[j];
     for (int i = 0; i < 3; i++) view[i * 4 + 3] = -S[i] * (R[0 * 3 + i] * px + R[1 * 3 + i] * py + R[2 * 3 + i] * pz);
     view[15] = 1;
+    if (hand) {
+        // K in the game's view space: S K S
+        float k[16] = {};
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) k[i * 4 + j] = S[i] * krot[i * 3 + j] * S[j];
+            k[i * 4 + 3] = S[i] * kpos[i] * kUnitsPerMetre;
+        }
+        k[15] = 1;
+        Mul4(view, k, view);
+    }
+    (void)plane;  // the clip-plane split of the arms is gone (own hands pose their bones)
     float m[16];
     Mul4(vpc, pe, m);
     Mul4(m, view, m);
@@ -1054,8 +1081,18 @@ std::string EyeHlsl(std::string src) {
         any = true;
     }
     if (!any) return src;
+    // and a clip distance from the pushed plane (zero: nothing clipped), which splits the gun list's arms
+    const std::string tail = "    float fogamt : TEXCOORD4;\n};";
+    if (size_t p = src.find(tail); p != std::string::npos) {
+        src.insert(p + tail.size() - 2, "    float eye_cd : SV_ClipDistance0;\n");
+        for (const char* var : {"q", "cp"}) {
+            std::string at = std::string("    o.pos = mul(eye_m, ") + var + ");\n";
+            if (size_t a = src.find(at); a != std::string::npos)
+                src.insert(a + at.size(), std::string("    o.eye_cd = dot(eye_clip, ") + var + ");\n");
+        }
+    }
     // a cbuffer, not a struct variable: glslang makes the latter a member of $Global, a uniform nothing fills
-    return "[[vk::push_constant]] cbuffer EyePc { row_major float4x4 eye_m; };\n" + src;
+    return "[[vk::push_constant]] cbuffer EyePc { row_major float4x4 eye_m; float4 eye_clip; };\n" + src;
 }
 
 void FillTransformConstants(const State& s, GuestExtent size, DrawConstants& c) {
@@ -1328,6 +1365,7 @@ private:
     bool scene_proj_ok_[2] = {};
     bool last_theater_ = true;  // the last present went to the theater screen: no hud plane
     uint32_t frame_world_ = 0;  // world draws since the last present: none puts the frame on the theater screen
+    bool panel_ = false;        // DrawFrame is drawing the settings panel's quad: cleared transparent
     float stat_proj_[16] = {};
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
@@ -1590,6 +1628,7 @@ bool VulkanBackend::CreateDevice() {
     feats_.samplerAnisotropy = f2.features.samplerAnisotropy;
     feats_.fillModeNonSolid = f2.features.fillModeNonSolid;
     feats_.textureCompressionBC = f2.features.textureCompressionBC;
+    feats_.shaderClipDistance = f2.features.shaderClipDistance;  // the gun list's arms split (EyeHlsl)
     bc_ = feats_.textureCompressionBC;
     VkPhysicalDeviceFeatures2 on{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, chain()};
     on.features = feats_;
@@ -1790,7 +1829,7 @@ bool VulkanBackend::CreateLayouts() {
     pi.setLayoutCount = 1;
     pi.pSetLayouts = &set_layout_;
     // the eye matrix every draw pushes (EyeHlsl)
-    VkPushConstantRange eye{VK_SHADER_STAGE_VERTEX_BIT, 0, 64};
+    VkPushConstantRange eye{VK_SHADER_STAGE_VERTEX_BIT, 0, 80};  // and the clip plane
     pi.pushConstantRangeCount = 1;
     pi.pPushConstantRanges = &eye;
     VK_CHECK(vkCreatePipelineLayout(dev_, &pi, nullptr, &layout_));
@@ -3108,7 +3147,16 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         FillTransformConstants(s, size, c);
         FillLightConstants(s, sh.fk, c);
     }
-    Alloc vc = Constants(s.vsc.data(), sizeof(s.vsc));
+    // own hands: the arms' bones posed by vr_gun.cpp, the game's own left as they are elsewhere
+    Alloc vc;
+    if (stereo_ && s.transforms[4][0] == 2.0f && s.transforms[4][4] == 1.0f && IsArms(a.index_count)) {
+        auto posed = s.vsc;
+        ::game::VrPoseArms(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
+                           reinterpret_cast<float (*)[4]>(posed.data()));
+        vc = Constants(posed.data(), sizeof(posed));
+    } else {
+        vc = Constants(s.vsc.data(), sizeof(s.vsc));
+    }
     Alloc dc = Constants(&c, sizeof(c));
     VkBuffer vbufs[16];
     VkDeviceSize voffs[16];
@@ -3193,14 +3241,19 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     if (a.pretransformed && depth && !overlay) stat_flat_z_++;
     if ((world || gun) && eye_ == 0) frame_world_++;
     if (stereo_ && world && listed && eye_ == 0) std::memcpy(stat_proj_, proj, sizeof(stat_proj_));
-    vkCmdPushConstants(Cb(), layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(eye_m), eye_m);
     if (a.buffer_count) vkCmdBindVertexBuffers(Cb(), 0, a.buffer_count, vbufs, voffs);
-    if (a.index_count) {
+    if (a.index_count)
         vkCmdBindIndexBuffer(Cb(), ib.buf, ib.off, a.index16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(Cb(), a.index_count, 1, 0, a.base_vertex, 0);
-    } else {
-        vkCmdDraw(Cb(), a.draw_count, 1, 0, 0);
-    }
+    // the eye matrix and a clip plane (none: zero) with each draw (EyeHlsl)
+    auto emit = [&](const float* m, const float* clip) {
+        float pc[20] = {};
+        std::memcpy(pc, m, 64);
+        if (clip) std::memcpy(pc + 16, clip, 16);
+        vkCmdPushConstants(Cb(), layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), pc);
+        if (a.index_count) vkCmdDrawIndexed(Cb(), a.index_count, 1, 0, a.base_vertex, 0);
+        else vkCmdDraw(Cb(), a.draw_count, 1, 0, 0);
+    };
+    emit(eye_m, nullptr);
 }
 
 VkRect2D ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {
@@ -3504,7 +3557,7 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    ca.clearValue.color = {{0, 0, 0, 1}};
+    ca.clearValue.color = {{0, 0, 0, panel_ ? 0.0f : 1.0f}};  // the panel's quad is blended over the eyes
     VkRenderingInfoKHR ri{VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
     ri.renderArea = {{0, 0}, swap_extent_};
     ri.layerCount = 1;
@@ -3529,8 +3582,8 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         SetScissor(0, 0, int32_t(w), int32_t(h));
         vkCmdDraw(cb, 3, 1, 0, 0);
     }
-    // imgui makes one frame per call: in stereo the left eye has it (phase 7 puts menus on a panel of their own)
-    if (!stereo_ || xr::ImageEye(index) != 1) RenderUi();
+    // imgui makes one frame per call: on the theater screen, or over play on the panel, never in an eye
+    if (!eye_image) RenderUi();
     if (dynamic_)
         end_rendering_(cb);
     else
@@ -3675,11 +3728,19 @@ void VulkanBackend::Present(const Surface& front) {
                 if (got[e]) DrawFrame(eyes[e], idx[e]);
             }
         }
+        // the settings panel over play: imgui on the screen's swapchain, a quad of its own
+        uint32_t pidx = 0;
+        bool panel = !theater && begun && app::MenuOpen() && xr::AcquireScreen(xr::kTheater, pidx);
+        if (panel) {
+            panel_ = true;
+            DrawFrame(nullptr, pidx);
+            panel_ = false;
+        }
         Submit(false, false);
-        if (theater && got[0]) xr::ReleaseScreen(xr::kTheater);
+        if ((theater && got[0]) || panel) xr::ReleaseScreen(xr::kTheater);
         for (int e = 0; e < 2 && !theater; e++)
             if (got[e]) xr::ReleaseScreen(e);
-        xr::EndFrame(got[0] && got[1], theater);
+        xr::EndFrame(got[0] && got[1], theater, panel);
         if (presents_ % 360 == 0) {
             const float* p = stat_proj_;
             // flat z: pretransformed depth-tested draws off the 2d layer (cpu-projected effects would show here)
