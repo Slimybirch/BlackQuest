@@ -911,3 +911,246 @@ loaded gun should throw a round out (one fewer). Gave the go-ahead to install an
 - dev_maghand: 2 s after an eject a magazine is in the off hand, held, never lined up (with dev_eject, dev_fakehands)
 Headset (dev hands, pistol): eject, the drop logged, the magazine held in the left fist 30+ s, its top out of the
 fist. The floor landing wasn't in view (the dev view looks ahead).
+
+## 2026-11-22 — The guns' real reload sounds: names found on the disc
+User: find the game's real rack sounds (syncing them to the hand's motion is a later TODO).
+- Disc layout (XDVDFS, walked recursively with a scratch lister): `/levels/level_NN/fpguns/bg1_<gun>.db` (+`.wdd`)
+  per first-person gun; `/sound/banks/Anim.awd` (character foley: ChngWpn0-2, Silencer_On/Of, melee, steps: no
+  reloads); `/sound/streams/*.bks` music/ambience; `/levels/*/stg_0001/AIWpns.awd` the AI's guns.
+- Each gun's `.db` carries its reload animation's triggers: `animtrigger:weapon reload`, and
+  `animtrigger:gunaudio <name>...`, the sounds the animation plays, plus a wave dictionary naming them (entries:
+  name, then a size field: AkCock0 32000 bytes, AkCock1 20000, AkLd1 24000; a "04 01 12 00" field that looks like
+  4-bit (Xbox ADPCM) mono). Gun audio per gun (level_01's files):
+  - AK1/AK5: AkUnld0, AkLd0, AkLd1, AkCock0, AkCock1 (cock in two parts: pull and release), SbmgnPin0/1, FireSelect
+  - PST/PS5: PstUnld0, PstLd0, PstLd0b, PstCockP1, PstBrch0, PstBbrch1 (breech open / release), PstFire
+  - GK1/GK5: GkUnld0, Gkld0, GkCock0, GkFire
+  - M16/M45/BNS: M16UnLd0, M16Ld0, M16Ld1, M16Cock0
+  - MP1/MP5: Mp1Unld0, Mp1Ld0, Mp1Cock0; P90/P95: P90Unld0, P90Ld0, P90Ld1, P90Cock0
+  - HVY/HV5: HvMgnULd0/1, HvMgnLd0, HvMgnCk0/1; MGN/MG5: MgnUnLd0, MgnLd0-3, MgnCock0
+  - none: shotguns, RPG, GRL, RM1/RM5 (shells / launchers), AS5/ASR (AssRflFire), SM3/MC5/SMG/SM5 (FireSelect)
+- Next (needs the headset): dev_dumpsound (buffers.cpp: each buffer Play logged with address, length, format, a
+  hash, and each new sample saved to dumps/ on the headset) during dev_dumpreload (which now also stands our
+  reload aside so the game's own runs) gives each named sound's address, length (matching the dictionary sizes)
+  and rate; then find the dictionary entry in memory by name to play them at the rack.
+
+## 2026-11-22 — Rack sounds: the game's own samples (recorded on the headset)
+Recorded with dev_dumpsound + dev_dumpreload (+ dev_autofire so the game reloads), AK1 and PST, dev hands.
+- Guns' sounds are Xbox ADPCM (tag 0x69) mono buffers. Each gun's `.db` wave dictionary: entries marked by the
+  u32 0x0043CDC0, then rate, 4, length (bytes). **An entry's fields come just before its name** (so a
+  name belongs to the rate/length printed before it); checked against what plays:
+  AK draw = AkCock0 then AkCock1, AK reload starts with AkUnld0, each shot SbmgnPin0/1, pistol draw = PstBrch0
+  then PstBbrch1, pistol reload PstUnld0, PstLd0, PstLd0b.
+- The samples themselves are the gun's `.wdd`, loaded as one block (the first entry, the fire loop, at its
+  start): AK1 base 0x81813A80 in that run, AkCock0 at +0x7C00, AkCock1 at +0x6B00 (the same offsets as in the
+  file). AK5/PS5 use the same samples.
+- Rack sounds (length, rate): AK1/AK5 pull AkCock0 3420 B @ 20000 Hz, release AkCock1 4212 B @ 24000 Hz; PST/PS5
+  pull PstBrch0 5436 B @ 32000, release PstBbrch1 5112 B @ 32000. Others for later: AkUnld0 3492@24000,
+  AkLd0 4248@20000, AkLd1 2880@20000; PstUnld0 9036@32000, PstLd0 6552@24000, PstLd0b 5652@32000, PstCockP1
+  5400@24000.
+- Playing them: mixer.cpp remembers every ADPCM mono sample the game plays (Seen, by length and rate, with a hash
+  of its start to drop it once the memory is reused); the gun's draw plays its cock sounds, so they're known by
+  the time it's held. vr_reload.cpp PlayRack: the pull's sample at 40 % of the pull (a locked slide: on the
+  grab), the release's when the hand lets go, decoded and resampled into our cues (CueSample, gain 0.8); our
+  clicks only when the sample hasn't been seen. dev_racksound: 10 s in, pull then release (to hear them).
+- Not yet heard on the headset (the install of this build wasn't approved yet).
+- (later the same day) magazine sounds too: AK eject/pull-out/knock AkUnld0 (wdd +0x4000, 3492 @ 24000), seat
+  AkLd0 (+0x4E00, 4248 @ 20000); pistol PstUnld0 (+0x7400, 9036 @ 32000), PstLd0 (+0xC500, 6552 @ 24000). The game
+  only plays these in its own reload, so they're found from the pull's sample (seen at the draw) by their .wdd
+  offsets, checked to look like ADPCM (every block's step index <= 88, reserved byte 0). Offsets from the
+  recordings (base = the fire loop's address), every block header checked in the files. Unrecorded: AkLd1
+  (2880 @ 20000, most likely +0x5F00, the only gap that fits) and PstCockP1 (5400 @ 24000: +0x9800, 0xDF00 or
+  0xE800); PstLd0b (+0xAE00) follows PstLd0 in the game's empty reload (likely the slide release). The headset was
+  put to sleep (KEYCODE_SLEEP, at the user's word) with this build not yet installed.
+
+## 2026-11-22: seating by the magazine's top (user test 5)
+
+- User test 5: neither gun ever seated a magazine (the log: many held magazines dropped, no "magazine in").
+  The pistol's rack sounds were found and played (PstBrch0 at 817E1880, PstBbrch1 at 817E0480), the AK's
+  unload found from its pull (817DFA80); the pistol's unload wasn't (its draw hadn't played the pull yet).
+- The cause: the well (the seated magazine's middle and axis in C) was only published while the magazine was in
+  the gun (states 0 and 3), so once it was out the target stayed where the gun had been at the eject while the
+  gun moved on with the hand. Lining up also wanted the held magazine's middle within 1.5 cm of the seated
+  middle and turned within 35 degrees: on a pistol that puts the off fist inside the gun hand.
+- Now (the user's rule): vr_gun.cpp publishes the well every gun draw (the game's own pose of the magazine bone
+  is still in the gun), with the magazine's top and bottom measured along its up (MeasureMag). vr_reload.cpp
+  seats when the held magazine's top (its middle + up x top) is within 2 cm (kSeatReach) of the line from the
+  well's mouth to where the top sits seated; the mouth is the seat less GunParts depth (AK 4 cm, a guess) or, 0,
+  the whole magazine but its 1.5 cm base (the pistol's grip). The hand's angle no longer matters. It then slides
+  home along the well in 0.1 s (g_insert counting down; the renderer draws it on the axis) and seats.
+  Diagnostic: "held top D from the well, B below its seat" twice a second within 15 cm.
+
+## 2026-11-22: the AK's charging handle zone
+
+- User: the pistol's slide racks fine, the AK's handle couldn't be taken. Its zone was a 2.5 cm ball 2 cm out
+  from the knob (mesh x 0.037), fine for a slide taken palm over (the controller sits right on it) but a knob is
+  pinched from its side, which puts the controller's grip point several cm out past that ball (the log had no AK
+  rack at all).
+- Now a rack zone can be a line: GunParts rack_out/rack_len. The AK's runs from the knob's tip (x 0.03, y 0.05,
+  z 0.172 on the spare bone) 7 cm out along mesh +x (the side it's on); the hand within 2.5 cm of that line takes
+  it. vr_gun.cpp publishes both ends in C (VrRackAt). The pistol's stays a point. Racking works with the
+  magazine in or out (states 0 and 1) as before.
+- Diagnostic: "off hand D from the rack zone (state, on the gun)" twice a second within 12 cm, not racking.
+
+## 2026-11-22: user test 6 (seating works; the handle zone, the handle not moving)
+
+- Seating worked on both guns: the pistol at 2.7 cm then in (its top 10 cm below the seat, in the grip), the AK at
+  1.6-2.9 cm. The game's load sounds played (PstLd0 at 817E7F80, AkLd0 at 817E0880). The AK racked five times;
+  a rack after seating on a locked (empty) gun chambered the pending 60 (no round thrown, correctly).
+- The AK's handle zone: while trying, the off hand sat 2.3-3.5 cm from the 7 cm line (reach 2.5), so most
+  presses missed. The user's idea: an invisible extension of the handle, a cylinder 2-3 cm out from the knob. Now
+  the zone is 3 cm out from the knob's tip along mesh +x, taken within 3.5 cm of it (GunParts rack_reach); the
+  diagnostic adds where the hand is from the knob (out, up, toward the muzzle, cm) to fit it by.
+- The handle didn't move on the headset although the 18 vertices are retagged (the log) and the slide (bone 3)
+  is offset by VrSlide; the vertices are written before the draw's upload, so the cause isn't visible from the
+  code. dev_rackheld (VrSlide always 1) and the retag's log line now giving the moved vertices' bounds are there
+  to look at it side on (dev_fakehands_side).
+
+## 2026-11-22: the AK's charging handle made (headset test, fake hands, with the user's okay)
+
+- Why it never moved: the AK's mesh models **no charging handle** (it's painted in the texture). The 12 vertices
+  (18 entries) the retag box caught, x 0.0162-0.0172, y 0.041-0.058, z 0.171-0.173 on bone 75, are three tiny
+  rivet bevels (each a 1 mm slope from an inner edge to an outer one) ahead of the magazine. They were moved back
+  with the rack all along, unseen. The receiver is +-0.0173 wide; nothing on it sticks out (aklow/ak.csv dumps).
+- The fix: RetagMag (vr_gun.cpp) also rewrites those vertices' positions each draw (GunParts tab, AK 0.04): the
+  rivets' inner edges stay, their outer edges go out to x = 0.04 and forward 1.2 cm, their heights spread to meet
+  (one tab 1.7 cm tall, 2.3 cm out). Forward, not back: the bevels face out and to the rear, and raked back the
+  face turns inward and isn't drawn (culled: a 15 cm tab raked back was invisible from every side).
+- Seen: dev_tab "0.15 0.12" (a tab 15 cm out, lifted 12 cm) drew a big slab off the gun, so the vertex writes
+  reach the draw; dev_tab "0.06 0.04" side on (dev_fakehands_side) showed the slab ahead of the receiver, and with
+  dev_rackheld the same slab ~7 cm back. At its real size it's small and as dark as the receiver side-on; from
+  the player's place (behind, the port side, the gun's left: shells go left) it faces the eye.
+- The handle zone is on the tab's tip now (rack point x 0.04), 3 cm out from it, reach 3.5 cm.
+- Dev markers added: dev_rackheld (the slide/handle held back), dev_tab ("reach [lift]": the tab's x, and raised,
+  to see it). Screenshots: `adb shell screencap -p` to a file then pull (PowerShell's `>` mangles the PNG).
+
+## 2026-11-22: every gun's parts and sounds from the disc (user: the AK's way for rifles, the pistol's for pistols)
+
+Done offline from the disc (the user away; no headset run), with scratch scripts reading `/levels/*/fpguns/bg1_<gun>.db`
+and `.wdd` (every level's copy of each gun file is the same, checked by hash).
+- **Bones by name.** Each gun's `.db` holds its skeleton's names, NUL-terminated, from `World`: World, Extra, Root,
+  the left arm, the right arm, the gun's own bones, the right thumb. A bone's palette row is 3 x its place in that
+  list. This gives the AK's 81 (AssualtRifle_Magazine) and 87 (Bullets), the pistol's 111/114/117 (Hammer,
+  Magazine, Slide), all found earlier on the headset, and the magnum's speed loader at 9 before its arm.
+- **Vertices.** The gun's mesh is in the `.db` raw, stride 36 as drawn (position, PBYTE4 weights, SHORT4 rows): the
+  largest skinned run (twice, two copies). The AK's is 3528 + 288 + 94 + 72 = 3982 vertices, its gun draw's
+  buffer. A copy of MeasureMag run on them gives the AK magazine's middle 0 -0.054 0.127, up 0.03 0.94 -0.33, as
+  measured on the headset.
+- **The AK has a real charging handle.** Bone 84 AssualtRifle_Slide (94 vertices: the bolt carrier, x 0.005-0.031,
+  z -0.024-0.136), its knob tip at (0.031, 0.065, 0.132). The csv dumps that showed "no handle" held only bones 75
+  and 87 (part of the draw). The rivet tab, the retag path, dev_tab and dev_magbox are gone; the AK racks bone 84.
+- **Parts** (vr_reload.cpp kParts; knob = the slide bone's outermost vertices; all on mesh +x but the M16's T):
+
+| gun | magazine | rounds | slide/handle | rack point | magazine middle / up (table) |
+|---|---|---|---|---|---|
+| AK1 AK5 (AK-47) | 81 | 87 | 84 | 0.031 0.065 0.132 | measured |
+| PST PS5 (pistol) | 114 | - | 117 | 0 0.085 -0.078 (palm over) | measured |
+| GK1 GK5 (Glock) | 117 | 114 | 120 | 0 0.077 -0.074 (palm over) | measured |
+| ASR AS5 (G36C) | 78 | - | 81 | 0.025 0.076 0.100 | 0 -0.055 0.075 / 0 0.99 -0.14 |
+| M16 M45, BNS | 78 | 81 | 84 (T handle) | 0 0.095 -0.100, zone back along -z | 0 -0.010 0.077 / 0 1 0 |
+| MP1 MP5 (MP5) | 78 | 81 | 84 (lever) | 0.030 0.097 0.208 | 0 -0.032 0.094 / 0 0.94 -0.34 |
+| P90 P95 | 78 (on top) | - | 81 | 0.025 0.028 0.102 | 0 0.067 -0.164 / 0 -1 0 (in downward) |
+| SMG SM5 (Uzi) | 114 (grip) | - | 117 | 0.029 0.051 0.029 | 0 -0.070 -0.028 / 0 1 0 |
+| SM3 MC5 (MAC-10) | 111 (grip) | 114 | 117 | 0.0365 0.0736 0 | 0 -0.038 -0.025 / 0 1 0 |
+| SNR SN5 (WA2000) | 81 | - | 84 | 0.025 0.045 0.120 | 0 -0.002 0.092 / 0 1 0 |
+| HVY HV5 (M249) | 99 (box) | - | 114 | 0.035 0.077 0.082 | 0.025 0.035 0.128 / 0 1 0 |
+
+  Where the measure's up (toward the highest tenth) wasn't the well's, the table's is the magazine's long axis
+  (principal axis of its vertices) or straight up (the P90's lies flat; the WA2000's is a short box; the M249's box
+  is wider than tall); those guns use the table's middle, up, top and bottom. Rifle handles: the zone 3 cm on from
+  the knob, 3.5 cm round it (the AK's user-tested values). hold ~0.6 of the top over the middle; depth from the
+  lowest receiver vertex beside the magazine (rifles 3-5 cm; grip magazines all but the base). Slide travels are
+  guesses (rifles 6-7 cm, Glock 3.5). The rounds bone of a magazine rides with it (in hand, seating, dropped).
+- **Sounds.** A wave dictionary entry: u32 0x0043CDC0, rate, 4, length, ..., **the sample's offset in the .wdd at
+  +0x40**, then its name. This reproduces every offset recorded for AK1 and PST. The sample bytes the game played
+  on the headset (snd_ dumps: AkCock0, AkCock1) are the disc's exactly. Each role sound (pull, release, unload,
+  load) is found from any of the gun's samples the game has played (its fire loop every shot, its cock at the draw)
+  and played only if a hash of all its bytes matches the disc. Guns share lengths and rates (M16UnLd0 = P90Ld0's;
+  AS5's UnLd0 = Gkld0's), and the silver ones move the same sounds. **PS5's samples sit elsewhere than PST's**
+  (PstUnld0 +0x7E00, PstLd0 +0xCF00): the old table played PST's offsets for it.
+- One-piece cock sounds split where they go quiet (loudness every 10 ms, whole 36-byte blocks): GkCock0 at 0.09 s,
+  G36 Cock 0.25, M16Cock0 0.10-0.42 / 0.46-, P90Cock0 0.235, Uzi/MAC-10 Cock 0-0.20 / 0.24-. MP5: Mp1Cock0 back,
+  Mp1Tap0 (the slap) forward. M249: HvMgnCk0 back, HvMgnCk1 from 0.28 s forward; HvMgnULd0 out, HvMgnLd0's first
+  0.4 s in. WA2000: Cock0 is one burst, played whole on the release (no pull sound); its Unld0 from 0.3 s (silence
+  before).
+- RM1/RM5 (Remington 870, shells) and MGN/MG5 (the magnum: the user's exception) now keep the game's reload; they
+  had been on by hand with no parts (seated at the gun hand).
+- Built; not run on the headset (no okay this turn).
+
+## 2026-11-22: first multi-gun headset run (cut short), switch fixes
+
+- Installed (the package is `com.slimybirch.blackquest`; its folder `Android/data/com.slimybirch.blackquest/files`)
+  and run with dev_autostart, dev_fakehands(_side), dev_rackheld, dev_give. Seen in the log before the headset
+  dropped off Wi-Fi (asleep, off the head): the pistol's magazine measured as before (bone 114, mesh 5905, middle
+  0 -0.022 -0.057, up 0 0.96 0.28) and the AK's (81, mesh 5878, 0 -0.054 0.127, up 0 0.94 -0.35). No screenshots.
+- dev_give can't give a gun already carried (the pistol at the start: ten tries, then the list stops): list the
+  held gun first.
+- Git Bash turns `/sdcard/...` arguments to adb into Windows paths: MSYS_NO_PATHCONV=1.
+- Fixed (found reading the switch paths): the slide's lock and pending rounds belonged to no gun, so an AK left
+  locked empty (or with a magazine seated on the lock) passed its lock and rounds to the next gun. Now kept per gun
+  code across switches (g_kept); a kept lock with rounds in the gun is dropped as stale. The dev markers' timers
+  (dev_eject, dev_magfresh, dev_racksound) now count from each switch, so one dev_give run covers every gun.
+- Fixed: the measured magazine shapes were cached by bone number alone, which guns share (AK/WA2000 81, pistol/Uzi
+  114); a change of parts now clears them, and ends a dropped magazine (its pass draws the held gun's mesh, so it
+  would have turned into the new gun's).
+- Seen on the headset (below): both fixes ran through the whole cycle.
+
+## 2026-11-22: every gun run on the headset (dev hands, with the user's okay)
+
+- Runs: dev_autostart, dev_fakehands(_side), dev_rackheld, dev_give `PST AK1 GK1 ASR M16 BNS MP1 P90 SMG SM3 SNR HVY`
+  (10 s each), then again with dev_eject, dev_magslide, dev_racksound (eject 8 s into each gun, the magazine back
+  6 cm out on the well line, the rack's pull and release). Screenshots every ~2.5 s (scratchpad only).
+- Every gun was given; each magazine bone found its vertices where the disc table has them (log "magazine bone N of
+  mesh M": AK 81/5878, pistol 114/5905, Glock 117/4118, G36 78/6856, M16 78/5679, M203 78/6966, MP5 78/7042, P90
+  78/4985, Uzi 114/6773, MAC-10 111/4758, WA2000 81/6464, M249 99/8345). Each eject dropped its magazine (landing
+  logged), ammo went back to the reserve, no game refill.
+- Sounds: every gun's unload, pull and release came from the game's memory, but the pistol's and (in one run) the
+  Uzi's: none of their samples had played yet (no shots, and their draws play no cock). **Fixed**: then the gun's
+  `.wdd` is read from the disc once (weapons::GunWaves, the first level that has it) and the sample played from it
+  after the same whole-sample hash (sound::CueAdpcm). Seen: "PST unload: from the disc's .wdd at +7400", pull +5E00,
+  release +4A00.
+- Seen: the G36's magazine out below the well on its line, the M249's box below its feed (the belt goes with it).
+- **Fixed: the P90's magazine went into the gun.** It lies on top and goes in downward, but its table had the way
+  in as mesh +y (every other gun's), so out was down into the receiver (hidden) and seating aimed upside down. Now
+  up 0 -1 0, top 0.015 / bottom -0.013 (its faces swapped). Seen after: the magazine lifted above the gun on its
+  line.
+- Not checked (needs hands): the zones, the travels, seating by hand, the P90 held in the fist. Dev markers removed.
+
+## 2026-11-22: user test 7 (every gun by hand), and the fixes from it
+
+User: reloads and handles good on every gun but the pistols (wants the top and back half of the slide); the arms
+glitch holding the Uzi and the M249; the M16, M16+M203 and M249 need buttstocks (the viewmodels have none: first
+person never showed them; from the user's photos); shots go low at distance on the M249, M16, MP5 and Uzi; the
+WA2000's bolt should be worked by hand after every shot, the game's animation gone. Next: shotguns, the magnum.
+- Log of the test: every eject, seat, pull-out and rack logged as meant on all twelve guns, the game's sounds
+  found (the pistol's from the disc copy once).
+- **Arms on the Uzi and M249**: the arm rig (vr_gun.cpp kRig) had fixed bone rows from the AK's and pistol's
+  skeletons. Each gun's .db names its own (World first, row = 3 x place): the Uzi's left hand lacks
+  Finger4_Tip_lft, so its right arm is a row early (63/66/69, fingers 72-129); the M249 lacks the left
+  Joint_wrist_twist and that fingertip (left 9/12/-/15, fingers 18-60; right 63/66/69, fingers 72-123); the
+  magnum's speed loader bones come first (left 30/33/36/39, fingers 42-84; right 87/90/93, fingers 96-129). Every
+  other gun matches the table. RigOf(code) now gives each its own; the fingers' cache is by gun and mesh. Seen
+  with test hands: the M249's arms hold it right.
+- **Aim low at range**: the drawn gun kicks up 1.5x the game's view kick, but the shot followed the unkicked hand
+  ("the game's direction carries its kick"). Logged against the game's camera, it doesn't: the M249's shot 0.9 deg
+  up of the camera at kick 0, 0.8 at kick 3.5 (that constant is the game's muzzle-to-crosshair convergence). So
+  sustained fire went under the rising barrel by ~1.5x the kick (the M249 to 7.5 deg, Uzi 4.4, M16 3.2, AK 2.2):
+  the guns the user named kick hardest. Shots now follow the kicked hand. Also checked: each gun's muzzle locator
+  is exactly its root bone's +z (logged, all twelve), so the barrel and the aim agree.
+- **Pistol slides**: the zone is a line 1.4 cm over the slide's top from its rear end to its middle, 4 cm round
+  it (pistol slide z -0.094..0.129, top y 0.066; glock -0.090..0.101, top 0.060; from the disc).
+- **WA2000 bolt** (GunParts bolt): a shot (the clip down since the last tick) leaves the rest pending, the clip at
+  0, the bolt forward (g_spent); a rack (pulled > 70 %) chambers them; a magazine seated on a spent chamber waits
+  for the rack too. The game's cycling after each shot (its fire animation: animtrigger:weapon "Shell Eject" and
+  gunaudio SnpRfl-Cock0, bg1_snr.db 0x9B010) isn't drawn: while the slide bone (84) is off the root (75) the slide
+  is put back on the root and the arms keep their last pose relative to the root; the game's own play of Cock0
+  (6156 B @ 32000) is muted (sound::Mute, buffers.cpp Play) while it's held by hand. Seen: after a shot the HUD 0,
+  the rest waiting. Not seen with hands: the rack after each shot.
+- **Fixed (found reading)**: rounds pending on a locked slide were lost when that magazine was ejected, knocked or
+  pulled out (the next seat overwrote them); they go back to the reserve now.
+- **Stocks** (vr_gun.cpp StockOf, a second draw of the gun draw that holds its pistol grip, vulkan.cpp): the M16,
+  M45, BNS get a carbine's collapsible stock (a buffer tube r 1.55 cm on the bore's line from the receiver's back
+  at z -0.115 to -0.33, the stock z -0.215..-0.355, 4.4 cm wide, butt y -0.062..0.090); the M249 its fixed stock
+  (z -0.125..-0.435, 4.2 cm wide, top 0.104..0.094, butt down to -0.078). On the root bone (75, the M249's 90),
+  vertices as the gun's (36 bytes: position, weights, bones, normal packed 11:11:10, uv), uv a point in the gun's
+  own black pistol grip (M16 0.0817 -0.159, M249 0.4785 -0.0369, from the disc), both windings. Seen drawn (test
+  hands, M16 and M249), flat black; their shapes not yet judged in the hand.

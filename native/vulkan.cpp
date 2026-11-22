@@ -47,6 +47,8 @@ bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot,
 bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                 const void* indices, bool index16, uint32_t index_count, int32_t base_vertex);  // vr_gun.cpp: own hands
 bool VrMeleeHidden();  // src/game/vr_body.cpp: a melee swing is on
+bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16, uint32_t count,
+             int32_t base, const uint8_t*& verts, uint32_t& vbytes_out, const uint16_t*& idx, uint32_t& icount);
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base);  // vr_gun.cpp
 bool VrRecording();    // src/game/vr_body.cpp: dev_dumpreload's window
@@ -3156,7 +3158,10 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     // own hands: the arms' bones posed by vr_gun.cpp, the game's own left as they are elsewhere
     Alloc vc;
     std::array<std::array<float, 4>, 192> hand_mag{}, drop_mag{};  // the extra draws' constants (VrHandMag, VrDropMag)
-    bool hand_mag_on = false, drop_mag_on = false;
+    bool hand_mag_on = false, drop_mag_on = false, stock_on = false;
+    const uint8_t* stock_v = nullptr;
+    const uint16_t* stock_i = nullptr;
+    uint32_t stock_vbytes = 0, stock_icount = 0;
     // dev_hidebone in the app folder holds a bone number: that bone collapsed in every gun list draw (to see what it
     // is). The constants are copied below, so the change goes through a local copy
     // (several numbers: each hidden; "lo-hi" ranges in steps of 3 too, written as two numbers with a minus: 0 -129)
@@ -3208,6 +3213,11 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         // (from the game's own bones: the posed ones may have the magazine hidden)
         hand_mag = sv.vsc;
         drop_mag = sv.vsc;
+        // and a stock the viewmodel lacks (vr_gun.cpp), with its posed bones
+        if (!IsArms(a.index_count) && a.buffer_count == 1 &&
+            ::game::VrStock(a.buffers[0].src, a.buffers[0].stride, a.buffers[0].bytes, a.index_src, a.index16,
+                            a.index_count, a.base_vertex, stock_v, stock_vbytes, stock_i, stock_icount))
+            stock_on = true;
         if (!IsArms(a.index_count) &&
             ::game::VrHandMag(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
                               reinterpret_cast<float (*)[4]>(hand_mag.data())))
@@ -3350,6 +3360,22 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         }
     }
     emit(eye_m, nullptr);
+    if (stock_on) {
+        Alloc v = Upload(stock_vbytes, 16), ix = Upload(stock_icount * 2, 4);
+        std::memcpy(v.cpu, stock_v, stock_vbytes);
+        std::memcpy(ix.cpu, stock_i, stock_icount * 2);
+        VkDeviceSize voff = v.off;
+        vkCmdBindVertexBuffers(Cb(), 0, 1, &v.buf, &voff);
+        vkCmdBindIndexBuffer(Cb(), ix.buf, ix.off, VK_INDEX_TYPE_UINT16);
+        float pc[20] = {};
+        std::memcpy(pc, eye_m, 64);
+        vkCmdPushConstants(Cb(), layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), pc);
+        vkCmdDrawIndexed(Cb(), stock_icount, 1, 0, 0, 0);
+        // the gun's own buffers back for the magazine passes
+        if (a.buffer_count) vkCmdBindVertexBuffers(Cb(), 0, a.buffer_count, vbufs, voffs);
+        if (a.index_count)
+            vkCmdBindIndexBuffer(Cb(), ib.buf, ib.off, a.index16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+    }
     if (hand_mag_on) {
         Alloc vc2 = Constants(hand_mag.data(), sizeof(hand_mag));
         BindSet(set, vc2.off, dc.off);

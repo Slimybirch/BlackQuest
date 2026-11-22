@@ -158,7 +158,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] research: reload is A; every reload start needs reserve rounds (0x1EF4D7, FUN_001BB340); the empty-gun
       refill (state 8); clip `[ammo+0x18]`, size `[[ammo+8]+0x60]`, reserve the inventory word by ammo type
 - [x] the game's reloads held off (the state machine wrapper hides the reserve while it runs); RELOAD option
-      (BY HAND / BUTTON); every magazine gun but shotguns and launchers (SHG SH5 RPG GRL)
+      (BY HAND / BUTTON); every magazine gun but shotguns, launchers and the magnum (SHG SH5 RM1 RM5 RPG GRL MGN
+      MG5: the Remington and magnum were added 2026-11-22; they had been on by hand with no parts)
 - [x] magazines: AK bone 81, PST 114 (measured middle/axis from the draw); eject on A (drops), pull out with the
       off hand's trigger and throw, take one at the chest with the trigger, guided slide-in along the well
 - [x] slides: PST 117 (3.7 cm), locks back on empty, racked by the off hand's grip (AK racks with nothing drawn)
@@ -184,10 +185,35 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] dropped magazines fall in the world, lie flat on the floor under the player and stay 60 s (a pass of their
       own, so they stay when the next one is seated)
 - [x] racking with or without a magazine in; racking a loaded gun throws the chambered round out (clip - 1)
-- [ ] user test 5: the hold angle (kRodTilt 55 deg, hold 2.5 cm pistol / 5 cm AK), seating the pistol, the floor
-      height, racking loaded
+- [x] heard on the headset (user test 5): pistol rack sounds and the AK unload found; neither gun seated
+- [x] seating by the held magazine's top within 2 cm of the well (mouth to seat), any angle; the well now follows
+      the gun while the magazine is out (it was left where the gun was at the eject: why nothing ever seated)
+- [x] the AK's charging handle zone: a line 7 cm out from the knob (pinched from its side), not a point
+- [x] user test 6: both guns seat; the AK racks but the zone was missed at ~3 cm
+- [x] the AK's zone: an invisible handle extension 3 cm out from the knob, reach 3.5 cm
+- [x] the AK's charging handle: the mesh has none; its three rivets there drawn out into a tab that moves back
+      with the rack (seen side on with dev_tab/dev_rackheld)
+- [x] that tab was wrong: the AK has a real bolt carrier with its handle (bone 84, AssualtRifle_Slide), missed by
+      dumps that held part of the draw; the tab is gone, the carrier racks (2026-11-22, built, not seen)
+- [x] every rifle and pistol from the disc (the user's: the AK's way for rifles, the pistol's for pistols, not the
+      magnum): bones by name from each gun's .db, magazine shapes and knobs from its vertices, the reload sounds
+      from its wave dictionary (offsets read from it, each checked by a hash of its bytes; one-piece cock sounds
+      split at their quiet gap). NOTES 2026-11-22 "every gun's parts and sounds from the disc"
+- [ ] user test 7, every gun (dev_give cycles codes): the handle zones (the log's out/up/fwd), seating (the log's
+      "held top ... from the well"), each gun's slide travel and knob (guesses: AK 7 cm), the sounds (the log names
+      each sample found or not found), rounds riding with the magazine, the floor height, racking loaded
+- [ ] the P90's magazine is held upright in the fist like the others (it lies flat on the gun: held along the
+      forearm would suit it); the M249's belt stays in the gun with the box out
+- [ ] guns that don't lock back (AK, M16, M249) show their handle held back when empty, as the pistol's slide
 - [ ] a round flying out of the port when racked loaded (a shell/round model to throw: find the game's casing)
-- [ ] replace our rack clicks with the game's own rack sound if it can be found (its reload sound events)
+- [x] the game's own rack sounds: AK AkCock0/AkCock1, pistol PstBrch0/PstBbrch1, found by recording and played
+      from where the game's draw played them (NOTES 2026-11-22)
+- [ ] hear them on the headset (dev_racksound or a real rack); the other guns' are in (built 2026-11-22)
+- [x] the magazine sounds: AkUnld0 / AkLd0, PstUnld0 / PstLd0 on eject (A, by hand, knocked) and seat (built
+      2026-11-22, not yet heard)
+- [ ] AkLd1 / PstLd0b / PstCockP1 if they fit a step (offsets unconfirmed: NOTES)
+- [ ] later: the rack sound synced to the hand (the pull's part as it goes back, the release's when let go; held
+      back longer, the release waits); the AK's is already two sounds (AkCock0, AkCock1)
 - [ ] a dropped magazine stays drawn only while the same gun is held (one drop at a time)
 - [ ] polish: the thumb: rests too flat/broken-looking on the thumb rest, and its twist (curl, kThumbRest,
       kThumbTwist in vr_gun.cpp); every finger wrapping on whatever the hand grips
@@ -196,8 +222,11 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       hand's fingers-to-wrist line, top toward the thumb
 - [ ] button prompts in the Quest's names (e.g. "RIGHT GRIP to pick up" for the game's "X"): find the prompt text
       and button glyph table, map the pad buttons to our VR controls
-- [ ] the magazine and slide bones for the other guns: record with dev_dumpreload + dev_give, or find with
-      dev_hidebone in halves (how the AK's 81 was found)
-- [ ] slides/bolts on guns without a slide bone (AK charging handle): its vertices onto a spare bone (the retag
-      path in vr_gun.cpp, box per gun)
+- [x] the magazine and slide bones for the other guns: named in each gun's .db (2026-11-22)
+- [ ] the magnum (MGN/MG5): its speed loader and six rounds by hand (the user left it on the game's reload for now)
 - [ ] shotgun shells one at a time; launchers simplified; magazines at the chest drawn on the body
+- [x] multi-gun pass on the headset with dev hands (2026-11-22): sounds from the disc when unplayed, the P90's well
+  turned down; dev markers removed
+- [ ] Make the guns work for AR platforms and physical gun stocks (user, 2026-11-22)
+- [ ] Shotgun reloads (shells one at a time) and the magnum: the cylinder swings out to the side, a speed loader
+  (a ring of rounds) from the chest put in, swung back in; the cylinder spun by hand (user)

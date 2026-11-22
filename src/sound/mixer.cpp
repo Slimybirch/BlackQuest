@@ -464,6 +464,76 @@ void Cue(int kind) {
     g_cues.emplace_back(MakeCue(kind), 0);
 }
 
+// the game's own samples: where each Xbox ADPCM mono sample it played lives, by its length and rate (a gun's
+// draw plays its cock sounds, so they're known by the time it's held), with a hash of its start to know it's still
+// there. The guns' sounds are one block per gun (its .wdd) in the order of its dictionary
+struct SeenSample {
+    uint32_t addr;
+    uint32_t hash;
+};
+std::mutex g_seen_lock;
+std::map<uint64_t, SeenSample> g_seen;
+
+uint32_t StartHash(uint32_t addr) {
+    const uint8_t* p = static_cast<const uint8_t*>(HostPtr(addr));
+    if (!p) return 0;
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < 72; i++) h = (h ^ p[i]) * 16777619u;
+    return h;
+}
+
+std::atomic<uint64_t> g_mute{0};
+void Mute(uint32_t len, uint32_t rate) { g_mute.store(uint64_t(len) << 32 | rate, std::memory_order_relaxed); }
+bool Muted(uint32_t len, uint32_t rate) {
+    uint64_t m = g_mute.load(std::memory_order_relaxed);
+    return m && m == (uint64_t(len) << 32 | rate);
+}
+
+void Seen(uint32_t addr, uint32_t len, uint32_t rate) {
+    if (!addr || len < 72) return;
+    std::lock_guard lock(g_seen_lock);
+    g_seen[uint64_t(len) << 32 | rate] = {addr, StartHash(addr)};
+}
+
+// the address of a sample the game played with this length and rate, still where it was; 0 if not
+uint32_t FindSample(uint32_t len, uint32_t rate) {
+    std::lock_guard lock(g_seen_lock);
+    auto it = g_seen.find(uint64_t(len) << 32 | rate);
+    if (it == g_seen.end()) return 0;
+    if (StartHash(it->second.addr) != it->second.hash) {
+        g_seen.erase(it);  // the memory went to something else (a level change)
+        return 0;
+    }
+    return it->second.addr;
+}
+
+// the game's sample at addr (Xbox ADPCM mono, len bytes at rate), decoded and played through our cues
+void CueAdpcm(const uint8_t* p, uint32_t len, uint32_t rate, float gain);
+void CueSample(uint32_t addr, uint32_t len, uint32_t rate, float gain) {
+    if (HostPtr(addr) && HostPtr(addr + len - 1)) CueAdpcm(static_cast<const uint8_t*>(HostPtr(addr)), len, rate, gain);
+}
+// an Xbox ADPCM mono sample from host memory (read from the disc)
+void CueAdpcm(const uint8_t* p, uint32_t len, uint32_t rate, float gain) {
+    if (!p || !rate) return;
+    std::vector<float> pcm;
+    int16_t block[65];
+    for (uint32_t off = 0; off + kAdpcmBlockBytes <= len; off += kAdpcmBlockBytes) {
+        DecodeBlock(p + off, 1, block);
+        for (uint32_t i = 0; i < kAdpcmFrames; i++) pcm.push_back(block[i] / 32768.0f);
+    }
+    if (pcm.size() < 2) return;
+    // to the output's rate, linearly
+    double step = double(rate) / audio::kRate;
+    std::vector<float> out;
+    for (double t = 0; t < pcm.size() - 1; t += step) {
+        size_t i = size_t(t);
+        float f = float(t - i);
+        out.push_back(gain * (pcm[i] + (pcm[i + 1] - pcm[i]) * f));
+    }
+    std::lock_guard lock(g_cue_lock);
+    g_cues.emplace_back(std::move(out), 0);
+}
+
 void MixCues(float* out, uint32_t frames) {
     std::lock_guard lock(g_cue_lock);
     for (auto& [s, at] : g_cues)

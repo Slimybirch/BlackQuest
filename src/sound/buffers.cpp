@@ -1,4 +1,10 @@
 // IDirectSoundBuffer
+#include <cstdio>
+#include <filesystem>
+#include <set>
+
+#include "app/app.h"
+#include "core/log.h"
 #include "sound/sound.h"
 
 using namespace kernel;
@@ -68,7 +74,40 @@ BUFFER(SetBufferData, 3) {
     v.block = -1;
     return 0;
 }
+// dev_dumpsound in the app folder (blackquest, finding the guns' rack sounds): each buffer the game plays logged
+// (its sample's address, length, format and a hash of its first bytes) and each new sample saved once to
+// dumps/snd_<hash>.bin (a header: tag, channels, rate, align, bytes; then the sample as it is in memory). The dumps
+// are the user's game data: they stay on the headset or in a scratch folder, never in git
+static void DumpSound(const Voice& v) {
+    static const bool on = std::filesystem::exists(app::ExeDir() / "dev_dumpsound");
+    if (!on || !v.data || !v.play_len) return;
+    uint32_t start = v.data + v.play_start, len = v.play_len;
+    const uint8_t* p = static_cast<const uint8_t*>(HostPtr(start));
+    if (!p) return;
+    uint32_t h = 2166136261u;  // fnv-1a over its first 256 bytes and its length
+    for (uint32_t i = 0; i < std::min<uint32_t>(len, 256); i++) h = (h ^ p[i]) * 16777619u;
+    h = (h ^ len) * 16777619u;
+    LOGR("sound: play %08X len %u tag %u ch %u rate %u freq %u loop %d hash %08X", start, len, v.tag, v.channels, v.rate,
+         v.freq, int(v.looping), h);
+    static std::set<uint32_t> saved;
+    if (!saved.insert(h).second || len > (4u << 20)) return;
+    std::filesystem::create_directories(app::ExeDir() / "dumps");
+    char name[32];
+    std::snprintf(name, sizeof(name), "snd_%08X.bin", h);
+    if (FILE* f = std::fopen((app::ExeDir() / "dumps" / name).string().c_str(), "wb")) {
+        uint32_t head[5] = {v.tag, v.channels, v.rate, v.align, len};
+        std::fwrite(head, 4, 5, f);
+        std::fwrite(p, 1, len, f);
+        std::fclose(f);
+    }
+}
+
 BUFFER(Play, 4) {
+    DumpSound(v);
+    if (v.tag == kFormatXboxAdpcm && v.channels == 1) {
+        Seen(v.data + v.play_start, v.play_len, v.rate);
+        if (Muted(v.play_len, v.rate)) return 0;  // a gun sound the player's hands make now (left stopped: done)
+    }
     v.playing = true;
     v.looping = a[3] & 1;
     if (a[3] & 2) v.pos = 0;

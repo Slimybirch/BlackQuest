@@ -49,14 +49,14 @@ bool VrMeleeHidden();                          // vr_body.cpp
 int VrMagState();
 int VrMagBone();
 float VrSlide();
-bool VrGunParts(int& mag, int& slide, float& travel, float* mid, float* up, bool& measure);
+bool VrGunParts(int& mag, int& slide, float& travel, float* mid, float* up, bool& measure, float& top, float& bottom,
+                int& bullets);
 bool VrRacking();
 bool VrRackHeld();
-bool VrMagRetag(int& from, float* box);
 float VrMagOutSeconds();
-void VrMagWell(const float* c, const float* axis);
-bool VrRackPart(int& bone, float* pt);
-void VrRackAt(const float* c);
+void VrMagWell(const float* c, const float* axis, float top, float bottom);
+bool VrRackPart(int& bone, float* pt, float* to);
+void VrRackAt(const float* c, const float* to, const float* up, const float* fwd);
 float VrMagInsert();
 void VrMagThrow(float* v);
 bool VrMagInHand();
@@ -317,6 +317,26 @@ const ArmRig kRig[2] = {
     {66, {69, -1}, 72, 75, 129, {-0.128f, -0.004f, -0.107f}, {-0.118f, -0.015f, 0.145f}, {-0.118f, -0.003f, 0.205f}, 1,
      {0.5f, 0}},
 };
+// the arms' bone rows by gun (each gun's .db names its skeleton from World: row = 3 x its place). Most are the
+// table's; the uzi's lacks the left hand's last fingertip (its right arm is a row early), the m249's the left
+// wrist's twist joint and that fingertip, and the magnum's speed loader comes first (both arms seven rows on)
+ArmRig RigOf(const std::string& code, int h) {
+    ArmRig a = kRig[h];
+    auto set = [&](int upper, int f0, int f1, int hand, int lo, int hi) {
+        a.upper = upper, a.fore[0] = f0, a.fore[1] = f1, a.hand = hand, a.finger_lo = lo, a.finger_hi = hi;
+    };
+    if (code == "SMG") {
+        if (h == 0) a.finger_hi = 60;
+        else set(63, 66, -1, 69, 72, 129);
+    } else if (code == "HVY" || code == "HV5") {
+        if (h == 0) set(9, 12, -1, 15, 18, 60), a.twist[0] = 0.5f, a.twist[1] = 0;  // the forearm takes the twist
+        else set(63, 66, -1, 69, 72, 123);
+    } else if (code == "MGN" || code == "MG5") {
+        if (h == 0) set(30, 33, 36, 39, 42, 84);
+        else set(87, 90, -1, 93, 96, 129);
+    }
+    return a;
+}
 // the free off hand's roll about its controller's pointing axis (user: 45° clockwise as seen down the arm)
 constexpr float kFreeHandRoll = -45.0f * 3.14159265f / 180;
 constexpr int kBone0 = 96 - 36;     // the constant (hardware order) of bone offset 0
@@ -370,6 +390,22 @@ Aff Bone(const float (*c)[4], int off) {
 void SetBone(float (*c)[4], int off, const Aff& a) {
     for (int r = 0; r < 3; r++) std::memcpy(c[kBone0 + off + r], &a.m[r * 4], 16);
 }
+// the walther's bolt is the player's (user): the game's cycling after each shot (its slide back and forward, a hand
+// on it) isn't drawn. While its slide bone is off its rest (on the gun's root, as every gun part at rest) the slide
+// is put back on the root, and the arms keep their last pose on the gun (relative to its root)
+bool BoltGun(const std::string& code) { return code == "SNR" || code == "SN5"; }
+constexpr int kBoltRoot = 75, kBoltSlide = 84;
+bool Cycling(const float (*c)[4]) {
+    Aff r = Bone(c, kBoltRoot), sl = Bone(c, kBoltSlide);
+    float d = 0;
+    for (int i = 0; i < 12; i++) d = std::max(d, std::fabs(r.m[i] - sl.m[i]));
+    return d > 1e-3f;
+}
+std::string HeldGunCode() {
+    std::lock_guard lock(g_lock);
+    return g_code;
+}
+
 // rotation by angle about a unit axis, row-major
 void AxisAngle(const float* u, float t, float* R) {
     float c = std::cos(t), s = std::sin(t), k = 1 - c;
@@ -415,7 +451,8 @@ struct HandFingers {
     bool ok = false;
     Finger f[5];  // thumb, index, middle, ring, little
 };
-std::map<uint32_t, std::array<HandFingers, 2>> g_fingers;  // by the arms mesh's index count (render thread)
+// by the gun (its rig) and the arms mesh's index count (render thread)
+std::map<std::pair<std::string, uint32_t>, std::array<HandFingers, 2>> g_fingers;
 
 constexpr float kDeg = 3.14159265f / 180;
 // open: a relaxed hand; fist: closed when free (flex at the knuckle, middle and end joints)
@@ -430,8 +467,8 @@ constexpr float kThumbRest = 0.6f;  // how far a free hand's thumb comes down wh
 // closes them (vr_body.cpp); closed again with each weapon
 std::atomic<bool> g_gun_fingers_open{false};
 
-void FindFingers(const uint8_t* vb, uint32_t stride, const void* indices, bool index16, uint32_t count, int32_t base,
-                 std::array<HandFingers, 2>& out) {
+void FindFingers(const std::string& code, const uint8_t* vb, uint32_t stride, const void* indices, bool index16,
+                 uint32_t count, int32_t base, std::array<HandFingers, 2>& out) {
     // pivots between bone pairs from vertices weighted to both (the second weight over a quarter), and centroids
     std::map<std::pair<int, int>, std::array<double, 4>> pair;
     std::map<int, std::array<double, 4>> cent;
@@ -470,7 +507,7 @@ void FindFingers(const uint8_t* vb, uint32_t stride, const void* indices, bool i
         return true;
     };
     for (int h = 0; h < 2; h++) {
-        const ArmRig& a = kRig[h];
+        const ArmRig a = RigOf(code, h);
         HandFingers hf;
         std::vector<Finger> chains;
         std::set<int> used;
@@ -532,8 +569,7 @@ float SignedAngle(const float* a, const float* b, const float* axis) {
 }
 
 // one hand's fingers curled in G (before the hand is moved): curl 0 open .. 1 closed per finger (thumb: down)
-void CurlFingers(float (*c)[4], const HandFingers& hf, int h, const float* curl, bool on_gun) {
-    const ArmRig& a = kRig[h];
+void CurlFingers(float (*c)[4], const ArmRig& a, const HandFingers& hf, const float* curl, bool on_gun) {
     Aff hb = Bone(c, a.hand);
     // the knuckle line, across the hand from the little finger to the index, in G
     float lat_m[3], lat[3];
@@ -637,12 +673,33 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
                 const void* indices, bool index16, uint32_t index_count, int32_t base_vertex) {
     float kr[9], kp[3];
     if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
+    std::string code;
+    {
+        std::lock_guard lock(g_lock);
+        code = g_code;
+    }
+    const ArmRig rig[2] = {RigOf(code, 0), RigOf(code, 1)};
+    // the walther cycling: its arms as they last were on the gun (bones 9 on, relative to the gun's root)
+    if (BoltGun(code)) {
+        static Aff rel[44];
+        static bool have = false;
+        static std::string for_code;
+        if (for_code != code) have = false, for_code = code;
+        Aff root = Bone(c, kBoltRoot);
+        if (!Cycling(c)) {
+            Aff inv = Inverse(root);
+            for (int k = 3; k < 44; k++) rel[k] = Compose(inv, Bone(c, 3 * k));
+            have = true;
+        } else if (have) {
+            for (int k = 3; k < 44; k++) SetBone(c, 3 * k, Compose(root, rel[k]));
+        }
+    }
     // the fingers, from the controllers, before anything moves the hands
-    auto found = g_fingers.find(index_count);
+    auto found = g_fingers.find({code, index_count});
     if (found == g_fingers.end() && vb && indices) {
         std::array<HandFingers, 2> hf;
-        FindFingers(vb, stride, indices, index16, index_count, base_vertex, hf);
-        found = g_fingers.emplace(index_count, hf).first;
+        FindFingers(code, vb, stride, indices, index16, index_count, base_vertex, hf);
+        found = g_fingers.emplace(std::make_pair(code, index_count), hf).first;
     }
     {
         xr::Hand in[2];
@@ -678,7 +735,7 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
                 float want[5] = {th, idx, g, g, g};
                 if (held) std::fill(want, want + 5, 1.0f);
                 for (int i = 0; i < 5; i++) eased[h][i] += (want[i] - eased[h][i]) * k;
-                CurlFingers(c, found->second[h], h, eased[h], held || h == 1);
+                CurlFingers(c, rig[h], found->second[h], eased[h], held || h == 1);
             }
         }
     }
@@ -691,7 +748,7 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
     if (!VrMeleeHidden()) {
         float rest[2][3];
         for (int h = 0; h < 2; h++) {
-            Apply(Bone(c, kRig[h].hand), kRig[h].palm, rest[h]);
+            Apply(Bone(c, rig[h].hand), rig[h].palm, rest[h]);
             rest[h][0] = -rest[h][0], rest[h][2] = -rest[h][2];
         }
         std::lock_guard lock(g_lock);
@@ -722,7 +779,7 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
         if (VrGunPose(yaw, pitch, frame, 0, lr, lp)) left_delta = Compose(FromRotPos(lr, lp), Inverse(FromRotPos(kr, kp)));
     }
     for (int h = 0; h < 2; h++) {
-        const ArmRig& a = kRig[h];
+        const ArmRig& a = rig[h];
         Aff hand_delta = h == 0 ? left_delta : kIdentityAff;
         // the game's pose as drawn: shoulder (the elbow back up the bind arm), elbow, wrist
         float sh_m[3] = {a.elbow[0], a.elbow[1], a.elbow[2] - kUpperArm};
@@ -800,6 +857,7 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
 struct MagShape {
     bool ok = false;
     float mid[3], up[3];
+    float top = 0.05f, bottom = -0.05f;  // its farthest vertices from the middle along up (the seating test uses its top)
 };
 std::map<uint64_t, MagShape> g_mag_shapes;  // by index count and bone (render thread)
 
@@ -841,9 +899,15 @@ const MagShape& MeasureMag(int bone, const uint8_t* vb, uint32_t stride, uint32_
             for (int j = 0; j < 3; j++) topm[j] += by[i][j] / float(n);
         for (int j = 0; j < 3; j++) m.up[j] = topm[j] - m.mid[j];
         Normalize(m.up);
+        m.top = -1, m.bottom = 1;
+        for (auto& q : pts) {
+            float d = (q[0] - m.mid[0]) * m.up[0] + (q[1] - m.mid[1]) * m.up[1] + (q[2] - m.mid[2]) * m.up[2];
+            m.top = std::max(m.top, d), m.bottom = std::min(m.bottom, d);
+        }
         m.ok = true;
-        LOGR("vr reload: magazine bone %d of mesh %u: %zu vertices, middle %.3f %.3f %.3f, up %.2f %.2f %.2f", bone,
-             count, pts.size(), m.mid[0], m.mid[1], m.mid[2], m.up[0], m.up[1], m.up[2]);
+        LOGR("vr reload: magazine bone %d of mesh %u: %zu vertices, middle %.3f %.3f %.3f, up %.2f %.2f %.2f, top %.3f "
+             "bottom %.3f", bone, count, pts.size(), m.mid[0], m.mid[1], m.mid[2], m.up[0], m.up[1], m.up[2], m.top,
+             m.bottom);
     } else {
         LOGR("vr reload: magazine bone %d of mesh %u: only %zu vertices; the table's middle used", bone, count,
              pts.size());
@@ -1002,77 +1066,173 @@ bool DropNow(float t, Aff& out) {
 // (vr_reload.cpp) in the gun, in the off hand (sliding into the well once lined up with it), or out (falling or
 // thrown, then gone); the slide held back. The well and its axis go back to the reload. vb..base: the draw's
 // vertices and indices, to measure the magazine by
-// a magazine modelled into the gun's body: its vertices (in the box, weighted to the body) moved onto a spare
-// bone, written into the draw's vertices each draw (they're the guest's: the game never rewrites them). Once a mesh
-// is retagged its spare bone must follow the body in every draw, reload by hand or not
-struct Retag {
-    int from, to;
-    std::vector<uint32_t> verts;
-};
-std::map<uint32_t, Retag> g_retags;  // by the mesh's index count (render thread)
+// the magazine's bone set to b, and the rounds on its top (a bone of their own: -1 none) with it
+void SetMag(float (*c)[4], int bone, int bullets, const Aff& b) {
+    SetBone(c, bone, b);
+    if (bullets >= 0) SetBone(c, bullets, b);
+}
 
-bool RetagMag(float (*c)[4], const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16,
-              uint32_t count, int32_t base, int to) {
-    auto it = g_retags.find(count);
-    int from;
-    float box[6];
-    if (it == g_retags.end() && to >= 0 && VrMagRetag(from, box) && vb && indices) {
-        // dev_magbox in the app folder: six numbers (x, y, z ranges) for the box, to find a magazine by trying
-        if (FILE* f = std::fopen((app::ExeDir() / "dev_magbox").string().c_str(), "r")) {
-            float b[6];
-            if (std::fscanf(f, "%f %f %f %f %f %f", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) std::memcpy(box, b, sizeof(b));
-            std::fclose(f);
-        }
-        Retag r{from, to, {}};
-        std::set<int64_t> seen;
-        for (uint32_t i = 0; i < count; i++) {
-            int64_t v = int64_t(index16 ? static_cast<const uint16_t*>(indices)[i] : static_cast<const uint32_t*>(indices)[i]) + base;
-            if (v < 0 || (uint64_t(v) + 1) * stride > vbytes || !seen.insert(v).second) continue;
-            const uint8_t* p = vb + size_t(v) * stride;
-            float q[3];
-            std::memcpy(q, p, 12);
-            const uint8_t* w = p + 12;
-            int16_t ix[4];
-            std::memcpy(ix, p + 16, 8);
-            int top = 0;
-            for (int k = 1; k < 4; k++)
-                if (w[k] > w[top]) top = k;
-            if (ix[top] != from) continue;
-            if (q[0] < box[0] || q[0] > box[1] || q[1] < box[2] || q[1] > box[3] || q[2] < box[4] || q[2] > box[5]) continue;
-            r.verts.push_back(uint32_t(v));
-        }
-        LOGR("vr reload: mesh %u: %zu body vertices of bone %d moved onto bone %d (the magazine)", count, r.verts.size(),
-             from, to);
-        it = g_retags.emplace(count, std::move(r)).first;
+// the magazines' shapes measured in the held gun's draws, by bone (render thread)
+std::map<int, MagShape> g_shapes;
+// render thread: another gun in hand (its parts differ): guns share bone numbers (AK and WA2000 81, pistol and Uzi
+// 114), so the last one's measured shapes go, and its dropped magazine (drawn from the held gun's mesh) with them
+void NoteGun(int bone, int slide, float travel, const float* mid, const float* up, float top, float bottom,
+             int bullets) {
+    static float last[13] = {};
+    float now[13] = {float(bone), float(slide), travel, mid[0], mid[1], mid[2], up[0], up[1], up[2], top, bottom,
+                     float(bullets), 1};
+    if (std::memcmp(now, last, sizeof now) == 0) return;
+    std::memcpy(last, now, sizeof now);
+    g_shapes.clear();
+    g_drop.on = false;
+}
+
+// ---- stocks: the viewmodels of the M16 (and its M203 and silver ones) and the M249 end at the receiver, a first
+// person gun never showing its stock; in vr it's in view, so one is added (user: from photos of a carbine's
+// collapsible stock and the M249's fixed one). Real size, in the gun's mesh (metres; z to the muzzle, y up), on its
+// root bone, coloured from the texture of the gun's own black pistol grip; drawn as a second draw of the gun's
+struct StockMesh {
+    std::vector<uint8_t> verts;  // 36 bytes each, as the gun's: position, weights, bones, normal, uv
+    std::vector<uint16_t> idx;
+};
+uint32_t PackNormal(const float* n) {
+    auto q = [](float v, int bits) {
+        int m = (1 << (bits - 1)) - 1;
+        return uint32_t(int(std::lround(std::clamp(v, -1.0f, 1.0f) * m))) & ((1u << bits) - 1);
+    };
+    return q(n[0], 11) | q(n[1], 11) << 11 | q(n[2], 10) << 22;
+}
+void StockVertex(StockMesh& m, const float* p, const float* n, int bone, float u, float v) {
+    uint8_t b[36] = {};
+    std::memcpy(b, p, 12);
+    b[12] = 255;
+    int16_t ix[4] = {int16_t(bone), 0, 0, 0};
+    std::memcpy(b + 16, ix, 8);
+    uint32_t pn = PackNormal(n);
+    std::memcpy(b + 24, &pn, 4);
+    float uv[2] = {u, v};
+    std::memcpy(b + 28, uv, 8);
+    m.verts.insert(m.verts.end(), b, b + 36);
+}
+// a flat face (3+ points, convex or star shaped from its middle), both windings (the gun draw's culling either way)
+void StockFace(StockMesh& m, const std::vector<std::array<float, 3>>& pts, const float* n, int bone, float u, float v) {
+    uint16_t at = uint16_t(m.verts.size() / 36);
+    float mid[3] = {};
+    for (auto& q : pts)
+        for (int i = 0; i < 3; i++) mid[i] += q[i] / float(pts.size());
+    StockVertex(m, mid, n, bone, u, v);
+    for (auto& q : pts) StockVertex(m, q.data(), n, bone, u, v);
+    for (uint16_t k = 0; k < pts.size(); k++) {
+        uint16_t a = uint16_t(at + 1 + k), b = uint16_t(at + 1 + (k + 1) % pts.size());
+        m.idx.insert(m.idx.end(), {at, a, b, at, b, a});
     }
-    if (it == g_retags.end() || it->second.verts.empty() || !vb) return false;
-    const Retag& r = it->second;
-    for (uint32_t v : r.verts) {
-        uint8_t* p = const_cast<uint8_t*>(vb) + size_t(v) * stride;
-        const uint8_t w[4] = {255, 0, 0, 0};
-        const int16_t ix[4] = {int16_t(r.to), 0, 0, 0};
-        std::memcpy(p + 12, w, 4);
-        std::memcpy(p + 16, ix, 8);
+}
+// a side profile (z, y) extruded across x (-w..w): its two sides and the rim round it
+void StockSlab(StockMesh& m, const std::vector<std::array<float, 2>>& zy, float w, int bone, float u, float v) {
+    std::vector<std::array<float, 3>> l, r;
+    for (auto& q : zy) l.push_back({-w, q[1], q[0]}), r.push_back({w, q[1], q[0]});
+    const float nl[3] = {-1, 0, 0}, nr[3] = {1, 0, 0};
+    StockFace(m, l, nl, bone, u, v);
+    StockFace(m, r, nr, bone, u, v);
+    float cz = 0, cy = 0;
+    for (auto& q : zy) cz += q[0] / zy.size(), cy += q[1] / zy.size();
+    for (size_t k = 0; k < zy.size(); k++) {
+        const auto& a = zy[k];
+        const auto& b = zy[(k + 1) % zy.size()];
+        // the rim's normal: square to the edge in the profile, away from its middle
+        float n[3] = {0, b[0] - a[0], -(b[1] - a[1])};
+        Normalize(n);
+        float mz = (a[0] + b[0]) / 2 - cz, my = (a[1] + b[1]) / 2 - cy;
+        if (n[2] * mz + n[1] * my < 0)
+            for (float& x : n) x = -x;
+        StockFace(m, {{-w, a[1], a[0]}, {w, a[1], a[0]}, {w, b[1], b[0]}, {-w, b[1], b[0]}}, n, bone, u, v);
     }
-    SetBone(c, r.to, Bone(c, r.from));  // it rests with the body
-    return true;
+}
+// a tube along z (eight sides), its back end closed
+void StockTube(StockMesh& m, float y, float rad, float z0, float z1, int bone, float u, float v) {
+    constexpr int kSides = 8;
+    std::vector<std::array<float, 3>> e1;
+    for (int k = 0; k < kSides; k++) {
+        float a0 = 2 * 3.14159265f * k / kSides, a1 = 2 * 3.14159265f * (k + 1) / kSides, am = (a0 + a1) / 2;
+        float n[3] = {std::cos(am), std::sin(am), 0};
+        StockFace(m, {{rad * std::cos(a0), y + rad * std::sin(a0), z0}, {rad * std::cos(a1), y + rad * std::sin(a1), z0},
+                      {rad * std::cos(a1), y + rad * std::sin(a1), z1}, {rad * std::cos(a0), y + rad * std::sin(a0), z1}},
+                  n, bone, u, v);
+        e1.push_back({rad * std::cos(a0), y + rad * std::sin(a0), z1});
+    }
+    const float nb[3] = {0, 0, -1};
+    StockFace(m, e1, nb, bone, u, v);
+}
+const StockMesh* StockOf(const std::string& code) {
+    // m16 (receiver's back at z -0.12, the bore at y 0.071): the buffer tube on the bore's line, the carbine's
+    // stock slid over its back (14 cm, 4.4 cm wide, the butt 15 cm tall)
+    static const StockMesh m16 = [] {
+        StockMesh m;
+        const float u = 0.0817f, v = -0.1590f;  // the pistol grip's black
+        StockTube(m, 0.066f, 0.0155f, -0.115f, -0.33f, 75, u, v);
+        StockSlab(m, {{{-0.215f, 0.086f}, {-0.355f, 0.090f}, {-0.355f, -0.062f}, {-0.335f, -0.062f},
+                       {-0.245f, 0.045f}, {-0.215f, 0.048f}}},
+                  0.022f, 75, u, v);
+        return m;
+    }();
+    // m249 (receiver's back at z -0.14, its top y 0.105): the fixed stock, its top on the receiver's line, its
+    // underside sweeping down to a 17 cm butt 30 cm back
+    static const StockMesh m249 = [] {
+        StockMesh m;
+        const float u = 0.4785f, v = -0.0369f;
+        StockSlab(m, {{{-0.125f, 0.104f}, {-0.435f, 0.094f}, {-0.435f, -0.076f}, {-0.405f, -0.078f},
+                       {-0.215f, 0.000f}, {-0.125f, 0.022f}}},
+                  0.021f, 90, u, v);
+        return m;
+    }();
+    if (code == "M16" || code == "M45" || code == "BNS") return &m16;
+    if (code == "HVY" || code == "HV5") return &m249;
+    return nullptr;
+}
+
+// diagnostic, once per gun: the angle between its barrel in the mesh (its root bone's +z, the muzzle's way) and the
+// muzzle locator the hand aims by (the frame's forward), both in C before K (S·B, as the arms' palms)
+void LogBarrel(const float* frame, float (*c)[4], uint32_t count) {
+    if (count >= 2880 && count <= 2970) return;  // the arms
+    std::string code;
+    {
+        std::lock_guard lock(g_lock);
+        code = g_code;
+    }
+    static std::set<std::string> told;
+    if (told.count(code)) return;
+    int root = code == "HVY" || code == "HV5" ? 90 : code == "MGN" || code == "MG5" ? 111 : code == "GRL" ? 105 : 75;
+    static const std::set<std::string> k108 = {"PST", "PS5", "GK1", "GK5", "SMG", "SM5", "SM3", "MC5",
+                                               "RM1", "RM5", "SHG", "SH5", "RPG"};
+    if (k108.count(code)) root = 108;
+    told.insert(code);
+    Frame f;
+    std::memcpy(&f, frame, sizeof(f));
+    const float z[3] = {0, 0, 1};
+    float b[3];
+    RotOf(Bone(c, root), z, b);
+    b[0] = -b[0], b[2] = -b[2];  // S
+    Normalize(b);
+    float right[3];
+    Cross(f.fwd, f.up, right);
+    float fw = b[0] * f.fwd[0] + b[1] * f.fwd[1] + b[2] * f.fwd[2];
+    float up = b[0] * f.up[0] + b[1] * f.up[1] + b[2] * f.up[2];
+    float rt = b[0] * right[0] + b[1] * right[1] + b[2] * right[2];
+    constexpr float kD = 180 / 3.14159265f;
+    LOGR("vr gun: %s barrel (bone %d +z) against the muzzle's forward: along %.3f, up %.2f deg, right %.2f deg "
+         "(mesh %u)", code.c_str(), root, fw, std::asin(std::clamp(up, -1.0f, 1.0f)) * kD,
+         std::asin(std::clamp(rt, -1.0f, 1.0f)) * kD, count);
 }
 
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base) {
-    // a retagged magazine follows the body first (in every draw of that mesh, whatever happens below)
-    int bone0, slide0;
-    float travel0, mid0[3], up0[3];
-    bool measure0;
-    bool parts = VrGunParts(bone0, slide0, travel0, mid0, up0, measure0);
-    // (the gun's own draw: the arms' mesh has other bones under the same numbers)
-    bool gun_draw = count < 2880 || count > 2970;
-    bool retagged = RetagMag(c, vb, stride, vbytes, indices, index16, count, base, parts && gun_draw ? slide0 : -1);
-    if (!parts) return retagged;
-    int bone, slide;
-    float travel, mag_mid[3], mag_up[3];
+    LogBarrel(frame, c, count);
+    if (BoltGun(HeldGunCode()) && Cycling(c)) SetBone(c, kBoltSlide, Bone(c, kBoltRoot));
+    int bone, slide, bullets;
+    float travel, mag_mid[3], mag_up[3], mag_top, mag_bottom;
     bool measure;
-    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure)) return false;
+    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure, mag_top, mag_bottom, bullets)) return false;
+    NoteGun(bone, slide, travel, mag_mid, mag_up, mag_top, mag_bottom, bullets);
     float kr[9], kp[3];
     if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
     float krs[9];
@@ -1087,17 +1247,23 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
     }
     // the rack point where the gun's own draw has it (not the arms', whose bones are another set)
     int rack_bone;
-    float rack_m[3];
-    if ((count < 2880 || count > 2970) && VrRackPart(rack_bone, rack_m)) {
-        float at[3];
-        Apply(Compose(D, Bone(c, rack_bone)), rack_m, at);
-        VrRackAt(at);
+    float rack_m[3], rack_to_m[3];
+    if ((count < 2880 || count > 2970) && VrRackPart(rack_bone, rack_m, rack_to_m)) {
+        float at[3], to[3], up[3], fwd[3];
+        const float um[3] = {0, 1, 0}, fm[3] = {0, 0, 1};
+        Aff rb = Compose(D, Bone(c, rack_bone));
+        Apply(rb, rack_m, at);
+        Apply(rb, rack_to_m, to);
+        RotOf(rb, um, up);
+        RotOf(rb, fm, fwd);
+        Normalize(up);
+        Normalize(fwd);
+        VrRackAt(at, to, up, fwd);
     }
     // the magazine's shape: measured where this draw has it (the other draw of the pair may not)
-    static std::map<int, MagShape> shapes;  // by bone, from whichever draw has it
     const MagShape& measured = MeasureMag(bone, vb, stride, vbytes, indices, index16, count, base);
-    if (measured.ok) shapes[bone] = measured;
-    const MagShape& shape = shapes[bone];
+    if (measured.ok) g_shapes[bone] = measured;  // from whichever draw of the pair has it
+    const MagShape& shape = g_shapes[bone];
     bool use = measure && shape.ok;
     float mid_m[3], up_m[3];
     std::memcpy(mid_m, use ? shape.mid : mag_mid, 12);
@@ -1110,15 +1276,16 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
     RotOf(rest, up_m, up);
     Normalize(up);
     static Aff last_gun = kIdentityAff;  // the gun's magazine where it was last drawn (in the gun, or sliding in)
+    // the well where the gun is now (the game still has the magazine in it), in or out of it
+    VrMagWell(mid, up, use ? shape.top : mag_top, use ? shape.bottom : mag_bottom);
     int state = VrMagState();
     if (state == 0 || state == 3) {
-        VrMagWell(mid, up);
         last_gun = rest;
         return true;  // the game's own
     }
     float along = VrMagInsert();
     if (state == 2 && along >= 0) {
-        // lined up with the well: on its axis, out of the gun by how far the hand is; rocked forward the more it's
+        // seating (its top reached the well): on its axis, sliding home from where it was; rocked forward the more it's
         // out (the AK's goes in front first and swings back to seat)
         Aff out = kIdentityAff;
         for (int i = 0; i < 3; i++) out.m[i * 4 + 3] = -up[i] * along;
@@ -1131,7 +1298,7 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
         float pivot[3];
         for (int i = 0; i < 3; i++) pivot[i] = mid[i] + up[i] * 0.05f + fwd[i] * 0.02f;
         last_gun = Compose(out, Compose(Pivot(R, pivot, pivot), rest));
-        SetBone(c, bone, Compose(Dinv, last_gun));
+        SetMag(c, bone, bullets, Compose(Dinv, last_gun));
         return true;
     }
     // out of the gun: a new drop (dropped, knocked or thrown, from the gun or the hand) starts falling in the world,
@@ -1147,17 +1314,51 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
     last_t = t;
     Aff gone{};
     for (int i = 0; i < 3; i++) gone.m[i * 4 + 3] = Bone(c, bone).m[i * 4 + 3];
-    SetBone(c, bone, gone);
+    SetMag(c, bone, bullets, gone);
+    return true;
+}
+
+// render thread: the stock drawn with this gun draw, if the held gun gets one and this is the draw its pistol grip is
+// in (the stock takes that texture's black): vertices as the gun's (36 bytes), 16 bit indices
+bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16, uint32_t count,
+             int32_t base, const uint8_t*& verts, uint32_t& vbytes_out, const uint16_t*& idx, uint32_t& icount) {
+    if (stride != 36 || !vb || !indices) return false;
+    std::string code = HeldGunCode();
+    const StockMesh* m = StockOf(code);
+    if (!m) return false;
+    static std::map<std::pair<std::string, uint32_t>, bool> has_grip;
+    auto key = std::make_pair(code, count);
+    auto it = has_grip.find(key);
+    if (it == has_grip.end()) {
+        int root = code == "HVY" || code == "HV5" ? 90 : 75;
+        bool found = false;
+        for (uint32_t i = 0; i < count && !found; i++) {
+            int64_t v = int64_t(index16 ? static_cast<const uint16_t*>(indices)[i] : static_cast<const uint32_t*>(indices)[i]) + base;
+            if (v < 0 || (uint64_t(v) + 1) * stride > vbytes) continue;
+            const uint8_t* p = vb + size_t(v) * stride;
+            float pos[3];
+            int16_t ix;
+            std::memcpy(pos, p, 12);
+            std::memcpy(&ix, p + 16, 2);
+            found = ix == root && p[12] > 250 && pos[1] < -0.05f && pos[2] > -0.12f && pos[2] < 0;
+        }
+        it = has_grip.emplace(key, found).first;
+        LOGR("vr gun: %s stock %s the draw of %u indices", code.c_str(), found ? "with" : "not with", count);
+    }
+    if (!it->second) return false;
+    verts = m->verts.data(), vbytes_out = uint32_t(m->verts.size());
+    idx = m->idx.data(), icount = uint32_t(m->idx.size());
     return true;
 }
 
 // render thread, the gun's draw drawn again for a dropped magazine (on its way down or on the floor), whatever the
 // gun's own is doing: every bone collapsed but the magazine's. false: no draw
 bool VrDropMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
-    int bone, slide;
-    float travel, mag_mid[3], mag_up[3];
+    int bone, slide, bullets;
+    float travel, mag_mid[3], mag_up[3], mag_top, mag_bottom;
     bool measure;
-    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure)) return false;
+    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure, mag_top, mag_bottom, bullets)) return false;
+    NoteGun(bone, slide, travel, mag_mid, mag_up, mag_top, mag_bottom, bullets);
     Aff now;
     if (!DropNow(VrMagOutSeconds(), now)) return false;
     float kr[9], kp[3];
@@ -1169,7 +1370,7 @@ bool VrDropMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
     Aff b = Compose(Dinv, now);
     Aff point{};
     for (int i = 0; i < 3; i++) point.m[i * 4 + 3] = Bone(c, bone).m[i * 4 + 3];
-    for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone ? b : point);
+    for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone || k == bullets ? b : point);
     return true;
 }
 
@@ -1178,10 +1379,10 @@ bool VrDropMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
 bool VrHandMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
     int state = VrMagState();
     if (!(state == 3 || (state == 2 && VrMagInsert() < 0))) return false;
-    int bone, slide;
-    float travel, mag_mid[3], mag_up[3];
+    int bone, slide, bullets;
+    float travel, mag_mid[3], mag_up[3], mag_top, mag_bottom;
     bool measure;
-    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure)) return false;
+    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure, mag_top, mag_bottom, bullets)) return false;
     float kr[9], kp[3];
     if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
     float krs[9];
@@ -1192,7 +1393,7 @@ bool VrHandMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
     Aff b = Compose(Dinv, HandMag(yaw, pitch, rest));
     Aff point{};
     for (int i = 0; i < 3; i++) point.m[i * 4 + 3] = Bone(c, bone).m[i * 4 + 3];
-    for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone ? b : point);
+    for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone || k == bullets ? b : point);
     return true;
 }
 
@@ -1339,8 +1540,9 @@ bool VrLeftOnGun() { return g_left_on.load(std::memory_order_relaxed); }
 // instead carried the viewmodel's toe-in, a constant angle off the barrel that grew into a miss with distance
 bool VrGunAim(float* dir) {
     float yaw, pitch, AC[9], hc[3];
-    // unkicked: the game's direction already carries its kick
-    if (!Active() || !VrLookAngles(yaw, pitch) || !HandInCamera(yaw, pitch, 1, AC, hc, false)) return false;
+    // kicked, as drawn: the game's direction doesn't carry its kick (logged against its camera: the M249 0.9 deg up
+    // at no kick, 0.8 at 3.5), so the unkicked hand put sustained fire under the rising barrel (user: low at range)
+    if (!Active() || !VrLookAngles(yaw, pitch) || !HandInCamera(yaw, pitch, 1, AC, hc, true)) return false;
     float c[3], k[3];
     ToCamera(dir, false, c);
     for (int i = 0; i < 3; i++) k[i] = AC[i * 3] * c[0] + AC[i * 3 + 1] * c[1] + AC[i * 3 + 2] * c[2];

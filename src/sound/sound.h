@@ -174,6 +174,11 @@ inline float F32(uint32_t v) {
 }
 
 void Start();
+// blackquest: an Xbox ADPCM mono sample the game played (mixer.cpp keeps where each is, by its length and rate)
+void Seen(uint32_t addr, uint32_t len, uint32_t rate);
+// blackquest: one game sample (by length and rate) not played while set: a sound the player's hands make instead
+void Mute(uint32_t len, uint32_t rate);
+bool Muted(uint32_t len, uint32_t rate);
 void Complete(Voice& v, Packet& pk, uint32_t status);
 void Run(X86Context& ctx, const std::vector<Done>& done);
 int64_t NowMs();

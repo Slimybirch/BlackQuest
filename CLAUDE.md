@@ -24,6 +24,8 @@ base port's guide, still accurate unless noted). The plan, phases and hard rules
   bone posing calls), `src/game/vr_body.cpp` (head-driven view, gestures, dev markers), `src/game/vr_gun.cpp` (gun
   in the hand, own hands, fingers, magazine/slide bones), `src/game/vr_reload.cpp` (manual reload). NOTES.md's
   latest "state (consolidated)" entries summarise each phase's addresses, bones and dev markers.
+- The package is `com.slimybirch.blackquest` (not the base port's `com.racas.black`): settings, logs and dev
+  markers are in `Android/data/com.slimybirch.blackquest/files`. From Git Bash, set MSYS_NO_PATHCONV=1 for adb.
 - The headset: ask before installing, launching or screenshotting over adb; never send the
   `com.oculus.vrpowermanager` broadcasts (the user controls the proximity sensor). Game data dumps stay in the
   scratchpad or on the headset, never in git.

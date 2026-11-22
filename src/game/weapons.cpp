@@ -973,6 +973,17 @@ uint32_t HeldWeapon() {
     return ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
 }
 
+// a first person gun's sounds file (Levels\Level_NN\fpguns\bg1_<code>.wdd, the same in every level that has it),
+// read whole from the first level with it; false if none
+bool GunWaves(const std::string& code, std::vector<uint8_t>& out) {
+    for (int n : Levels()) {
+        char path[64];
+        std::snprintf(path, sizeof(path), "Levels\\Level_%02d\\fpguns\\bg1_%s.wdd", n, Lower(code).c_str());
+        if (GameFileExists(path)) return LoadGameFile(path, out);
+    }
+    return false;
+}
+
 // the table code of the weapon in the player's hand ("AK1", "PST"...), empty when none; game thread (vr_gun.cpp)
 std::string HeldCode() {
     Level l;
