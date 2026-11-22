@@ -251,7 +251,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip };
+             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload };
 
 using rows::Kind;
 using rows::Row;
@@ -323,6 +323,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "VR"},
     {Kind::Value, kVrTurn, "TURNING"},
     {Kind::Value, kVrGrip, "OFF-HAND GRIP"},
+    {Kind::Value, kVrReload, "RELOAD"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -532,6 +533,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "SMOOTH");
             return true;
         }
+        case kVrReload:
+            // blackquest: magazines by hand (where the gun's is known), or the game's button reload
+            if (step) o.vr_manual_reload = !o.vr_manual_reload;
+            std::snprintf(text, sizeof(text), o.vr_manual_reload ? "BY HAND" : "BUTTON");
+            return true;
         case kVrGrip:
             // blackquest: the off hand holds the gun while the grip is held, or a press takes it and the next lets go
             if (step) o.vr_grip_toggle = !o.vr_grip_toggle;

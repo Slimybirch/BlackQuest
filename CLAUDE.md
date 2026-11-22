@@ -20,6 +20,13 @@ base port's guide, still accurate unless noted). The plan, phases and hard rules
 - The user's xbe is NTSC-U with a region/media-patched certificate (NOTES.md, "The disc").
 - Toolchain here: VS Build Tools 2026 (MSVC 14.51) satisfies `build.bat`'s VS check.
 - Every address goes into NOTES.md with how it was found. At each phase's end: stop, give a headset checklist.
+- VR code: `native/xr.cpp` (OpenXR, controls, the panel quad), `native/vulkan.cpp` (stereo, the gun in the hand,
+  bone posing calls), `src/game/vr_body.cpp` (head-driven view, gestures, dev markers), `src/game/vr_gun.cpp` (gun
+  in the hand, own hands, fingers, magazine/slide bones), `src/game/vr_reload.cpp` (manual reload). NOTES.md's
+  latest "state (consolidated)" entries summarise each phase's addresses, bones and dev markers.
+- The headset: ask before installing, launching or screenshotting over adb; never send the
+  `com.oculus.vrpowermanager` broadcasts (the user controls the proximity sensor). Game data dumps stay in the
+  scratchpad or on the headset, never in git.
 
 ## What this is
 

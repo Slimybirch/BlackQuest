@@ -47,6 +47,7 @@ struct Hand {
     float trigger;   // 0..1
     bool thumb_touch;    // the thumb on the rest, the stick or a face button
     bool trigger_touch;  // the index finger on the trigger
+    bool primary;        // A (right) or X (left)
 };
 bool Hands(Hand& left, Hand& right, float head[3]);
 // the view's raise over the headset's own height (user: 15 cm was too much, 5 cm); shared by the renderer and the

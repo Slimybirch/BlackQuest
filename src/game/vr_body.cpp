@@ -92,9 +92,10 @@ constexpr float kMeleeSpeed = 2.5f;    // m/s, away from the head
 constexpr int64_t kPulse = 120;        // ms a gesture's button is held
 constexpr int64_t kMeleeRearm = 600;
 constexpr int64_t kMeleeHide = 650;    // ms: about the game's melee swing
-// over the shoulder: the hand behind the face's plane, right of the head's middle, higher than the chest (metres, in
-// the head's yaw frame)
-constexpr float kShoulderBack = -0.05f, kShoulderRight = 0.0f, kShoulderDown = -0.35f;
+// over the shoulder: the hand in a ball just above the right shoulder, a little behind and right of the headset
+// (metres from the head's middle, in the head's yaw frame: right, back, up). Small, so the gun hand's own grip
+// presses near the face aren't taken for it
+constexpr float kShoulderRight = 0.15f, kShoulderBack = 0.08f, kShoulderUp = -0.08f, kShoulderReach = 0.12f;
 
 void VrControls(input::Pad& pad) {
     int64_t now = NowMs();
@@ -114,7 +115,8 @@ void VrControls(input::Pad& pad) {
             float d[3] = {hand[1].pos[0] - head[0], hand[1].pos[1] - head[1], hand[1].pos[2] - head[2]};
             float right = d[0] * std::cos(yaw) - d[2] * std::sin(yaw);
             float back = d[0] * std::sin(yaw) + d[2] * std::cos(yaw);
-            g.grip_switch = back > kShoulderBack && right > kShoulderRight && d[1] > kShoulderDown;
+            float e[3] = {right - kShoulderRight, back - kShoulderBack, d[1] - kShoulderUp};
+            g.grip_switch = e[0] * e[0] + e[1] * e[1] + e[2] * e[2] < kShoulderReach * kShoulderReach;
             if (g.grip_switch) g.switch_until = now + kPulse;
         }
         if (!g.grip_switch) VrToggleGunFingers();  // own hands: the grip opens or closes the gun hand
@@ -144,6 +146,7 @@ void VrControls(input::Pad& pad) {
 
 // dev testing without the controllers in hand (files in the app's folder): dev_autostart presses A through the
 // menus till play; dev_autofire pulls the trigger now and then in play, dev_automelee hits B
+std::atomic<int64_t> g_record_until{0};  // dev_dumpreload
 void DevPad(input::Pad& pad) {
     static const bool start = std::filesystem::exists(app::ExeDir() / "dev_autostart");
     static const bool fire = std::filesystem::exists(app::ExeDir() / "dev_autofire");
@@ -154,7 +157,6 @@ void DevPad(input::Pad& pad) {
     // dev_firehold: the trigger held down in play (automatic fire, for catching the flash in a screenshot)
     static const bool hold = std::filesystem::exists(app::ExeDir() / "dev_firehold");
     if (hold && play) pad.analog[7] = 255;
-    if (hold) Opt().infinite_ammo = true;  // or the gun runs dry in seconds
     // dev_menu: the settings panel opens once, 5 s into play (or 20 s after boot without autostart: the title)
     static const bool menu = std::filesystem::exists(app::ExeDir() / "dev_menu");
     static int64_t boot = now, first_play = 0;
@@ -166,7 +168,17 @@ void DevPad(input::Pad& pad) {
     }
     static const bool melee = std::filesystem::exists(app::ExeDir() / "dev_automelee");
     if (melee && play && now % 2000 < 150) pad.analog[1] = 255;
+    // dev_dumpreload: A (reload) tapped every 6 s in play, the renderer recording the gun list's bones for 2.5 s
+    // after each tap (phase 5: which bones a reload moves)
+    static const bool reload = std::filesystem::exists(app::ExeDir() / "dev_dumpreload");
+    // (between dev_autofire's bursts: a firing gun doesn't take the reload)
+    int64_t phase = now % 6000;
+    if (reload && play && first_play && now - first_play > 6000 && phase >= 1500 && phase < 1650) {
+        pad.analog[0] = 255;
+        g_record_until.store(now + 3000);
+    }
 }
+bool VrRecording() { return NowMs() < g_record_until.load(); }
 
 // game thread, each pad poll of port 0
 void VrPad(input::Pad& pad) {

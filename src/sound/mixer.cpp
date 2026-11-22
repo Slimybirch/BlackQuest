@@ -420,6 +420,60 @@ void MixVoice(Voice& v, float* out, float* send, uint32_t frames) {
     v.itd = itd;
 }
 
+// blackquest: the hands' mechanical sounds (a rack's pull and run forward), made here rather than found in the
+// game's banks: short clicks, mono into the front pair. 0: the handle back against its stop (a light double
+// click), 1: run forward and locked (a heavier clack with a low thump)
+std::mutex g_cue_lock;
+std::vector<std::pair<std::vector<float>, size_t>> g_cues;  // samples, the next to play
+
+std::vector<float> MakeCue(int kind) {
+    constexpr float kRateF = float(audio::kRate);
+    size_t n = size_t(kRateF * (kind == 0 ? 0.09f : 0.16f));
+    std::vector<float> s(n, 0.0f);
+    uint32_t seed = 0x9E3779B9u + uint32_t(kind);
+    auto noise = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return float(int32_t(seed)) / 2147483648.0f;
+    };
+    auto click = [&](float at, float len, float tone, float amp) {
+        float lp = 0;
+        for (size_t i = size_t(at * kRateF); i < n; i++) {
+            float t = float(i) / kRateF - at;
+            if (t > len * 6) break;
+            float env = std::exp(-t / len);
+            lp += (noise() - lp) * 0.55f;  // a little darker than white
+            s[i] += amp * env * (0.6f * lp + 0.4f * std::sin(6.2831853f * tone * t));
+        }
+    };
+    if (kind == 0) {
+        click(0.0f, 0.004f, 2600, 0.35f);
+        click(0.035f, 0.006f, 1900, 0.45f);
+    } else {
+        click(0.0f, 0.005f, 3100, 0.55f);
+        click(0.012f, 0.009f, 1500, 0.6f);
+        for (size_t i = 0; i < n; i++) {  // the thump of the carrier home
+            float t = float(i) / kRateF;
+            s[i] += 0.5f * std::exp(-t / 0.03f) * std::sin(6.2831853f * 140 * t);
+        }
+    }
+    return s;
+}
+
+void Cue(int kind) {
+    std::lock_guard lock(g_cue_lock);
+    g_cues.emplace_back(MakeCue(kind), 0);
+}
+
+void MixCues(float* out, uint32_t frames) {
+    std::lock_guard lock(g_cue_lock);
+    for (auto& [s, at] : g_cues)
+        for (uint32_t f = 0; f < frames && at < s.size(); f++, at++) {
+            out[f * kOuts + audio::FrontLeft] += s[at];
+            out[f * kOuts + audio::FrontRight] += s[at];
+        }
+    std::erase_if(g_cues, [](auto& c) { return c.second >= c.first.size(); });
+}
+
 // the device clips once, after the fold to stereo sums the speakers
 void Render(float* out, uint32_t frames) {
     std::memset(out, 0, frames * kOuts * sizeof(float));
@@ -431,6 +485,7 @@ void Render(float* out, uint32_t frames) {
         MixVoice(v, out, send.data(), frames);
     }
     g_reverb.Run(send.data(), out, frames);
+    MixCues(out, frames);
 }
 
 int64_t NowMs() {

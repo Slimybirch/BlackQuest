@@ -967,6 +967,12 @@ void FillMedkits() { g_medkits = true; }
 
 void SetAutoSuppressor(bool on) { g_auto_suppressor = on; }  // add its declaration to game/weapons.h
 
+// the weapon object in the player's hand (its state machine's controller), 0 when none; game thread (vr_reload.cpp)
+uint32_t HeldWeapon() {
+    Level l;
+    return ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
+}
+
 // the table code of the weapon in the player's hand ("AK1", "PST"...), empty when none; game thread (vr_gun.cpp)
 std::string HeldCode() {
     Level l;

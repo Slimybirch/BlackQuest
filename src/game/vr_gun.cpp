@@ -45,6 +45,25 @@ namespace game {
 float VrViewLift();                           // vr_body.cpp
 bool VrLookAngles(float& yaw, float& pitch);  // vr_body.cpp
 bool VrMeleeHidden();                          // vr_body.cpp
+// vr_reload.cpp: the magazine
+int VrMagState();
+int VrMagBone();
+float VrSlide();
+bool VrGunParts(int& mag, int& slide, float& travel, float* mid, float* up, bool& measure);
+bool VrRacking();
+bool VrRackHeld();
+bool VrMagRetag(int& from, float* box);
+float VrMagOutSeconds();
+void VrMagWell(const float* c, const float* axis);
+bool VrRackPart(int& bone, float* pt);
+void VrRackAt(const float* c);
+float VrMagInsert();
+void VrMagThrow(float* v);
+bool VrMagInHand();
+void VrReloadTick();
+bool VrMagFromHand();
+float VrMagHold();
+float VrRodTilt();
 
 namespace {
 
@@ -97,7 +116,7 @@ std::atomic<float> g_kick{0};  // degrees, the game's latest (game thread), read
 // the left hand on the gun: gripped at the fore-grip (or the gun hand, on a pistol), the left arm drawn where the
 // game holds it; off it, the left arm follows the left controller
 std::atomic<bool> g_left_on{false};
-constexpr float kReach = 0.15f;  // metres from the fore-grip a grip press takes hold
+constexpr float kReach = 0.08f;  // metres from the fore-grip a grip press takes hold (tight: the user's ask)
 std::string g_code = "?";  // the weapon it was made for
 
 uint32_t Player() { return R32(kWorld) + kWorldPlayer; }
@@ -654,7 +673,7 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
                 // a hand gripping the gun closes every finger on it, whatever else is pressed (the gun hand by its
                 // toggle, the off hand while it holds); otherwise the fingers follow the controller
                 bool held = h == 1 ? !g_gun_fingers_open.load(std::memory_order_relaxed)
-                                   : g_left_on.load(std::memory_order_relaxed);
+                                   : g_left_on.load(std::memory_order_relaxed) || VrMagInHand() || VrRackHeld();
                 if (fake[0] >= 0) held = false;
                 float want[5] = {th, idx, g, g, g};
                 if (held) std::fill(want, want + 5, 1.0f);
@@ -776,6 +795,407 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
     return true;
 }
 
+// the magazine's middle and its up (the way it goes into the well) in its mesh, measured once per mesh from the
+// vertices drawn: those weighted most to its bone. up: from the middle to the middle of its top tenth
+struct MagShape {
+    bool ok = false;
+    float mid[3], up[3];
+};
+std::map<uint64_t, MagShape> g_mag_shapes;  // by index count and bone (render thread)
+
+const MagShape& MeasureMag(int bone, const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices,
+                           bool index16, uint32_t count, int32_t base) {
+    uint64_t key = uint64_t(count) << 16 | uint32_t(bone);
+    auto it = g_mag_shapes.find(key);
+    if (it != g_mag_shapes.end()) return it->second;
+    MagShape m;
+    std::vector<std::array<float, 3>> pts;
+    std::set<int64_t> seen;
+    for (uint32_t i = 0; vb && indices && i < count; i++) {
+        int64_t v = int64_t(index16 ? static_cast<const uint16_t*>(indices)[i] : static_cast<const uint32_t*>(indices)[i]) + base;
+        if (v < 0 || (uint64_t(v) + 1) * stride > vbytes || !seen.insert(v).second) continue;
+        const uint8_t* p = vb + size_t(v) * stride;
+        const uint8_t* w = p + 12;
+        int16_t ix[4];
+        std::memcpy(ix, p + 16, 8);
+        int top = 0;
+        for (int k = 1; k < 4; k++)
+            if (w[k] > w[top]) top = k;
+        if (ix[top] != bone || w[top] < 128) continue;
+        std::array<float, 3> q;
+        std::memcpy(q.data(), p, 12);
+        pts.push_back(q);
+    }
+    if (pts.size() >= 8) {
+        for (int j = 0; j < 3; j++) {
+            double s = 0;
+            for (auto& q : pts) s += q[j];
+            m.mid[j] = float(s / pts.size());
+        }
+        // its top: the tenth of its points highest in the mesh's y (a magazine goes up into its well)
+        std::vector<std::array<float, 3>> by = pts;
+        std::sort(by.begin(), by.end(), [](auto& a, auto& b) { return a[1] > b[1]; });
+        size_t n = std::max<size_t>(1, by.size() / 10);
+        float topm[3] = {};
+        for (size_t i = 0; i < n; i++)
+            for (int j = 0; j < 3; j++) topm[j] += by[i][j] / float(n);
+        for (int j = 0; j < 3; j++) m.up[j] = topm[j] - m.mid[j];
+        Normalize(m.up);
+        m.ok = true;
+        LOGR("vr reload: magazine bone %d of mesh %u: %zu vertices, middle %.3f %.3f %.3f, up %.2f %.2f %.2f", bone,
+             count, pts.size(), m.mid[0], m.mid[1], m.mid[2], m.up[0], m.up[1], m.up[2]);
+    } else {
+        LOGR("vr reload: magazine bone %d of mesh %u: only %zu vertices; the table's middle used", bone, count,
+             pts.size());
+    }
+    return g_mag_shapes.emplace(key, m).first->second;
+}
+
+float g_mag_mid_m[3] = {0, -0.03f, 0.12f};  // the held gun's magazine's middle in its mesh (render thread)
+float g_mag_up_m[3] = {0, 1, 0};            // and its up
+
+// the camera in the game world (game thread writes each gun frame): rows left, up, at, eye; the floor under the
+// player (eye height over its position: vr_body.cpp's kStance)
+constexpr uint32_t kStance = 0x2E0;
+struct CamSnap {
+    float rows[4][3];
+    float feet;
+    bool ok;
+};
+std::mutex g_cam_lock;
+CamSnap g_cam{};
+// C → world as an affine (the rows: C's x is -left, y up, z -at), and back
+Aff CamToWorld(const CamSnap& s) {
+    Aff a{};
+    for (int i = 0; i < 3; i++) {
+        a.m[i * 4 + 0] = -s.rows[0][i];
+        a.m[i * 4 + 1] = s.rows[1][i];
+        a.m[i * 4 + 2] = -s.rows[2][i];
+        a.m[i * 4 + 3] = s.rows[3][i];
+    }
+    return a;
+}
+// a basis's frame: columns x, up, front, and its translation
+Aff Frame3(const float* x, const float* up, const float* front, const float* t) {
+    Aff a{};
+    for (int i = 0; i < 3; i++) {
+        a.m[i * 4 + 0] = x[i], a.m[i * 4 + 1] = up[i], a.m[i * 4 + 2] = front[i], a.m[i * 4 + 3] = t[i];
+    }
+    return a;
+}
+// a magazine's own frame in its mesh: its middle, its up, its front (the mesh's +z, toward the muzzle, square to up)
+Aff MagFrame(const float* mid, const float* up_in) {
+    float up[3] = {up_in[0], up_in[1], up_in[2]}, f[3] = {0, 0, 1}, x[3];
+    Normalize(up);
+    float d = f[2] * up[2] + f[1] * up[1] + f[0] * up[0];
+    for (int i = 0; i < 3; i++) f[i] -= up[i] * d;
+    Normalize(f);
+    Cross(up, f, x);
+    return Frame3(x, up, f, mid);
+}
+
+constexpr float kRockIn = 15 * 3.14159265f / 180;  // a magazine going in, at its farthest still lined up
+
+// the off hand's magazine in C: its middle, up (the fist's axis, out past the thumb) and front (forward, square to
+// it). The same as vr_reload.cpp's HeldMagOf, from HandPose (so dev_fakehands holds one too)
+bool VrHeldMag(float yaw, float pitch, float* mid, float* up, float* front) {
+    float A[9], hp[3];
+    if (!HandPose(0, A, hp)) return false;
+    float fl[3] = {-A[2], -A[5], -A[8]}, ul[3] = {A[1], A[4], A[7]};
+    float c = std::cos(VrRodTilt()), s = std::sin(VrRodTilt()), rl[3], frl[3];
+    for (int i = 0; i < 3; i++) rl[i] = c * fl[i] + s * ul[i], frl[i] = s * fl[i] - c * ul[i];
+    float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+    float U[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
+    hp[1] += xr::kEyeRaise + VrViewLift();
+    float hold = VrMagHold();
+    for (int i = 0; i < 3; i++) {
+        up[i] = U[i] * rl[0] + U[3 + i] * rl[1] + U[6 + i] * rl[2];
+        front[i] = U[i] * frl[0] + U[3 + i] * frl[1] + U[6 + i] * frl[2];
+        mid[i] = U[i] * hp[0] + U[3 + i] * hp[1] + U[6 + i] * hp[2];
+    }
+    for (int i = 0; i < 3; i++) mid[i] += up[i] * hold;
+    return true;
+}
+
+// the magazine in the off hand, mesh → C: upright in the fist (its up along the fist's axis, its top out past the
+// thumb, its front forward), fingers round it (vr_reload.cpp HeldMagOf)
+Aff HandMag(float yaw, float pitch, const Aff& rest) {
+    float mid[3], up[3], front[3], x[3];
+    if (!VrHeldMag(yaw, pitch, mid, up, front)) return rest;
+    Cross(up, front, x);
+    return Compose(Frame3(x, up, front, mid), Inverse(MagFrame(g_mag_mid_m, g_mag_up_m)));
+}
+
+// a magazine out of the gun (dropped, knocked, thrown): it falls in the world (so it stays where it fell as the
+// player moves), turning to lie flat as it lands on the floor under the player, and stays a minute
+struct Drop {
+    bool on = false;
+    Aff w0;           // mesh → world as it left
+    float v[3];       // world, m/s
+    float land;       // seconds to the floor
+    float axis[3];    // world: the turn that lays it flat
+    float angle;
+    float mid_w0[3];  // its middle as it left (world)
+};
+Drop g_drop;  // render thread
+constexpr float kDropStay = 60;
+
+void StartDrop(const Aff& from_c, const float* v_c) {
+    CamSnap cam;
+    {
+        std::lock_guard lock(g_cam_lock);
+        cam = g_cam;
+    }
+    if (!cam.ok) {
+        g_drop.on = false;
+        LOGR("vr reload: magazine dropped, no camera yet");
+        return;
+    }
+    Aff c2w = CamToWorld(cam);
+    Drop d;
+    d.on = true;
+    d.w0 = Compose(c2w, from_c);
+    float vr[3];
+    RotOf(c2w, v_c, vr);
+    std::memcpy(d.v, vr, 12);
+    Apply(d.w0, g_mag_mid_m, d.mid_w0);
+    float up[3];
+    RotOf(d.w0, g_mag_up_m, up);
+    Normalize(up);
+    // y(t) = y0 + vy t - 4.9 t^2 = the floor (plus its half thickness)
+    float h = d.mid_w0[1] - (cam.feet + 0.015f);
+    d.land = h > 0 ? (d.v[1] + std::sqrt(d.v[1] * d.v[1] + 19.6f * h)) / 9.8f : 0.0f;
+    float Y[3] = {0, 1, 0};
+    Cross(up, Y, d.axis);
+    float al = std::sqrt(d.axis[0] * d.axis[0] + d.axis[1] * d.axis[1] + d.axis[2] * d.axis[2]);
+    if (al > 1e-4f) {
+        for (float& x : d.axis) x /= al;
+        d.angle = -std::asin(std::clamp(up[1], -1.0f, 1.0f));
+    } else {
+        d.axis[0] = 1, d.axis[1] = 0, d.axis[2] = 0;
+        d.angle = 1.5707963f;
+    }
+    g_drop = d;
+    LOGR("vr reload: magazine dropped from %.2f %.2f %.2f (world), feet %.2f, lands in %.2f s", d.mid_w0[0],
+         d.mid_w0[1], d.mid_w0[2], cam.feet, d.land);
+}
+
+// mesh → C of the dropped magazine now; false: none to draw
+bool DropNow(float t, Aff& out) {
+    if (!g_drop.on || t > kDropStay) return false;
+    CamSnap cam;
+    {
+        std::lock_guard lock(g_cam_lock);
+        cam = g_cam;
+    }
+    if (!cam.ok) return false;
+    float tf = std::min(t, g_drop.land), k = g_drop.land > 0 ? tf / g_drop.land : 1.0f;
+    float R[9], to[3];
+    AxisAngle(g_drop.axis, g_drop.angle * k, R);
+    for (int i = 0; i < 3; i++) to[i] = g_drop.mid_w0[i] + g_drop.v[i] * tf - (i == 1 ? 4.9f * tf * tf : 0);
+    Aff w = Compose(Pivot(R, g_drop.mid_w0, to), g_drop.w0);
+    out = Compose(Inverse(CamToWorld(cam)), w);
+    return true;
+}
+
+// render thread, a gun list draw (the gun's, and the arms', which draw the magazine too): the magazine bone
+// (vr_reload.cpp) in the gun, in the off hand (sliding into the well once lined up with it), or out (falling or
+// thrown, then gone); the slide held back. The well and its axis go back to the reload. vb..base: the draw's
+// vertices and indices, to measure the magazine by
+// a magazine modelled into the gun's body: its vertices (in the box, weighted to the body) moved onto a spare
+// bone, written into the draw's vertices each draw (they're the guest's: the game never rewrites them). Once a mesh
+// is retagged its spare bone must follow the body in every draw, reload by hand or not
+struct Retag {
+    int from, to;
+    std::vector<uint32_t> verts;
+};
+std::map<uint32_t, Retag> g_retags;  // by the mesh's index count (render thread)
+
+bool RetagMag(float (*c)[4], const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16,
+              uint32_t count, int32_t base, int to) {
+    auto it = g_retags.find(count);
+    int from;
+    float box[6];
+    if (it == g_retags.end() && to >= 0 && VrMagRetag(from, box) && vb && indices) {
+        // dev_magbox in the app folder: six numbers (x, y, z ranges) for the box, to find a magazine by trying
+        if (FILE* f = std::fopen((app::ExeDir() / "dev_magbox").string().c_str(), "r")) {
+            float b[6];
+            if (std::fscanf(f, "%f %f %f %f %f %f", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) std::memcpy(box, b, sizeof(b));
+            std::fclose(f);
+        }
+        Retag r{from, to, {}};
+        std::set<int64_t> seen;
+        for (uint32_t i = 0; i < count; i++) {
+            int64_t v = int64_t(index16 ? static_cast<const uint16_t*>(indices)[i] : static_cast<const uint32_t*>(indices)[i]) + base;
+            if (v < 0 || (uint64_t(v) + 1) * stride > vbytes || !seen.insert(v).second) continue;
+            const uint8_t* p = vb + size_t(v) * stride;
+            float q[3];
+            std::memcpy(q, p, 12);
+            const uint8_t* w = p + 12;
+            int16_t ix[4];
+            std::memcpy(ix, p + 16, 8);
+            int top = 0;
+            for (int k = 1; k < 4; k++)
+                if (w[k] > w[top]) top = k;
+            if (ix[top] != from) continue;
+            if (q[0] < box[0] || q[0] > box[1] || q[1] < box[2] || q[1] > box[3] || q[2] < box[4] || q[2] > box[5]) continue;
+            r.verts.push_back(uint32_t(v));
+        }
+        LOGR("vr reload: mesh %u: %zu body vertices of bone %d moved onto bone %d (the magazine)", count, r.verts.size(),
+             from, to);
+        it = g_retags.emplace(count, std::move(r)).first;
+    }
+    if (it == g_retags.end() || it->second.verts.empty() || !vb) return false;
+    const Retag& r = it->second;
+    for (uint32_t v : r.verts) {
+        uint8_t* p = const_cast<uint8_t*>(vb) + size_t(v) * stride;
+        const uint8_t w[4] = {255, 0, 0, 0};
+        const int16_t ix[4] = {int16_t(r.to), 0, 0, 0};
+        std::memcpy(p + 12, w, 4);
+        std::memcpy(p + 16, ix, 8);
+    }
+    SetBone(c, r.to, Bone(c, r.from));  // it rests with the body
+    return true;
+}
+
+bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
+               uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base) {
+    // a retagged magazine follows the body first (in every draw of that mesh, whatever happens below)
+    int bone0, slide0;
+    float travel0, mid0[3], up0[3];
+    bool measure0;
+    bool parts = VrGunParts(bone0, slide0, travel0, mid0, up0, measure0);
+    // (the gun's own draw: the arms' mesh has other bones under the same numbers)
+    bool gun_draw = count < 2880 || count > 2970;
+    bool retagged = RetagMag(c, vb, stride, vbytes, indices, index16, count, base, parts && gun_draw ? slide0 : -1);
+    if (!parts) return retagged;
+    int bone, slide;
+    float travel, mag_mid[3], mag_up[3];
+    bool measure;
+    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure)) return false;
+    float kr[9], kp[3];
+    if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
+    float krs[9];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) krs[i * 3 + j] = kr[i * 3 + j] * (j == 1 ? 1.0f : -1.0f);  // K · S
+    Aff D = FromRotPos(krs, kp), Dinv = Inverse(D);
+    // the slide, held back by a lock or a hand: its bone back along the mesh's -z
+    if (slide >= 0 && VrSlide() > 0.001f) {
+        Aff back = kIdentityAff;
+        back.m[11] = -travel * VrSlide();
+        SetBone(c, slide, Compose(Bone(c, slide), back));
+    }
+    // the rack point where the gun's own draw has it (not the arms', whose bones are another set)
+    int rack_bone;
+    float rack_m[3];
+    if ((count < 2880 || count > 2970) && VrRackPart(rack_bone, rack_m)) {
+        float at[3];
+        Apply(Compose(D, Bone(c, rack_bone)), rack_m, at);
+        VrRackAt(at);
+    }
+    // the magazine's shape: measured where this draw has it (the other draw of the pair may not)
+    static std::map<int, MagShape> shapes;  // by bone, from whichever draw has it
+    const MagShape& measured = MeasureMag(bone, vb, stride, vbytes, indices, index16, count, base);
+    if (measured.ok) shapes[bone] = measured;
+    const MagShape& shape = shapes[bone];
+    bool use = measure && shape.ok;
+    float mid_m[3], up_m[3];
+    std::memcpy(mid_m, use ? shape.mid : mag_mid, 12);
+    std::memcpy(g_mag_mid_m, mid_m, 12);
+    std::memcpy(up_m, use ? shape.up : mag_up, 12);
+    std::memcpy(g_mag_up_m, up_m, 12);
+    Aff rest = Compose(D, Bone(c, bone));  // the magazine as the game has it (in the gun), in C
+    float mid[3], up[3];
+    Apply(rest, mid_m, mid);
+    RotOf(rest, up_m, up);
+    Normalize(up);
+    static Aff last_gun = kIdentityAff;  // the gun's magazine where it was last drawn (in the gun, or sliding in)
+    int state = VrMagState();
+    if (state == 0 || state == 3) {
+        VrMagWell(mid, up);
+        last_gun = rest;
+        return true;  // the game's own
+    }
+    float along = VrMagInsert();
+    if (state == 2 && along >= 0) {
+        // lined up with the well: on its axis, out of the gun by how far the hand is; rocked forward the more it's
+        // out (the AK's goes in front first and swings back to seat)
+        Aff out = kIdentityAff;
+        for (int i = 0; i < 3; i++) out.m[i * 4 + 3] = -up[i] * along;
+        float fwd[3], side[3], R[9];
+        float fm[3] = {0, 0, 1};
+        RotOf(rest, fm, fwd);
+        Cross(up, fwd, side);
+        Normalize(side);
+        AxisAngle(side, -kRockIn * std::clamp(along / 0.06f, 0.0f, 1.0f), R);
+        float pivot[3];
+        for (int i = 0; i < 3; i++) pivot[i] = mid[i] + up[i] * 0.05f + fwd[i] * 0.02f;
+        last_gun = Compose(out, Compose(Pivot(R, pivot, pivot), rest));
+        SetBone(c, bone, Compose(Dinv, last_gun));
+        return true;
+    }
+    // out of the gun: a new drop (dropped, knocked or thrown, from the gun or the hand) starts falling in the world,
+    // drawn by its own pass (VrDropMag); the gun's own is hidden: collapsed to a point where it sat (vertices only
+    // partly weighted to it barely move)
+    static float last_t = 1e9f;
+    float t = VrMagOutSeconds();
+    if (t < last_t && t < 0.5f) {
+        float v[3];
+        VrMagThrow(v);
+        StartDrop(VrMagFromHand() ? HandMag(yaw, pitch, rest) : last_gun, v);
+    }
+    last_t = t;
+    Aff gone{};
+    for (int i = 0; i < 3; i++) gone.m[i * 4 + 3] = Bone(c, bone).m[i * 4 + 3];
+    SetBone(c, bone, gone);
+    return true;
+}
+
+// render thread, the gun's draw drawn again for a dropped magazine (on its way down or on the floor), whatever the
+// gun's own is doing: every bone collapsed but the magazine's. false: no draw
+bool VrDropMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
+    int bone, slide;
+    float travel, mag_mid[3], mag_up[3];
+    bool measure;
+    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure)) return false;
+    Aff now;
+    if (!DropNow(VrMagOutSeconds(), now)) return false;
+    float kr[9], kp[3];
+    if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
+    float krs[9];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) krs[i * 3 + j] = kr[i * 3 + j] * (j == 1 ? 1.0f : -1.0f);  // K · S
+    Aff Dinv = Inverse(FromRotPos(krs, kp));
+    Aff b = Compose(Dinv, now);
+    Aff point{};
+    for (int i = 0; i < 3; i++) point.m[i * 4 + 3] = Bone(c, bone).m[i * 4 + 3];
+    for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone ? b : point);
+    return true;
+}
+
+// render thread, the gun's draw drawn again for the magazine in the off hand (while the gun's own is in the gun,
+// falling, or gone): every bone collapsed but the magazine's, which is put on the palm. false: no second draw
+bool VrHandMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
+    int state = VrMagState();
+    if (!(state == 3 || (state == 2 && VrMagInsert() < 0))) return false;
+    int bone, slide;
+    float travel, mag_mid[3], mag_up[3];
+    bool measure;
+    if (!VrGunParts(bone, slide, travel, mag_mid, mag_up, measure)) return false;
+    float kr[9], kp[3];
+    if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
+    float krs[9];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) krs[i * 3 + j] = kr[i * 3 + j] * (j == 1 ? 1.0f : -1.0f);  // K · S
+    Aff D = FromRotPos(krs, kp), Dinv = Inverse(D);
+    Aff rest = Compose(D, Bone(c, bone));
+    Aff b = Compose(Dinv, HandMag(yaw, pitch, rest));
+    Aff point{};
+    for (int i = 0; i < 3; i++) point.m[i * 4 + 3] = Bone(c, bone).m[i * 4 + 3];
+    for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone ? b : point);
+    return true;
+}
+
 // game thread: take or let go of the gun with the off hand: a grip press within reach of where it holds the gun
 // takes hold; letting go of the grip lets go, or with toggle grip the next press. On a long gun, holding it aims the
 // barrel along the line between the hands
@@ -811,9 +1231,11 @@ void LeftHold(const Frame& f) {
     } else {
         on = false;
     }
+    if (VrMagInHand() || VrRacking()) on = false, near = false;  // a magazine in the off hand: it can't hold the gun as well
     g_left_on.store(on);
     g_two_aim.store(on && f.fore >= 0.05f);  // a pistol's hands are too close to aim by
-    xr::TakeLeftGrip(on || near);
+    // the left grip isn't the game's white button while it holds or is about to take something
+    xr::TakeLeftGrip(on || near || VrRacking() || VrMagInHand());
 }
 
 // game thread, the gun list about to be drawn: the gun's frame from this frame's muzzle, for the renderer
@@ -824,6 +1246,13 @@ void VrGunFrame(X86Context& ctx) {
         g_left_on.store(false);
         xr::TakeLeftGrip(false);
         return;
+    }
+    {
+        // the camera in the world, for a dropped magazine to stay where it fell (the renderer's latest)
+        std::lock_guard lock(g_cam_lock);
+        for (int r = 0; r < 4; r++) std::memcpy(g_cam.rows[r], Row(r), 12);
+        g_cam.feet = Row(3)[1] - (G<float>(Player() + kStance) - 0.2f);
+        g_cam.ok = true;
     }
     Frame f{};
     float mc[3], left[3];
@@ -854,6 +1283,7 @@ void VrGunFrame(X86Context& ctx) {
         }
     }
     LeftHold(f);
+    VrReloadTick();
     // the recoil, and its strongest per gun in the log for tuning
     float kick = G<float>(Player() + kRecoilKick);
     if (!std::isfinite(kick)) kick = 0;

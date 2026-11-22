@@ -399,9 +399,18 @@ static void RestoreAmmo(uint32_t weapon, const KeptAmmo& kept) {
 
 // the wait between a weapon's shots. The frame of a first shot is part of it: the fire clip runs that frame too
 // and holds its next shot where the wait ends
+namespace game {
+uint32_t VrHideReserve(uint32_t ctrl);  // vr_reload.cpp: the reserve word to hide, 0 none
+}
 X86_EXTERN_FUNC(__imp__sub_001EEFD0);
 X86_FUNC(sub_001EEFD0) {
     uint32_t weapon = R32(ctx.esp + 4);
+    // phase 5: reloading by hand: every way the game starts a reload (0x1EF4D7, FUN_001BB340 at 0x1BB35E, both
+    // called from in here) needs reserve rounds, so the player's gun shows none while this runs; the reserve comes
+    // back after, with whatever the call added (a pickup)
+    uint32_t hidden = game::VrHideReserve(weapon);
+    uint16_t saved = hidden ? G<uint16_t>(hidden) : 0;
+    if (hidden) G<uint16_t>(hidden) = 0;
     float& wait = G<float>(weapon + kWeaponWait);
     float rest = wait;
     float dt = Dt();
@@ -409,6 +418,7 @@ X86_FUNC(sub_001EEFD0) {
     uint32_t rounds = Rounds(weapon);
     __imp__sub_001EEFD0(ctx, base);
     bool shot = Rounds(weapon) < rounds;
+    if (hidden) G<uint16_t>(hidden) = uint16_t(std::min<uint32_t>(saved + G<uint16_t>(hidden), 0xFFFF));
     RestoreAmmo(weapon, kept);
     uint32_t me = R32(weapon + kWeaponOwner);
     // the rapid fire cheat: a shot's wait, its fire mode's +0x20, is that many times shorter

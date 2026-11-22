@@ -73,8 +73,6 @@
       each hand on its controller, two-bone IK for the elbows, the game's finger poses kept. Grabbing a gun snaps
       the gun hand to its grip and the off hand to the game's own fore-grip hold, wherever the controller is (the
       game's hand bones on the gun give both, so no per-weapon grip table or GRIP rows once this works)
-- [ ] reload by hand: which gun bones each reload animation moves (magazine, bolt...) are the parts to grab
-- [ ] Phase 5 (user): magazines are taken from the chest with the **trigger** (not the grip)
 - [ ] later (user): the AK's ejection port and charging handle are modelled on its left (inside) side; real AKs
       have them on the right. Possible: draw the AK mirrored across its barrel's vertical plane (a reflection in
       its K; flip the cull winding for that draw), and send its casings out of the right side. Check which other
@@ -94,6 +92,7 @@
       / the pickup test behind X) and a grab radius (~20 cm) around the hand; the grab then fires the game's own
       pickup for that item. Highlight in reach. X stays as a fallback
 - [ ] scope as a lens (Wishlist); recoil kick on the hand model
+
 
 ## VR controls (user, 2026-11-19)
 - [x] right stick down → medpack (D-pad down)
@@ -144,9 +143,61 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] haptics: firing (by weapon), hits taken, reload steps, pickups; a strength slider
 - [ ] gun against walls: the muzzle pulled back or the gun lowered when it would go into a wall (option)
 - [ ] grenades from a belt (Phase 6): grab one from the chest/hip with the off hand, pull, throw
+- [ ] grenades, the user's design (2026-11-21): an empty weapon slot to switch to (no gun in the hand); there the
+      off hand's trigger at the chest (where the magazines are) takes a grenade, throw it and let go of the
+      trigger to release it. The off hand's trigger otherwise fires the M16's under-barrel grenade launcher. The
+      grip stays the reload's (magazines, slide, handle)
 - [ ] locomotion: head- or hand-relative, movement hand swappable (left-handed), comfort vignette when moving
 - [ ] HUD editor in the headset: scale, distance, and a wrist or on-gun ammo count (Phase 7)
 - [ ] first-launch setup: height, handedness, turn style, comfort, before the first level
 - [ ] performance first: reviews of Quest ports punish frame drops more than anything (Black's explosions and
       particles are the worst case); render scale and effect options in VR Settings, measured per level
 - [ ] avoid "press A to interact" where a hand can do it (pickups by grabbing the weapon itself, doors)
+
+## Phase 5 (manual reloading) — state 2026-11-21
+- [x] research: reload is A; every reload start needs reserve rounds (0x1EF4D7, FUN_001BB340); the empty-gun
+      refill (state 8); clip `[ammo+0x18]`, size `[[ammo+8]+0x60]`, reserve the inventory word by ammo type
+- [x] the game's reloads held off (the state machine wrapper hides the reserve while it runs); RELOAD option
+      (BY HAND / BUTTON); every magazine gun but shotguns and launchers (SHG SH5 RPG GRL)
+- [x] magazines: AK bone 81, PST 114 (measured middle/axis from the draw); eject on A (drops), pull out with the
+      off hand's trigger and throw, take one at the chest with the trigger, guided slide-in along the well
+- [x] slides: PST 117 (3.7 cm), locks back on empty, racked by the off hand's grip (AK racks with nothing drawn)
+- [x] knock the old magazine out with the fresh one (AK technique), rock-in on the way in; the magazine in hand
+      drawn by a second pass of the gun mesh (built 2026-11-21, not yet seen)
+- [x] user test 1: a magazine came to the hand on the off hand's trigger almost anywhere (the fore-grip is next to
+      the AK's well). Tightened (2026-11-21): no reload trigger while the off hand holds the gun; chest 15 cm, pull
+      out 6 cm, lining up 3.5 cm off the axis / 5 cm below; rack on the off hand's trigger held at the slide or
+      handle (7 cm); fore-grip 8 cm; weapon switch a 12 cm ball just above the right shoulder, behind the headset
+- [x] user test 2: still couldn't rack; the pull-out still too far. Changed (2026-11-21): pull-out within 3.5 cm
+      of the magazine's body (a line on its axis), the chest a column under the headset (9 cm radius, 15-50 cm
+      down) with a light buzz on entering, the rack back on the off hand's grip within 2.5 cm of the charging
+      handle / slide rear, measured from the meshes and placed by the render thread
+- [x] user test 3: the AK still couldn't be racked reliably. Changed (2026-11-21): every reload action is the off
+      hand's grip (chest, magazine off the gun, slide/handle); the AK's charging handle animated (its 12 vertices
+      retagged onto spare bone 3, 7 cm travel); rack sounds (made in the mixer: a click at the back stop, a clack
+      run forward) with buzzes; the fingers close on the slide/handle while held
+- [x] user test 4: racking worked (log); a held magazine vanished after ~2 s (the hand's draw was built from the
+      constants with the dropped one already collapsed); dropped ones never reached the ground; the pistol's never
+      seated (lining up used the palm, which on a pistol is inside the gun hand). Fixed 2026-11-21 (NOTES)
+- [x] the magazine in the hand held upright in the fist (top past the thumb, front forward); lining up by the held
+      magazine's middle and axis; held indefinitely (seen with dev_maghand)
+- [x] dropped magazines fall in the world, lie flat on the floor under the player and stay 60 s (a pass of their
+      own, so they stay when the next one is seated)
+- [x] racking with or without a magazine in; racking a loaded gun throws the chambered round out (clip - 1)
+- [ ] user test 5: the hold angle (kRodTilt 55 deg, hold 2.5 cm pistol / 5 cm AK), seating the pistol, the floor
+      height, racking loaded
+- [ ] a round flying out of the port when racked loaded (a shell/round model to throw: find the game's casing)
+- [ ] replace our rack clicks with the game's own rack sound if it can be found (its reload sound events)
+- [ ] a dropped magazine stays drawn only while the same gun is held (one drop at a time)
+- [ ] polish: the thumb: rests too flat/broken-looking on the thumb rest, and its twist (curl, kThumbRest,
+      kThumbTwist in vr_gun.cpp); every finger wrapping on whatever the hand grips
+- [ ] polish: the elbow rolls over counter-clockwise when the hand reaches to the chest (the IK's pole)
+- [ ] the magazine in the hand held vertical (it sits sideways now): turn HandMag's pose so its up runs along the
+      hand's fingers-to-wrist line, top toward the thumb
+- [ ] button prompts in the Quest's names (e.g. "RIGHT GRIP to pick up" for the game's "X"): find the prompt text
+      and button glyph table, map the pad buttons to our VR controls
+- [ ] the magazine and slide bones for the other guns: record with dev_dumpreload + dev_give, or find with
+      dev_hidebone in halves (how the AK's 81 was found)
+- [ ] slides/bolts on guns without a slide bone (AK charging handle): its vertices onto a spare bone (the retag
+      path in vr_gun.cpp, box per gun)
+- [ ] shotgun shells one at a time; launchers simplified; magazines at the chest drawn on the body

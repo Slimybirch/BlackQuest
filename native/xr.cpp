@@ -623,6 +623,7 @@ bool Hands(Hand& left, Hand& right, float head[3]) {
         out[h]->trigger = c.trigger[h];
         out[h]->thumb_touch = c.thumb_touch[h];
         out[h]->trigger_touch = c.trigger_touch[h];
+        out[h]->primary = h ? c.a : c.x;
     }
     std::memcpy(head, c.head, sizeof(c.head));
     return true;

@@ -47,6 +47,11 @@ bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot,
 bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                 const void* indices, bool index16, uint32_t index_count, int32_t base_vertex);  // vr_gun.cpp: own hands
 bool VrMeleeHidden();  // src/game/vr_body.cpp: a melee swing is on
+bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
+               uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base);  // vr_gun.cpp
+bool VrRecording();    // src/game/vr_body.cpp: dev_dumpreload's window
+bool VrHandMag(float yaw, float pitch, const float* frame, float (*c)[4]);  // vr_gun.cpp: the magazine in hand
+bool VrDropMag(float yaw, float pitch, const float* frame, float (*c)[4]);  // vr_gun.cpp: a dropped one
 }
 
 namespace gpu {
@@ -3150,14 +3155,67 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     }
     // own hands: the arms' bones posed by vr_gun.cpp, the game's own left as they are elsewhere
     Alloc vc;
+    std::array<std::array<float, 4>, 192> hand_mag{}, drop_mag{};  // the extra draws' constants (VrHandMag, VrDropMag)
+    bool hand_mag_on = false, drop_mag_on = false;
+    // dev_hidebone in the app folder holds a bone number: that bone collapsed in every gun list draw (to see what it
+    // is). The constants are copied below, so the change goes through a local copy
+    // (several numbers: each hidden; "lo-hi" ranges in steps of 3 too, written as two numbers with a minus: 0 -129)
+    static const std::vector<int> hide_bones = [] {
+        std::vector<int> v;
+        if (FILE* f = std::fopen((app::ExeDir() / "dev_hidebone").string().c_str(), "r")) {
+            int b, prev = -1;
+            while (std::fscanf(f, "%d", &b) == 1) {
+                if (b < 0 && prev >= 0)
+                    for (int k = prev + 3; k <= -b; k += 3) v.push_back(k);
+                else v.push_back(b);
+                prev = b < 0 ? -1 : b;
+            }
+            std::fclose(f);
+        }
+        return v;
+    }();
+    State hidden_state;
+    const State* sp = &s;
+    if (!hide_bones.empty() && s.transforms[4][0] == 2.0f) {
+        hidden_state = s;
+        // collapsed onto bone 75's origin (the AK's body): vertices only partly weighted to it move a little, not
+        // metres
+        for (int hb : hide_bones)
+            if (hb >= 0 && hb <= 129)
+                for (int r = 0; r < 3; r++) hidden_state.vsc[60 + hb + r] = {0, 0, 0, s.vsc[60 + 75 + r][3]};
+        sp = &hidden_state;
+    }
+    const State& sv = *sp;
     if (stereo_ && s.transforms[4][0] == 2.0f && s.transforms[4][4] == 1.0f && IsArms(a.index_count)) {
-        auto posed = s.vsc;
+        auto posed = sv.vsc;
         uint32_t data = s.streams[0].vb ? mem::VirtualFromPhysical(kernel::R32(s.streams[0].vb + 4)) : 0;  // kResData
         const uint8_t* vb = data ? static_cast<const uint8_t*>(kernel::HostPtr(data)) : nullptr;
         ::game::VrPoseArms(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
                            reinterpret_cast<float (*)[4]>(posed.data()), vb, s.streams[0].stride, a.index_src,
                            a.index16, a.index_count, a.base_vertex);
+        // (the gun's parts aren't posed here: the arms' mesh has none, and its bones under those numbers are fingers)
         vc = Constants(posed.data(), sizeof(posed));
+    } else if (stereo_ && s.transforms[4][0] == 2.0f && s.transforms[4][4] == 1.0f) {
+        // the gun: its magazine bone moved by a reload by hand
+        auto posed = sv.vsc;
+        bool moved = ::game::VrPoseGun(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
+                                       reinterpret_cast<float (*)[4]>(posed.data()),
+                                       a.buffer_count ? a.buffers[0].src : nullptr, a.buffer_count ? a.buffers[0].stride : 0,
+                                       a.buffer_count ? a.buffers[0].bytes : 0, a.index_src, a.index16, a.index_count,
+                                       a.base_vertex);
+        vc = Constants(moved ? posed.data() : sv.vsc.data(), sizeof(s.vsc));
+        // and the magazine in the off hand, and a dropped one: the same mesh again, everything but it collapsed
+        // (from the game's own bones: the posed ones may have the magazine hidden)
+        hand_mag = sv.vsc;
+        drop_mag = sv.vsc;
+        if (!IsArms(a.index_count) &&
+            ::game::VrHandMag(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
+                              reinterpret_cast<float (*)[4]>(hand_mag.data())))
+            hand_mag_on = true;
+        if (!IsArms(a.index_count) &&
+            ::game::VrDropMag(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
+                              reinterpret_cast<float (*)[4]>(drop_mag.data())))
+            drop_mag_on = true;
     } else {
         vc = Constants(s.vsc.data(), sizeof(s.vsc));
     }
@@ -3257,7 +3315,51 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         if (a.index_count) vkCmdDrawIndexed(Cb(), a.index_count, 1, 0, a.base_vertex, 0);
         else vkCmdDraw(Cb(), a.draw_count, 1, 0, 0);
     };
+    // dev_dumpreload (phase 5): each gun list mesh's vertices once (dumps/mesh_<indices>.bin: stride, vertex count,
+    // vertices), and while vr_body records, every gun list draw's 192 constants with its index count and the
+    // time (dumps/reload.bin): which bones a reload moves
+    if (s.transforms[4][0] == 2.0f && s.streams[0].vb && a.index_src && a.index_count && ::game::VrRecording()) {
+        static std::set<uint32_t> meshes;
+        auto dir = app::ExeDir() / "dumps";
+        if (meshes.insert(a.index_count).second) {
+            std::filesystem::create_directories(dir);
+            uint32_t data = mem::VirtualFromPhysical(kernel::R32(s.streams[0].vb + 4));
+            uint32_t top = 0;
+            for (uint32_t i = 0; i < a.index_count; i++) {
+                uint32_t ix = a.index16 ? reinterpret_cast<const uint16_t*>(a.index_src)[i]
+                                        : reinterpret_cast<const uint32_t*>(a.index_src)[i];
+                top = std::max(top, uint32_t(int32_t(ix) + a.base_vertex + 1));
+            }
+            if (FILE* f = std::fopen((dir / ("mesh_" + std::to_string(a.index_count) + ".bin")).string().c_str(), "wb")) {
+                uint32_t head[2] = {s.streams[0].stride, top};
+                std::fwrite(head, 4, 2, f);
+                if (data) std::fwrite(kernel::HostPtr(data), 1, size_t(top) * s.streams[0].stride, f);
+                std::fclose(f);
+            }
+        }
+        static FILE* rec = nullptr;
+        if (!rec) rec = std::fopen((dir / "reload.bin").string().c_str(), "wb");
+        if (rec) {
+            static const auto t0 = std::chrono::steady_clock::now();
+            float t = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+            uint32_t head[2] = {a.index_count, 0};
+            std::memcpy(&head[1], &t, 4);
+            std::fwrite(head, 4, 2, rec);
+            std::fwrite(s.vsc.data(), 16, 192, rec);
+            std::fflush(rec);
+        }
+    }
     emit(eye_m, nullptr);
+    if (hand_mag_on) {
+        Alloc vc2 = Constants(hand_mag.data(), sizeof(hand_mag));
+        BindSet(set, vc2.off, dc.off);
+        emit(eye_m, nullptr);
+    }
+    if (drop_mag_on) {
+        Alloc vc3 = Constants(drop_mag.data(), sizeof(drop_mag));
+        BindSet(set, vc3.off, dc.off);
+        emit(eye_m, nullptr);
+    }
 }
 
 VkRect2D ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {

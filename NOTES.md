@@ -695,3 +695,219 @@ the poses are procedural on the game's own finger bones.
   (laid flat). Now a hand that grips (the gun hand by its toggle, the off hand while it holds) has all five fingers
   in the game's pose on the gun; otherwise they follow the controller. A free thumb on a touch comes down 60% of
   the way (kThumbRest), not to the game's flat pose.
+
+## 2026-11-21 — Phase 5 begun: manual reloading (me)
+Phase 4 follow-ups committed (3630144, the user's go-ahead). Phase 5 groundwork:
+- **Reload start** in the weapon state machine FUN_001EEFD0 (ebp the weapon controller, char +0x29C; recompiled in
+  x86_recomp.52.cpp): at 0x1EF4A5 `mov al, [esp+0x28]` reads the reload request (the function's 5th stack
+  argument, passed through from FUN_001F0210); skipped while the state is 5/6 (shotgun shells); then, unless
+  forced (`[esp+0x18]`, the 1st argument slot reused: controller +0xF0 → +0xC4 == 2), it needs reserve
+  (`word [[ctrl+0xFC] + type*2] > 0`, type = `[[ammo+8]+0x64]`) and a clip not full (`word [ammo+0x18] !=
+  [[ammo+8]+0x60]`, ammo = ctrl+0xF4); then 0x1EF4E9 sets state 4 and calls FUN_001EEF50. So the reserve is a
+  per-ammo-type word array at `[ctrl+0xFC]`, the clip's size `[[ammo+8]+0x60]`.
+- **Gate for manual mode**: a hook at 0x1EF4A5 with `on_false = 0x1EF4F8` (the code after the reload start) vetoes
+  every reload (button or empty clip) while manual mode is on; the clip is then filled by us when a magazine is
+  seated (clip = min(size, clip + reserve), reserve less what went in). Needs the recompile step.
+- **Magazine bones**: dev_dumpreload (vr_body taps X every 6 s; the renderer writes each gun list mesh's vertices
+  once to dumps/mesh_<n>.bin and every gun list draw's constants for 2.5 s after a tap to dumps/reload.bin), to
+  find the bones a reload moves (magazine, bolt, the shells). Built, not yet run.
+- User: magazines come from the chest with the **trigger**.
+- **Bug (mine)**: dev_firehold set `Opt().infinite_ammo = true` at runtime and the options are saved, so the
+  user's black.toml had infinite ammo on (the clip never emptied, no reload could start). Set back to false on the
+  headset; the marker no longer touches options.
+- **Reload is A** (the touch layout's reload is the pad's A; X is use). A tap during a burst is ignored (a firing
+  gun takes no reload), so dev_dumpreload taps between dev_autofire's bursts.
+- **The AK's magazine is gun bone 87.** The AK gun mesh (5878 indices, vertices 1465.. of the buffer it shares with
+  the arms: the arms are the first 1465) has two bones: 75 the body (2445 vertices) and 87 (72 vertices, centroid
+  0.003 0.052 0.099, at the receiver). Over a reload (~1.6 s from the tap) the off hand (bone 18: mesh +x = the
+  left) leaves the gun to 0.54 m and comes back, bone 87 travelling with it (0.49 m); the gun hand stays; idle,
+  bone 87 sits exactly on the body. The AK has no separate bolt or charging handle bone: racking would be a gesture
+  only.
+- Screenshots of the game's AK reload (side on, dev_dumpreload): the curved magazine leaves the gun in the off
+  hand and comes back, matching bone 87's travel. Its vertices as dumped from the stream's start look like a 1 cm
+  sliver at the receiver, and the gun draw's indices (base -1465) reach the whole 3982-vertex buffer: the dumped
+  bytes aren't what's drawn for that mesh (a stream offset not accounted for). Bones and constants are reliable;
+  vertex positions for the gun mesh are not yet. The magazine's middle is taken as (0, -0.03, 0.12) in the mesh
+  (below the receiver, the mesh's lowest point -0.083 its bottom) until the gun's real vertices are read.
+- **Built (vr_reload.cpp, VrPoseGun)**: no recompile needed: the weapon state machine's existing wrapper
+  (hooks.cpp) clears the reload request (the 5th argument, `[esp+0x14]` on entry) for the player's controller
+  while manual reload is on and the gun's magazine is known, and puts state 4 back to idle if a reload starts some
+  other way. A (gun hand) ejects: the clip's rounds go back to the reserve (none lost), the clip is 0, the
+  magazine falls 0.6 s and is hidden (its bone collapsed far below). The off hand's trigger within 25 cm of the
+  chest (35 cm below the head, 12 cm ahead) takes one (fingers closed on it, drawn on the palm turned with the
+  hand); within 8 cm of the well it seats: clip = min(size, reserve), reserve less that, a buzz in both hands;
+  let go of the trigger elsewhere and it falls. VR SETTINGS: RELOAD (BY HAND / BUTTON), `vr_manual_reload`.
+  Only the AK so far (kMagBone). xr::Hand.primary = A (right) / X (left). dev_eject presses A once.
+- Slides (the user wants each gun's slide or bolt worked by hand and animated): the AK has no bone for it, so it
+  needs its vertices moved onto a spare bone (index 3: c-33..-31 is an unused identity), which needs the gun's
+  real vertices first.
+- First headset runs (dev_eject, fake hands): the block missed at first. (1) The character's +0x29C is not the
+  state machine's controller; and the state machine runs for the other slot's gun too, so the controller is now the
+  inventory's held weapon (`weapons::HeldWeapon`, player +0x278 → +0x24), checked against the wrapper's argument.
+  (2) An empty gun goes by itself to **state 8** (refill) ~2 s after it runs dry, not through the request: the
+  wrapper now undoes 4 and 8, and while the magazine is out the tick keeps the clip at 0 (anything refilled goes
+  back to the reserve). (3) The magazine (bone 87) is drawn with the **arms** mesh as well: VrPoseGun runs on the
+  arms' draw too.
+- Seen: after the eject the HUD reads 000 / 360 (the 60 rounds back in the reserve), the AK without its magazine,
+  no reload by the game. Not seen: the chest grab and the seat (they need the controllers). Screenshots lag the log
+  by many seconds here (a frame from 10+ s earlier at times): judge by the log's times.
+- User test: after A the game's reload ran over and over (the wrapper undid states 4/8 only after each had
+  started, so the animation restarted each frame); the pistol (no magazine bone known) reloaded by the game, its
+  hand putting a magazine in from anywhere. Fixed by holding the reloads off instead of undoing them: every reload
+  start checks the reserve first (0x1EF4D7 in the state machine; FUN_001BB340's 0x1BB35E, called only from inside
+  the state machine at 0x1EFD08/0x1EFFA9/0x1F0006), so the wrapper shows the player's gun an empty reserve while
+  the state machine runs and puts it back after (plus anything the call added). The HUD reads it outside, so it
+  shows the real count. Manual reload now covers every gun but shotguns and launchers (SHG SH5 RPG GRL keep the
+  game's reload for now); a gun without a known magazine bone seats at the gun hand's grip (12 cm), its magazine
+  not drawn moving yet. dev_dumpreload turns the hold-off off (to record the game's reload).
+- Seen after the fix (fake hands, dev_eject, autofire on the AK): the weapon stays in state 0, the clip at 0, no
+  reload animation.
+- **Pistol (PST) recorded** (dev_dumpreload, dev_give PST): its gun mesh bones (vertices 1465.. of the buffer)
+  are 117 (1903 vertices: the slide and top, 22 cm), 111 (131: the hammer, up 0.054-0.113 in the slide's frame),
+  114 (84: the magazine, in the grip, middle 0 -0.046 -0.062; leaves ~0.6 m down in the reload and comes back up
+  into the grip), 108 (48) and 120 (56): small frame parts. Against the slide, 108/114/120 move +0.037 along z
+  at each shot and stay there through a reload: the slide goes back 3.7 cm, locked through the reload.
+- **Gun parts table** (vr_reload.cpp kParts): magazine bone, slide bone and its travel (back along the mesh's -z),
+  the magazine's middle: AK 87/none, PST 114/117 0.037. VrPoseGun hides/moves the magazine and holds the slide
+  back by VrSlide (0..1).
+- **Slide**: locks back when the clip reaches 0 (also after an eject of an empty gun); a magazine seated then
+  keeps its rounds pending until a rack; the off hand's grip within 12 cm of the gun hand (only while the slide
+  needs it) takes the slide, pulling back along the gun hand's aim (6 cm a full pull); let go past 70% (or from a
+  locked slide) and it runs forward, the pending rounds go into the clip, a buzz. The AK racks the same way with
+  nothing drawn moving (its handle isn't a bone).
+- Seen (PST, fake hands, side on): after the eject the HUD reads 000 / 045 and the slide sits locked back.
+- User test: the magazine never went into the gun (the well was a guess); on the AK they want to take the
+  magazine out by hand and throw it aside. Now:
+  - The magazine's middle and up (the way it goes into its well) are **measured** once per mesh from the draw's
+    own vertices (`a.buffers[0]`, the indices with their base: exactly what's drawn), those weighted mostly to its
+    bone; up runs from its middle to its top tenth. Logged: `vr reload: magazine bone N of mesh M: ...`. The table's
+    middle is only the fallback.
+  - Seating is guided: with the palm within 7 cm of the well's axis and up to 18 cm below it, the magazine is drawn
+    on the axis, out of the well by the hand's distance, and seats when pushed within 2 cm of home.
+  - The off hand's trigger within 10 cm of the magazine in the gun pulls it out into the hand (its rounds back to
+    the reserve); let go away from the well and it's thrown with the hand's velocity (falling 1.2 s, then gone);
+    A drops it straight down.
+- Measured in the headset: PST magazine (bone 114, 138 vertices in the gun's draw) middle 0 -0.022 -0.057, up
+  0 0.96 0.28 (the grip's rake); dev_magslide (the magazine held 6 cm out along the well's line after an eject)
+  shows it sticking out of the bottom of the grip on that line. The AK's bone 87 measures as 72 vertices at the
+  receiver (0.003 0.052 0.099), and moving it leaves the curved magazine where it is: **the AK's magazine is part
+  of its body (bone 75)**. Its vertices as read from the draw don't plot as an AK, so they can't be picked out
+  yet. The AK reloads by hand with nothing drawn moving (well at the table's guess, under the receiver);
+  kParts.measured false for it.
+- **The AK's magazine is bone 81.** Found by collapsing bones in the gun list draws (dev_hidebone, several numbers
+  and ranges; collapsed onto the body's origin, not sent away: vertices carry small weights on other bones and a
+  far translation dragged the whole gun off), side on: all but 75 → no magazine; 0..63 → magazine stays; 66..72
+  and 78..129 → gone; 78/81/84 → gone; 114 → stays; 78 → stays; 81 → gone. Measured from the gun draw: 288
+  vertices, middle 0 -0.054 0.127, up 0 0.94 -0.35. dev_magslide shows it 6 cm out along that line. (Bone 87, the
+  72 vertices at the receiver, is something else; the retag-a-box path is kept for guns whose magazine really is
+  in the body, unused now.)
+
+## 2026-11-21 — Phase 5 state (consolidated; the entries above are the trail)
+**Files**: src/game/vr_reload.cpp (game thread: the reload's state, ammo, the hold-off), src/game/vr_gun.cpp
+(render thread VrPoseGun / VrHandMag: the magazine and slide bones; the arms' posing), hooks.cpp (the weapon
+state machine wrapper hides the reserve), native/vulkan.cpp (calls the posing on the gun list draws; the second
+pass for the magazine in hand).
+**Ammo**: the held weapon `weapons::HeldWeapon()` (inventory +0x24) is the state machine's controller; its ammo
+`[ctrl+0xF4]`: clip word +0x18, kind +0x08 (size +0x60, ammo type +0x64); reserve = inventory word by type.
+Reload is A. Every reload start checks the reserve (0x1EF4D7; FUN_001BB340 at 0x1BB35E, called only from inside
+the state machine), so hiding the reserve during the state machine stops them all, the empty-gun refill (state 8)
+too. Shotguns and launchers (SHG SH5 RPG GRL) keep the game's reload.
+**Bones**: magazine AK 81, PST 114; slide PST 117 (3.7 cm along the mesh's -z). AK 87 is a small receiver piece,
+not the magazine. Bone matrices are 3 rows from c-36 by the index short; G = the game's view space, x left.
+Measured from the draw's own vertices (`a.buffers[0]` with the indices and base): magazine middle and up.
+**States** (VrMag): 0 seated; 1 out (dropped/thrown/knocked: falls 1.2 s, then collapsed); 2 in the off hand,
+well empty (lined up within 7 cm of the axis and 18 cm below: drawn on the axis, rocked 15° at 6 cm out, seats
+within 2 cm); 3 a fresh one in hand with the old one in (a strike within 12 cm of the well faster than 0.6 m/s
+knocks the old out). Off hand's trigger: at the chest (35 cm below the head, 12 cm ahead, 25 cm reach) takes one;
+at the magazine in the gun (10 cm) pulls it; let go away from the well: thrown with the hand's speed. The slide
+locks back at clip 0; a seated magazine waits (pending) for a rack: the off hand's grip within 12 cm of the gun
+hand, pull 6 cm back, let go.
+**Dev markers**: dev_eject (A once), dev_magslide (held 6 cm out on the well line), dev_magfresh (a fresh one in
+hand, the old in), dev_dumpreload (records the game's reload; the hold-off off), dev_hidebone (collapse bones:
+numbers, "a -b" ranges), dev_magbox (the retag box), dev_give (weapon codes in turn), dev_fakehands(_side),
+dev_autostart, dev_autofire, dev_firehold, dev_lefton, dev_fakeleft_low, dev_curl. Remove them after a run.
+**Headset rules** (user): ask before driving it over adb; never send the vrpowermanager prox broadcasts (the user
+sets the proximity sensor in SideQuest); find the wireless port with `adb mdns services`; screenshots lag the
+log by up to 10+ s.
+
+## 2026-11-21 — Phase 5: tighter zones, rack on the trigger (user test 1)
+User: the off hand's trigger brought a magazine up almost anywhere; wanted it only at the chest, the magazine to
+snap to the well only centimetres away, the rack on the trigger (the grip was too near the fore-grip and the
+weapon switch), smaller grip and switch zones. Cause of "anywhere": on the AK the fore-grip sits next to the well,
+so a trigger press while holding the gun pulled the magazine out (10 cm reach), and the chest ball was 25 cm.
+Now (vr_reload.cpp, vr_gun.cpp kReach, vr_body.cpp shoulder):
+- no reload trigger action while the off hand holds the gun (VrLeftOnGun)
+- chest 15 cm; pull-out 6 cm; lining up within 3.5 cm of the well's axis and 5 cm below it, home at 1.5 cm
+- rack: the off hand's trigger held within 7 cm of a rack point (per gun, from the gun hand's grip along its aim:
+  AK 12 cm forward 5 up, pistol 1 back 7 up: guesses), pull back 6 cm, let go; only while the slide is locked,
+  and it wins over a pull-out
+- fore-grip take 8 cm (was 15)
+- weapon switch: the right grip with the hand in a 12 cm ball 15 cm right, 8 cm behind, 8 cm below the head's
+  middle (was: anywhere right of the head and behind the face, above the chest)
+Not yet seen in the headset.
+
+## 2026-11-21 — Phase 5: grip rack at the parts, 1-2 cm zones (user test 2)
+User: still couldn't rack; the trigger still grabbed the magazine from too far; wanted the pull-out 1-2 cm from
+the magazine, a light buzz entering the chest zone, the chest under the headset (not 15 cm out), and the rack on
+the off hand's grip within 1-2 cm of the charging handle. Noted for polish: the elbow rolls over counter-clockwise
+reaching to the chest.
+- rack points from the meshes' vertices (scratchpad dumps): the AK gun mesh is narrow (x ±0.018); a block on its
+  +x side (the game's inside, where the user saw the port) at z 0.172, y 0.043..0.057 is the charging handle
+  (muzzle at +z: the front sight at z 0.54, the stock to -0.32, the pistol grip at z -0.08). Rack point (0.037,
+  0.05, 0.172) on body bone 75 (the palm 2 cm out). Pistol: slide 117 spans z -0.094..0.129, top y 0.071
+  (hammer 111 at z -0.098..-0.079: the rear is -z); rack point (0, 0.085, -0.078) on 117, so it follows the
+  slide when it's locked back
+- the render thread (VrPoseGun, gun draws only) puts the rack point into C each frame (VrRackAt); the off hand's
+  grip within 2.5 cm of it takes the slide (any time in state 0; it only chambers if it was locked or pulled most
+  of the way). Near it, the fore-grip can't take that press (VrRacking covers "near" too)
+- pull-out: the trigger within 3.5 cm of the magazine's body: a line along its axis from 8 cm below its middle to
+  2 cm above
+- chest: a column 9 cm in radius, 4 cm ahead of the head's middle, from 15 to 50 cm below it; entering it with a
+  magazine to take (state 0/1, reserve, the hand off the gun) buzzes the off hand lightly
+Not yet seen in the headset.
+
+## 2026-11-21 — Phase 5: all on the grip, the AK's handle animated, rack sounds (user test 3)
+User: still couldn't reliably rack the AK; wanted the charging handle to move back with its sounds (at least the
+sound, to know it's done); every reload action on the off hand's grip (the trigger is for grenades from an empty
+weapon slot and the M16's under-barrel launcher: TODO); every finger closing on what the hand grips; the thumb on
+the polish list.
+- grip for all: chest, the magazine off the gun (3.5 cm of its body), the slide/handle (2.5 cm). The chest, the
+  magazine and the rack point count as "near" for the fore-grip (VrRacking), which then can't take that press; the
+  left grip isn't the game's white button meanwhile (TakeLeftGrip)
+- the AK's charging handle: the 12 receiver vertices at x > 0.0155, y 0.040..0.059, z 0.169..0.175 on body bone 75
+  (the only part of the receiver not mirrored in x) are retagged onto spare bone 3 (RetagMag, gun draws only: the
+  arms' mesh numbers its bones differently), which is the AK's slide: 7 cm back along -z at full pull. The rack
+  point is on bone 3 now, so it follows the handle. The log line "vr reload: mesh N: K body vertices of bone 75
+  moved onto bone 3" says whether the box caught it
+- rack sounds: sound::Cue in mixer.cpp, made there (noise + tone clicks, mono into the front pair): a light double
+  click when the handle reaches the back (or on the grab when it's locked back), a heavier clack with a low thump
+  when it runs forward. The game's own reload sounds weren't searched for yet (TODO)
+- fingers close while holding the slide/handle (VrRackHeld), as with a magazine or the fore-grip
+Not yet seen in the headset.
+
+## 2026-11-21 — Phase 5: magazines held upright, dropped ones land, loaded racks (user test 4)
+User: a magazine from the chest stayed in the hand ~2 s then vanished; wanted it held indefinitely, upright in the
+fist with the fingers round it (a reference photo: pistol magazine in a fist, its top out past the index/thumb);
+dropped magazines should hit the ground; the pistol's never slid in; rack with or without a magazine, and racking a
+loaded gun should throw a round out (one fewer). Gave the go-ahead to install and test on the headset.
+- the vanish: VrHandMag drew from the gun's posed constants, where the dropped magazine's bone had been collapsed
+  after 1.2 s; its pass now copies the game's own constants (vulkan.cpp, sv.vsc)
+- the hold: the fist's axis is the aim pose's -z tilted 55 deg up toward its +y (kRodTilt); the magazine's up runs
+  along it, its front (the mesh's +z, toward the muzzle) forward-down, its middle `hold` up the fist from the grip
+  point (pistol 2.5 cm, AK 5 cm). HeldMagOf (vr_reload.cpp, real controllers) and VrHeldMag (vr_gun.cpp, HandPose,
+  so dev_fakehands holds one too) compute the same frame. The magazine's own frame in the mesh is its measured
+  middle and up with the mesh's +z squared to it (MagFrame)
+- lining up: the held magazine's middle within 3.5 cm of the well's axis, 0..5 cm below, its up within ~35 deg of
+  the axis (kAlignTurn 0.82). The pistol's well is inside the gun hand, so the palm could never get there
+- drops: the out path now hides the gun's own magazine and starts a world drop (StartDrop): the camera rows and the
+  floor (eye y - (stance 0x2E0 - 0.2)) come from the game thread (VrGunFrame snapshot), the fall is analytic to the
+  floor (+1.5 cm), turning about its horizontal axis to lie flat as it lands, drawn by a third pass of the gun mesh
+  (VrDropMag, everything else collapsed) for 60 s, whatever the gun's own magazine is doing. Seen in the log:
+  "magazine dropped from ... feet -0.33, lands in 0.51 s"
+- racking: in state 0 or 1 (the off hand empty); released after > 70 % pull with the slide not locked and rounds in
+  the clip: one round out (clip - 1, not to the reserve)
+- the arms' draw no longer calls VrPoseGun: the arms' mesh has no gun parts, and its bones under those numbers are
+  fingers (81, 114, 117 and 3 would have moved finger bones)
+- dev_maghand: 2 s after an eject a magazine is in the off hand, held, never lined up (with dev_eject, dev_fakehands)
+Headset (dev hands, pistol): eject, the drop logged, the magazine held in the left fist 30+ s, its top out of the
+fist. The floor landing wasn't in view (the dev view looks ahead).
