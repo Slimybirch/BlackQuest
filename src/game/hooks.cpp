@@ -31,6 +31,7 @@ namespace game {
 bool VrMeleeHidden();  // vr_body.cpp
 void VrGunFrame(X86Context& ctx);  // vr_gun.cpp
 bool VrGunInHand();
+bool VrGunAway();
 bool VrGunMap(float* m, bool axes);
 void EspCamera();  // esp.cpp
 }
@@ -405,6 +406,34 @@ static void RestoreAmmo(uint32_t weapon, const KeptAmmo& kept) {
 namespace game {
 uint32_t VrHideReserve(uint32_t ctrl);  // vr_reload.cpp: the reserve word to hide, 0 none
 uint32_t VrHideReserve2(uint32_t ctrl);  // and the M203's
+bool VrTakeThrow(float* pos, float* vel);  // vr_grenade.cpp: a grenade thrown by hand, its place and velocity
+}
+X86_EXTERN_FUNC(__imp__sub_001DD000);
+// phase 6: a grenade thrown by hand, made as the game's throw makes it (0x1E3464: FUN_001DD000(matrix*, velocity*,
+// 3, 0), edi the grenades' pool at [0x2D1998], it cleans its own 16 bytes) but with the hand's place and velocity,
+// the count (character +0x286) taken as the throw's event takes it (0x1E8925). Our own frame below the stack, the
+// registers as they were after
+static void ThrowGrenade(X86Context& ctx, uint8_t* base, uint32_t me) {
+    float pos[3], vel[3];
+    if (!game::VrTakeThrow(pos, vel)) return;
+    uint16_t& count = G<uint16_t>(me + 0x286);
+    if (!count || !R32(0x2D1998)) return;
+    count--;
+    X86Context saved = ctx;
+    uint32_t sp = (ctx.esp - 0x200) & ~0xFu, mtx = sp + 0x40, v = sp + 0x80;
+    const float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, pos[0], pos[1], pos[2], 1};
+    std::memcpy(HostPtr(mtx), m, sizeof(m));
+    const float vv[4] = {vel[0], vel[1], vel[2], 0};
+    std::memcpy(HostPtr(v), vv, sizeof(vv));
+    ctx.esp = sp;
+    X86_PUSH32(0u);
+    X86_PUSH32(3u);
+    X86_PUSH32(v);
+    X86_PUSH32(mtx);
+    ctx.edi = R32(0x2D1998);
+    X86_PUSH32(0x1E3469u);  // (as from the game's own call)
+    __imp__sub_001DD000(ctx, base);
+    ctx = saved;
 }
 X86_EXTERN_FUNC(__imp__sub_001EEFD0);
 X86_FUNC(sub_001EEFD0) {
@@ -431,6 +460,7 @@ X86_FUNC(sub_001EEFD0) {
     // the rapid fire cheat: a shot's wait, its fire mode's +0x20, is that many times shorter
     uint32_t faster = std::clamp(game::Opt().rapid_fire, 1u, 4u);
     if (shot && me == Player() && wait > 0) wait /= float(faster);
+    if (me == Player()) ThrowGrenade(ctx, base, me);
     if (me == Player()) {
         if (R32(weapon + kWeaponState) != 1 || wait != rest) g_idle_early = false;
         else if (g_idle_early) W32(me + kPlayerFireRequest, 0);  // the fire request is spent, as on the console

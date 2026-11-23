@@ -50,6 +50,7 @@ int VrModePresses();                          // vr_body.cpp: the fire-mode butt
 bool VrFireHeld();                            // vr_body.cpp: the fire trigger is held
 bool VrLeftOnGun();                           // vr_gun.cpp
 void TestEvent(const std::string& name);      // vr_totest.cpp: the test checklist
+bool VrGunAway();                             // vr_grenade.cpp: a grenade in the hand or empty
 bool VrLookAngles(float& yaw, float& pitch);  // vr_body.cpp
 
 namespace {
@@ -730,6 +731,9 @@ void VrReloadTick() {
         static const bool dev_on = std::filesystem::exists(app::ExeDir() / "dev_lefton");  // dev hands: gripping
         // and never empty (a pull then is the game's own endless reload)
         g_m203_trigger = bns && (!(gripped || dev_on) || !aclip);
+        // phase 6: the game's own grenade throw (the off hand's trigger) is off in the headset: grenades are taken at
+        // the waist and thrown by hand (vr_grenade.cpp); on the M16+M203 that trigger is the launcher's
+        if (!bns && xr::Active()) g_m203_trigger = true;
     }
     if (now_code != code) {
         // a weapon switch: its magazine is in it; the slide as that gun was left
@@ -750,6 +754,11 @@ void VrReloadTick() {
     }
     g_ctrl = weapons::HeldWeapon();
     DevModeDump();
+    if (VrGunAway()) {  // phase 6: a grenade in the hand or empty: the gun isn't there to reload
+        xr::TakeLeftTrigger(true);
+        SetTip("");
+        return;
+    }
     auto it = kParts.find(code);
     // dev_dumpreload (recording the game's own reload): the game reloads, ours stands aside
     static const bool recording = std::filesystem::exists(app::ExeDir() / "dev_dumpreload");

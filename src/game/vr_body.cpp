@@ -31,6 +31,8 @@ namespace game {
 bool VrDevModePress();  // vr_reload.cpp: dev_modeflip's press of the fire-mode button now
 void TestEvent(const std::string& name);  // vr_totest.cpp: the test checklist
 bool VrM203TriggerTaken();  // vr_reload.cpp: the M203's trigger (the off hand's) kept from the game
+bool VrGrenadeGrip(bool grip, bool grip_was, const xr::Hand* right, const float* head, float yaw, bool crouched,
+                   input::Pad& pad);  // vr_grenade.cpp
 std::atomic<int> g_mode_presses{0};  // the fire-mode button's presses (vr_reload.cpp: the SPAS's own modes)
 int VrModePresses() { return g_mode_presses.load(std::memory_order_relaxed); }
 std::atomic<bool> g_fire_held{false};  // the game's fire trigger as the pad last gave it (vr_reload.cpp: semi-auto)
@@ -124,6 +126,12 @@ void VrControls(input::Pad& pad) {
     // right grip: the touch mapping put it on the black button (analog 4), unused by the game's controls
     bool grip = pad.analog[4] >= kGripPress;
     pad.analog[4] = 0;
+    // phase 6: grenades at the waist, the gun away, back over the shoulder (vr_grenade.cpp): its grip, when it's ours
+    if (VrGrenadeGrip(grip, g.grip_was, poses ? &hand[1] : nullptr, head, yaw, g.real, pad)) {
+        g.grip_was = grip;
+        g.grip_switch = false;
+        grip = false;
+    }
     if (grip && !g.grip_was) {
         g.grip_switch = false;
         if (poses && hand[1].ok) {

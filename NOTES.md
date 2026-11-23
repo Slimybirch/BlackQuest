@@ -1538,3 +1538,44 @@ WA2000's bolt should be worked by hand after every shot, the game's animation go
 - dev_grenadeout and dev_grenaderoot removed (user: no placing it to be seen; it's taken from the waist and inspected
   in the hand when the user tests). The grenade is only ever in the barrel (loaded), going in, or in the off hand.
 
+## 2026-11-23: Phase 6, the grenade's spawn (from the code)
+
+- The throw is an animation event (FUN_001E8830, the character in edi): 0x1E8925 takes one from the count (char
+  +0x286), then for the player (`[char]+0xC4 == 2`) FUN_001E32A0 (ebx the weapon controller, char +0x29C), for the
+  AI FUN_001E3000; then weapon state 14 (0x1E897C).
+- FUN_001E32A0: a random spread (the LCG at 0x2D6848..0x2D684C, FUN_00011C10) turned by the character's camera rows
+  (`[ctrl+0xF0]+0xD0`, FUN_00012670), scaled into the throw's velocity (esp+0x10, a vector); the hand's matrix (4 x 4)
+  from `[[[char+0x328]+0x50]+0x4C]+0x40` (or 0x5655C0) into esp+0x30..0x6F; then **FUN_001DD000(matrix*, velocity*,
+  3, 0)** at **0x1E3464** (edi = `[0x2D1998]`): the grenade made. A hook there sees [esp] the matrix (its row 3 the
+  place), [esp+4] the velocity, to replace with the real hand's (world units, as the dropped magazines' conversion).
+- **Piece 2 (built, not run)**: no hook needed. FUN_001DD000 takes only edi (the pool, `[0x2D1998]`: 32 slots, a
+  slot's kind at +0x3600, in use at +0x3700) and its four arguments (stdcall, `ret 0x10`): mtx (row 3 the place),
+  velocity, 3, 0. hooks.cpp ThrowGrenade, run in the weapon state machine's wrapper for the player each frame: a
+  throw asked for (vr_grenade.cpp VrRequestThrow(hand)) takes one from the count (char +0x286) and calls the maker
+  on a frame of ours below the stack (identity turn, the hand's grip point; its velocity × kThrowGain 1.2), the
+  registers put back after. The hand in the world: vr_gun.cpp VrHandWorld (HandInCamera, then CamToWorld: the world
+  is metres, as the dropped magazines found). Nothing calls VrRequestThrow yet (piece 3: the release).
+- **Piece 3 (built, not run)**, vr_grenade.cpp VrGrenadeGrip (vr_body.cpp's pad poll, before the right grip's other
+  uses): the right hand holds the gun, a grenade, or nothing. The right grip takes a grenade (if the count has one)
+  at the right hip (12-32 cm right of the head, ±15 cm fore and aft, 55-85 cm down standing, 40-70 cm crouched:
+  vr_body's real crouch) or, standing only, a band across the front of the waist (±20 cm, 5 cm back to 25 cm ahead,
+  48-75 cm down), all in the head's yaw frame (user: under and in line with the headset; no grab by a crouch). Held
+  while the grip is; let go, VrRequestThrow(1). Then empty till the right grip over the right shoulder (the weapon
+  switch's ball) brings the gun back (no switch). While away: the first-person list isn't drawn (hooks.cpp
+  sub_00176F60: the arms with it, till the grenade hand of piece 4), the trigger's zeroed, the reload tick stands
+  aside. The off hand's trigger (the game's own throw) is kept from the game in the headset except on the M16+M203.
+- **Piece 4 (built, not run)**: while the gun's away, VrPoseGun collapses every gun bone to a point (the
+  first-person list is drawn again, so the arms show) and, a grenade held, puts bone 3 ("Extra": no gun mesh uses it)
+  at the right palm (HandInCamera; the fuze up the controller's top, the spoon on mesh +x to the palm, its middle 3 cm
+  ahead of the grip point). VrStock returns our M67 (vr_gun.cpp MakeM67: a ball 64 mm across, the fuze's body r 10 mm
+  to 50 mm up, the spoon a 14 mm strip down its side, the ring pin 26 mm across) on the gun's biggest draw, and
+  vulkan.cpp binds its own texture (PaintM67, 512 x 256: the olive body with GRENADE,HAND,FRAG,DELAY and COMB B
+  IP-51-514D in yellow facing the player, no INERT (user); the fuze, spoon and ring's colours in patches). The 5 x 7
+  letters are shared now (Font5x7, with N and Y).
+- **Piece 5 (built, not seen)**: a dev run (dev_throw: a throw every 6 s, the count topped to 3, from half a metre
+  ahead of the eyes when the hand isn't tracked; dev_drawdiff: the world draws' kinds new in the 2 s after a throw)
+  made grenades (the first level gives none) and found the game's grenade: **stride 24, 5280 vertex bytes (220
+  vertices), 479 indices** (the rest new then were stride-32 quad batches: its smoke and sparks). Its 24-byte vertex
+  taken as the guns' 36 less their bone words (position, packed normal, uv: not yet checked by eye). vulkan.cpp
+  draws our M67 for that draw instead (vr_gun.cpp VrM67World: MakeM67's vertices cut to 24 bytes; a strip's indices
+  as the stock's), with the M67's texture (made once, shared with the hand's).

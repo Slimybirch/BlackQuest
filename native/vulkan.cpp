@@ -55,6 +55,10 @@ int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32
 void VrHudWanted(bool& card, bool& tip);  // vr_totest.cpp: the checklist's card, the off hand's hint, this frame
 void VrTotestCardPass(bool on);   // the imgui frame being drawn is the card's
 bool VrStockShell();  // the extra mesh is the held shotgun's shell (drawn in the hand too)
+bool VrGrenadeInHand();  // vr_grenade.cpp: a hand grenade held (the extra mesh is it)
+int64_t VrThrownMs();    // vr_grenade.cpp: steady ms of the last throw (dev_drawdiff)
+bool VrM67World(const uint8_t*& verts, uint32_t& bytes, const uint16_t*& idx, uint32_t& count);  // vr_gun.cpp
+bool VrGrenadeTexture(std::vector<uint8_t>& px, uint32_t& w, uint32_t& h);  // vr_gun.cpp: its texture, BGRA
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base);  // vr_gun.cpp
 bool VrRecording();    // src/game/vr_body.cpp: dev_dumpreload's window
@@ -1382,7 +1386,8 @@ private:
     float scene_proj_[2][16] = {};
     bool scene_proj_ok_[2] = {};
     bool last_theater_ = true;  // the last present went to the theater screen: no hud plane
-    uint32_t frame_world_ = 0;  // world draws since the last present: none puts the frame on the theater screen
+    uint32_t frame_world_ = 0;
+    std::set<std::array<uint32_t, 3>> dev_kinds_;  // dev_drawdiff: this frame's world draws' kinds  // world draws since the last present: none puts the frame on the theater screen
     bool panel_ = false;        // DrawFrame is drawing the settings panel's quad: cleared transparent
     float stat_proj_[16] = {};
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -3263,7 +3268,46 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     // stock alone; till it's ready the stock isn't drawn (its uvs are for its own texture). None for this gun (a
     // shotgun's shell): drawn with the gun's
     VkDescriptorSet stock_set = VK_NULL_HANDLE;
-    if (stock_on) {
+    // phase 6: the M67's texture, made once (the hand's grenade, and every grenade the world draws)
+    static Image m67;
+    auto m67_ready = [&] {
+        static bool tried = false;
+        if (!tried) {
+            tried = true;
+            std::vector<uint8_t> px;
+            uint32_t w = 0, h = 0;
+            if (::game::VrGrenadeTexture(px, w, h)) {
+                EndRender();
+                if (!PixelImage(m67, px, w * 4, w, h)) m67 = {};
+            }
+        }
+        return m67.view != VK_NULL_HANDLE;
+    };
+    // the game's grenade in the world (found by a throw, dev_drawdiff: stride 24, 220 vertices, 479 indices: its
+    // vertices position, packed normal, uv as the guns' less their bone words): the M67 drawn instead, with its texture
+    VkDescriptorSet m67_set = VK_NULL_HANDLE;
+    uint32_t m67_count = 0;
+    const uint16_t* m67_idx = nullptr;
+    const uint8_t* m67_v = nullptr;
+    uint32_t m67_vbytes = 0;
+    if (a.buffer_count == 1 && a.buffers[0].stride == 24 && a.buffers[0].bytes == 5280 && a.index_count == 479 &&
+        ::game::VrM67World(m67_v, m67_vbytes, m67_idx, m67_count) && m67_ready()) {
+        VkImageView views[4];
+        for (int i = 0; i < 4; i++) views[i] = stages.view[i];
+        views[0] = m67.view;
+        m67_set = Set(views, samplers);
+    }
+    if (stock_on && ::game::VrGrenadeInHand()) {
+        // phase 6: the hand grenade (the extra mesh while one's held): its own texture
+        if (m67_ready()) {
+            VkImageView views[4];
+            for (int i = 0; i < 4; i++) views[i] = stages.view[i];
+            views[0] = m67.view;
+            stock_set = Set(views, samplers);
+        } else {
+            stock_on = false;
+        }
+    } else if (stock_on) {
         static std::map<uint32_t, Image> stock_tex;
         static std::set<uint32_t> started;
         TextureDesc d;
@@ -3373,17 +3417,44 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     if (hud) stat_hud_++;
     if (a.pretransformed && depth && !overlay) stat_flat_z_++;
     if ((world || gun) && eye_ == 0) frame_world_++;
+    // dev_drawdiff: the world draws' kinds (stride, vertex bytes, indices) each frame, to find what a throw adds
+    static const bool drawdiff = std::filesystem::exists(app::ExeDir() / "dev_drawdiff");
+    if (drawdiff && world && eye_ == 0 && a.buffer_count)
+        dev_kinds_.insert({a.buffers[0].stride, a.buffers[0].bytes, a.index_count});
     if (stereo_ && world && listed && eye_ == 0) std::memcpy(stat_proj_, proj, sizeof(stat_proj_));
     if (a.buffer_count) vkCmdBindVertexBuffers(Cb(), 0, a.buffer_count, vbufs, voffs);
     if (a.index_count)
         vkCmdBindIndexBuffer(Cb(), ib.buf, ib.off, a.index16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+    // the world's grenade swapped for the M67 (above): its vertices, its indices (a strip's as the stock's), its texture
+    uint32_t m67_draw = 0;
+    if (m67_set) {
+        Alloc v = Upload(m67_vbytes, 16);
+        std::memcpy(v.cpu, m67_v, m67_vbytes);
+        VkDeviceSize voff = v.off;
+        vkCmdBindVertexBuffers(Cb(), 0, 1, &v.buf, &voff);
+        static std::vector<uint16_t> strip;
+        const uint16_t* ind = m67_idx;
+        uint32_t icount = m67_count;
+        if (a.strip) {
+            if (strip.empty())
+                for (uint32_t i = 0; i + 2 < m67_count; i += 3)
+                    strip.insert(strip.end(), {m67_idx[i], m67_idx[i], m67_idx[i + 1], m67_idx[i + 2], m67_idx[i + 2]});
+            ind = strip.data(), icount = uint32_t(strip.size());
+        }
+        Alloc ix = Upload(icount * 2, 4);
+        std::memcpy(ix.cpu, ind, icount * 2);
+        vkCmdBindIndexBuffer(Cb(), ix.buf, ix.off, VK_INDEX_TYPE_UINT16);
+        BindSet(m67_set, vc.off, dc.off);
+        m67_draw = icount;
+    }
     // the eye matrix and a clip plane (none: zero) with each draw (EyeHlsl)
     auto emit = [&](const float* m, const float* clip) {
         float pc[20] = {};
         std::memcpy(pc, m, 64);
         if (clip) std::memcpy(pc + 16, clip, 16);
         vkCmdPushConstants(Cb(), layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), pc);
-        if (a.index_count) vkCmdDrawIndexed(Cb(), a.index_count, 1, 0, a.base_vertex, 0);
+        if (m67_draw) vkCmdDrawIndexed(Cb(), m67_draw, 1, 0, 0, 0);
+        else if (a.index_count) vkCmdDrawIndexed(Cb(), a.index_count, 1, 0, a.base_vertex, 0);
         else vkCmdDraw(Cb(), a.draw_count, 1, 0, 0);
     };
     // dev_dumpreload (phase 5): each gun list mesh's vertices once (dumps/mesh_<indices>.bin: stride, vertex count,
@@ -3951,6 +4022,24 @@ void VulkanBackend::Present(const Surface& front) {
         // no world this frame (menus, films, loading): the left eye's frame on the theater screen instead
         bool theater = frame_world_ == 0;
         frame_world_ = 0;
+        {
+            // dev_drawdiff: the kinds a throw added (seen within 2 s after it, not in the frame before it), once each
+            static std::set<std::array<uint32_t, 3>> before, told;
+            static int64_t thrown_seen = 0;
+            int64_t thrown = ::game::VrThrownMs();
+            int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (thrown != thrown_seen && now - thrown < 2000) {
+                for (const auto& k : dev_kinds_)
+                    if (!before.count(k) && told.insert(k).second)
+                        LOGR("dev_drawdiff: after the throw: stride %u, %u vertex bytes (%u vertices), %u indices", k[0],
+                             k[1], k[0] ? k[1] / k[0] : 0, k[2]);
+            } else {
+                before = dev_kinds_;
+            }
+            if (thrown != thrown_seen && now - thrown >= 2000) thrown_seen = thrown;
+            dev_kinds_.clear();
+        }
         last_theater_ = theater;
         if (theater) scene_proj_ok_[0] = scene_proj_ok_[1] = false;
         bool got[2] = {};

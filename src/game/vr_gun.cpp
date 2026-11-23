@@ -66,6 +66,8 @@ bool VrMagInHand();
 bool VrShellGun();
 int VrLauncherRoot();      // vr_reload.cpp: the held launcher's root bone (-1 none)
 bool VrM203Loaded();       // the M16's M203 has its grenade in
+bool VrGunAway();          // vr_grenade.cpp: a grenade in the hand, or empty
+bool VrGrenadeInHand();
 bool VrLauncherLoaded();   // a round in it
 bool VrRevolver();
 float VrCylOut();
@@ -1151,6 +1153,36 @@ struct Drop {
 Drop g_drop;  // render thread
 constexpr float kDropStay = 60;
 
+// game thread: a hand's grip point and its velocity in the game's world (metres, m/s), for a throw (vr_grenade.cpp)
+bool VrHandWorld(int hand, float* pos, float* vel) {
+    float yaw, pitch, AC[9], hc[3], head[3];
+    xr::Hand h[2];
+    CamSnap cam;
+    {
+        std::lock_guard lock(g_cam_lock);
+        cam = g_cam;
+    }
+    if (!cam.ok) return false;
+    if (!VrLookAngles(yaw, pitch) || !xr::Hands(h[0], h[1], head) || !h[hand].ok ||
+        !HandInCamera(yaw, pitch, hand, AC, hc, false)) {
+        // dev_throw with the controllers asleep on the desk: from half a metre ahead of the eyes, 8 m/s on and up
+        if (!std::filesystem::exists(app::ExeDir() / "dev_throw")) return false;
+        const float at[3] = {0, 0, -0.5f}, v[3] = {0, 2, -8};
+        Aff c2w = CamToWorld(cam);
+        Apply(c2w, at, pos);
+        RotOf(c2w, v, vel);
+        return true;
+    }
+    // the velocity into C as the hand's place is (the head's yaw and pitch the camera was built from)
+    float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+    float U[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp}, vc[3];
+    for (int i = 0; i < 3; i++) vc[i] = U[i] * h[hand].vel[0] + U[3 + i] * h[hand].vel[1] + U[6 + i] * h[hand].vel[2];
+    Aff c2w = CamToWorld(cam);
+    Apply(c2w, hc, pos);
+    RotOf(c2w, vc, vel);
+    return true;
+}
+
 void StartDrop(const Aff& from_c, const float* v_c) {
     CamSnap cam;
     {
@@ -1369,6 +1401,22 @@ StockMesh MakeM203Grenade(float u_span, float v0, float v1) {
     for (int k = 0; k < kSides; k++) idx.insert(idx.end(), {mid, uint16_t(k + 1), uint16_t(k)});
     return MakeStock(pos.data(), nrm.data(), uv.data(), pos.size() / 3, idx.data(), idx.size(), 96);
 }
+// the letters painted on our models: 5 x 7, each row's 5 bits left to right (only the ones they carry)
+const std::map<char, std::array<uint8_t, 7>>& Font5x7() {
+    static const std::map<char, std::array<uint8_t, 7>> kFont = {
+        {'A', {14, 17, 17, 31, 17, 17, 17}}, {'B', {30, 17, 17, 30, 17, 17, 30}}, {'C', {14, 17, 16, 16, 16, 17, 14}},
+        {'D', {30, 17, 17, 17, 17, 17, 30}}, {'E', {31, 16, 16, 30, 16, 16, 31}}, {'F', {31, 16, 16, 30, 16, 16, 16}},
+        {'G', {14, 17, 16, 23, 17, 17, 15}}, {'H', {17, 17, 17, 31, 17, 17, 17}}, {'I', {14, 4, 4, 4, 4, 4, 14}},
+        {'J', {7, 2, 2, 2, 2, 18, 12}},      {'L', {16, 16, 16, 16, 16, 16, 31}}, {'M', {17, 27, 21, 21, 17, 17, 17}},
+        {'O', {14, 17, 17, 17, 17, 17, 14}}, {'P', {30, 17, 17, 30, 16, 16, 16}}, {'R', {30, 17, 17, 30, 20, 18, 17}},
+        {'S', {15, 16, 16, 14, 1, 1, 30}},   {'T', {31, 4, 4, 4, 4, 4, 4}},       {'U', {17, 17, 17, 17, 17, 17, 14}},
+        {'W', {17, 17, 17, 21, 21, 21, 10}}, {'Z', {31, 1, 2, 4, 8, 16, 31}},     {'0', {14, 17, 19, 21, 25, 17, 14}},
+        {'1', {4, 12, 4, 4, 4, 4, 14}},      {'2', {14, 17, 1, 2, 4, 8, 31}},     {'3', {31, 2, 4, 2, 1, 17, 14}},
+        {'4', {2, 6, 10, 18, 31, 2, 2}},     {'5', {31, 16, 30, 1, 1, 17, 14}},   {',', {0, 0, 0, 0, 12, 4, 8}},
+        {'-', {0, 0, 0, 31, 0, 0, 0}},       {' ', {0, 0, 0, 0, 0, 0, 0}},
+        {'N', {17, 25, 21, 19, 17, 17, 17}}, {'Y', {17, 17, 10, 4, 4, 4, 4}}};
+    return kFont;
+}
 // its paint, BGRA, into the rows from y0 (kM433TexH of them: row 0 the rim's back) of an image ow wide (the first
 // kM433TexW columns round it): the colours of the photo's, and its printing (5 x 7 letters)
 void PaintM433(uint8_t* out, uint32_t ow, uint32_t y0) {
@@ -1397,18 +1445,7 @@ void PaintM433(uint8_t* out, uint32_t ow, uint32_t y0) {
             put(x, y, {c.r + n * g, c.g + n * g, c.b + n * g});
         }
     }
-    // the letters: 5 x 7, each row's 5 bits left to right (only the ones it carries)
-    static const std::map<char, std::array<uint8_t, 7>> kFont = {
-        {'A', {14, 17, 17, 31, 17, 17, 17}}, {'B', {30, 17, 17, 30, 17, 17, 30}}, {'C', {14, 17, 16, 16, 16, 17, 14}},
-        {'D', {30, 17, 17, 17, 17, 17, 30}}, {'E', {31, 16, 16, 30, 16, 16, 31}}, {'F', {31, 16, 16, 30, 16, 16, 16}},
-        {'G', {14, 17, 16, 23, 17, 17, 15}}, {'H', {17, 17, 17, 31, 17, 17, 17}}, {'I', {14, 4, 4, 4, 4, 4, 14}},
-        {'J', {7, 2, 2, 2, 2, 18, 12}},      {'L', {16, 16, 16, 16, 16, 16, 31}}, {'M', {17, 27, 21, 21, 17, 17, 17}},
-        {'O', {14, 17, 17, 17, 17, 17, 14}}, {'P', {30, 17, 17, 30, 16, 16, 16}}, {'R', {30, 17, 17, 30, 20, 18, 17}},
-        {'S', {15, 16, 16, 14, 1, 1, 30}},   {'T', {31, 4, 4, 4, 4, 4, 4}},       {'U', {17, 17, 17, 17, 17, 17, 14}},
-        {'W', {17, 17, 17, 21, 21, 21, 10}}, {'Z', {31, 1, 2, 4, 8, 16, 31}},     {'0', {14, 17, 19, 21, 25, 17, 14}},
-        {'1', {4, 12, 4, 4, 4, 4, 14}},      {'2', {14, 17, 1, 2, 4, 8, 31}},     {'3', {31, 2, 4, 2, 1, 17, 14}},
-        {'4', {2, 6, 10, 18, 31, 2, 2}},     {'5', {31, 16, 30, 1, 1, 17, 14}},   {',', {0, 0, 0, 0, 12, 4, 8}},
-        {'-', {0, 0, 0, 31, 0, 0, 0}},       {' ', {0, 0, 0, 0, 0, 0, 0}}};
+    const auto& kFont = Font5x7();
     // a line centred round the front (u 0: the mesh's +x, the side the player sees), its letters' tops toward the
     // nose; dot: texels a dot, at mm up its baseline
     auto line = [&](const char* text, float mm, int dot, Rgb ink) {
@@ -1432,6 +1469,165 @@ void PaintM433(uint8_t* out, uint32_t ow, uint32_t y0) {
     line("M433  HEDP", 64.3f, 3, kInk);
     line("CTG40MM HEDP", 28.7f, 2, kEmboss);
     line("AMMLOT GA-WS-14-1", 24.1f, 2, kEmboss);
+}
+// the hand grenade (user's photos: an M67; its "INERT" left off, user): its body a ball 64 mm across, the fuze's body on top, the spoon
+// down its side (mesh +x), the ring pin on the other side. Ours, drawn in the right hand while one's held (the gun's
+// extra mesh on bone 3, "Extra", which the guns' own meshes don't use), with its own texture (PaintM67): the body
+// round its left 384 columns, the metal parts' colours at u 0.875 (v: fuze 1/8, spoon 3/8, ring 5/8)
+constexpr int kM67Bone = 3;
+constexpr uint32_t kM67TexW = 512, kM67TexH = 256;
+StockMesh MakeM67() {
+    std::vector<float> pos, nrm, uv;
+    std::vector<uint16_t> idx;
+    auto vert = [&](float x, float y, float z, float nx, float ny, float nz, float u, float v) {
+        pos.insert(pos.end(), {x / 1000, y / 1000, z / 1000});
+        nrm.insert(nrm.end(), {nx, ny, nz});
+        uv.insert(uv.end(), {u, v});
+        return uint16_t(pos.size() / 3 - 1);
+    };
+    auto grid = [&](uint16_t first, int rows, int cols) {  // (rows + 1) x (cols + 1) vertices
+        for (int r = 0; r < rows; r++)
+            for (int k = 0; k < cols; k++) {
+                uint16_t a0 = uint16_t(first + r * (cols + 1) + k), a1 = uint16_t(a0 + 1),
+                         b0 = uint16_t(a0 + cols + 1), b1 = uint16_t(b0 + 1);
+                idx.insert(idx.end(), {a0, b0, a1, a1, b0, b1});
+            }
+    };
+    constexpr float kPi = 3.14159265f, kR = 32;
+    constexpr float kBodyU = 384.0f / kM67TexW;
+    // the body: a ball, open at the top under the fuze (latitudes -90..72 degrees)
+    {
+        constexpr int kLat = 18, kLon = 32;
+        uint16_t first = uint16_t(pos.size() / 3);
+        for (int i = 0; i <= kLat; i++) {
+            float lat = (-90 + 162.0f * i / kLat) * kPi / 180;
+            for (int k = 0; k <= kLon; k++) {
+                float lon = 2 * kPi * k / kLon;
+                float nx = std::cos(lat) * std::cos(lon), ny = std::sin(lat), nz = std::cos(lat) * std::sin(lon);
+                vert(kR * nx, kR * ny, kR * nz, nx, ny, nz, kBodyU * k / kLon, float(i) / kLat);
+            }
+        }
+        grid(first, kLat, kLon);
+    }
+    // the fuze's body: a cylinder r 10 from inside the ball to 50 mm up, and its top
+    const float fu = 0.875f, fv = 1.0f / 8, su = 0.875f, sv = 3.0f / 8, ru = 0.875f, rv = 5.0f / 8;
+    {
+        constexpr int kSides = 16;
+        uint16_t first = uint16_t(pos.size() / 3);
+        for (float y : {28.0f, 50.0f})
+            for (int k = 0; k <= kSides; k++) {
+                float a = 2 * kPi * k / kSides;
+                vert(10 * std::cos(a), y, 10 * std::sin(a), std::cos(a), 0, std::sin(a), fu, fv);
+            }
+        grid(first, 1, kSides);
+        uint16_t mid = vert(0, 50, 0, 0, 1, 0, fu, fv);
+        uint16_t ring = uint16_t(pos.size() / 3);
+        for (int k = 0; k <= kSides; k++) {
+            float a = 2 * kPi * k / kSides;
+            vert(10 * std::cos(a), 50, 10 * std::sin(a), 0, 1, 0, fu, fv);
+        }
+        for (int k = 0; k < kSides; k++) idx.insert(idx.end(), {mid, uint16_t(ring + k + 1), uint16_t(ring + k)});
+    }
+    // the spoon: a strip 14 mm wide over the fuze's top, out and down the ball's side (+x) to 45 degrees under its
+    // middle, 1.5 mm off the ball
+    {
+        std::vector<std::array<float, 2>> path = {{-6, 52}, {8, 52}, {14, 49}, {18, 44}};
+        for (int i = 0; i <= 10; i++) {
+            float t = (55 - 100.0f * i / 10) * kPi / 180;
+            path.push_back({33.5f * std::cos(t), 33.5f * std::sin(t)});
+        }
+        uint16_t first = uint16_t(pos.size() / 3);
+        for (size_t i = 0; i < path.size(); i++) {
+            size_t i0 = i ? i - 1 : 0, i1 = std::min(i + 1, path.size() - 1);
+            float tx = path[i1][0] - path[i0][0], ty = path[i1][1] - path[i0][1], l = std::max(std::hypot(tx, ty), 1e-6f);
+            float nx = ty / l, ny = -tx / l;  // out from the ball
+            if (nx * path[i][0] + ny * (path[i][1]) < 0) nx = -nx, ny = -ny;
+            for (float z : {-7.0f, 7.0f}) vert(path[i][0], path[i][1], z, nx, ny, 0, su, sv);
+        }
+        grid(first, int(path.size()) - 1, 1);
+    }
+    // the ring pin: a ring 26 mm across of 3 mm wire on the fuze's other side, upright
+    {
+        constexpr int kMajor = 20, kMinor = 6;
+        const float cx = -20, cy = 44, rm = 13, rw = 1.6f;
+        uint16_t first = uint16_t(pos.size() / 3);
+        for (int i = 0; i <= kMajor; i++) {
+            float a = 2 * kPi * i / kMajor;
+            for (int k = 0; k <= kMinor; k++) {
+                float b = 2 * kPi * k / kMinor;
+                float nx = std::cos(b) * std::cos(a), ny = std::cos(b) * std::sin(a), nz = std::sin(b);
+                vert(cx + (rm + rw * std::cos(b)) * std::cos(a), cy + (rm + rw * std::cos(b)) * std::sin(a), rw * nz, nx,
+                     ny, nz, ru, rv);
+            }
+        }
+        grid(first, kMajor, kMinor);
+    }
+    return MakeStock(pos.data(), nrm.data(), uv.data(), pos.size() / 3, idx.data(), idx.size(), kM67Bone);
+}
+// its texture, BGRA (the photo's colours): the body olive with its yellow printing (no "INERT": user) (its lines centred on the
+// side facing the player, mesh -z: away from the spoon), the metal parts' patches
+void PaintM67(std::vector<uint8_t>& out) {
+    out.assign(size_t(kM67TexW) * kM67TexH * 4, 255);
+    auto put = [&](int x, int y, int r, int g, int b) {
+        if (y < 0 || y >= int(kM67TexH)) return;
+        x = ((x % 384) + 384) % 384;  // round the body
+        uint8_t* o = &out[(size_t(y) * kM67TexW + uint32_t(x)) * 4];
+        o[0] = uint8_t(std::clamp(b, 0, 255)), o[1] = uint8_t(std::clamp(g, 0, 255)), o[2] = uint8_t(std::clamp(r, 0, 255));
+    };
+    for (int y = 0; y < int(kM67TexH); y++)
+        for (int x = 0; x < int(kM67TexW); x++) {
+            int n = (x * 7919 + y * 104729) % 9 - 4;
+            uint8_t* o = &out[(size_t(y) * kM67TexW + uint32_t(x)) * 4];
+            int r = 62, g = 70, b = 50;  // olive drab
+            if (x >= 384) {
+                int part = y * 4 / int(kM67TexH);  // fuze, spoon, ring, (spare)
+                r = part == 0 ? 78 : part == 1 ? 58 : 92, g = part == 0 ? 82 : part == 1 ? 62 : 92,
+                b = part == 0 ? 70 : part == 1 ? 56 : 62;
+            }
+            o[0] = uint8_t(b + n), o[1] = uint8_t(g + n), o[2] = uint8_t(r + n);
+        }
+    const auto& font = Font5x7();
+    // centred at longitude 270 degrees (mesh -z), its letters' tops toward the fuze; at latitude lat
+    auto line = [&](const char* text, float lat, int dot, int r, int g, int b) {
+        int n = int(std::strlen(text)), w = n * 6 * dot - dot;
+        int xc = 384 * 3 / 4, ybase = int((lat + 90) / 162.0f * kM67TexH);
+        for (int i = 0; i < n; i++) {
+            auto f = font.find(text[i]);
+            if (f == font.end()) continue;
+            for (int row = 0; row < 7; row++)
+                for (int col = 0; col < 5; col++)
+                    if (f->second[row] >> (4 - col) & 1)
+                        for (int dy = 0; dy < dot; dy++)
+                            for (int dx = 0; dx < dot; dx++)
+                                put(xc - w / 2 + (i * 6 + col) * dot + dx, ybase + (6 - row) * dot + dy, r, g, b);
+        }
+    };
+    line("GRENADE,HAND,FRAG,DELAY", 6, 2, 205, 196, 70);
+    line("COMB B IP-51-514D", -12, 2, 205, 196, 70);
+}
+// render thread: the M67 for the world's grenades (vulkan.cpp swaps their draw): its vertices as theirs (24 bytes:
+// position, packed normal, uv: the guns' 36 less their bone words), its indices (both windings)
+bool VrM67World(const uint8_t*& verts, uint32_t& bytes, const uint16_t*& idx, uint32_t& count) {
+    static const StockMesh m = [] {
+        StockMesh s = MakeM67(), w;
+        size_t n = s.verts.size() / 36;
+        w.verts.resize(n * 24);
+        for (size_t i = 0; i < n; i++) {
+            std::memcpy(&w.verts[i * 24], &s.verts[i * 36], 12);
+            std::memcpy(&w.verts[i * 24 + 12], &s.verts[i * 36 + 24], 12);
+        }
+        w.idx = s.idx;
+        return w;
+    }();
+    verts = m.verts.data(), bytes = uint32_t(m.verts.size());
+    idx = m.idx.data(), count = uint32_t(m.idx.size());
+    return true;
+}
+// render thread, once: the M67's texture (vulkan.cpp makes its image)
+bool VrGrenadeTexture(std::vector<uint8_t>& px, uint32_t& w, uint32_t& h) {
+    PaintM67(px);
+    w = kM67TexW, h = kM67TexH;
+    return true;
 }
 // one extra mesh of two (each of its own bone)
 StockMesh Merge(const StockMesh& a, const StockMesh& b) {
@@ -1507,6 +1703,30 @@ void LogBarrel(const float* frame, float (*c)[4], uint32_t count) {
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base) {
     LogBarrel(frame, c, count);
+    if (VrGunAway()) {
+        // phase 6 (vr_grenade.cpp): every bone of the gun's collapsed to a point (not seen); a grenade held: the M67
+        // on bone 3 at the right palm, its fuze up the controller's top, its spoon against the palm (mesh +x to the
+        // controller's -x), its middle 3 cm ahead of the grip point
+        float kr[9], kp[3];
+        if (!VrGunPose(yaw, pitch, frame, 1, kr, kp)) return false;
+        float krs[9];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) krs[i * 3 + j] = kr[i * 3 + j] * (j == 1 ? 1.0f : -1.0f);  // K · S
+        Aff Dinv = Inverse(FromRotPos(krs, kp));
+        Aff point{};
+        for (int i = 0; i < 3; i++) point.m[i * 4 + 3] = Bone(c, 0).m[i * 4 + 3];
+        for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, point);
+        float AC[9], hc[3];
+        if (VrGrenadeInHand() && HandInCamera(yaw, pitch, 1, AC, hc, false)) {
+            float R[9], at[3];
+            for (int i = 0; i < 3; i++) {
+                R[i * 3 + 0] = -AC[i * 3 + 0], R[i * 3 + 1] = AC[i * 3 + 1], R[i * 3 + 2] = -AC[i * 3 + 2];
+                at[i] = hc[i] - AC[i * 3 + 2] * 0.03f;
+            }
+            SetBone(c, kM67Bone, Compose(Dinv, FromRotPos(R, at)));
+        }
+        return true;
+    }
     int worked_root, worked_slide;
     if (std::string wc = HeldGunCode(); WorkedGun(wc, worked_root, worked_slide)) {
         bool cycling = Cycling(c, worked_root, worked_slide);
@@ -1978,6 +2198,17 @@ bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* in
              int32_t base, const uint8_t*& verts, uint32_t& vbytes_out, const uint16_t*& idx, uint32_t& icount) {
     if (stride != 36 || !vb || !indices) return false;
     std::string code = HeldGunCode();
+    if (VrGunAway()) {
+        // phase 6: the gun away: a grenade in the hand (the M67, on the gun's biggest draw), or nothing
+        static std::map<std::string, uint32_t> biggest;
+        uint32_t& big = biggest[code];
+        big = std::max(big, count);
+        if (!VrGrenadeInHand() || count != big) return false;
+        static const StockMesh m67 = MakeM67();
+        verts = m67.verts.data(), vbytes_out = uint32_t(m67.verts.size());
+        idx = m67.idx.data(), icount = uint32_t(m67.idx.size());
+        return true;
+    }
     const StockMesh* m = StockOf(code);
     if (!m) return false;
     static std::map<std::pair<std::string, uint32_t>, bool> has_grip;

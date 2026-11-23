@@ -43,6 +43,15 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] M16+M203: the grenade's tip into the back of the open barrel, pull it back to shut, fire it (auto: grenade_in:B203, tube_shut:B203; confirm)
 - [ ] M16+M203: the rifle's magazine still reloads as before (auto: mag_in:BNS)
 
+## Grenades (thrown by hand)
+- [ ] Standing: the right grip low across the front of the waist takes a grenade; the gun goes away (confirm)
+- [ ] The right grip at the right hip takes one too, standing and crouched; crouched, the waist band doesn't (confirm)
+- [ ] Throw and let go: it flies from the hand at the hand's speed, the fuse starting then (confirm)
+- [ ] Hands empty after; a grip over the right shoulder brings the last gun back (confirm)
+- [ ] The off hand's trigger no longer throws a grenade (but still fires the M203) (confirm)
+- [ ] The M67 in the hand looks like the photos (no INERT), held fuze up, spoon to the palm (confirm)
+- [ ] Thrown grenades (and the AI's) are drawn as the M67 in flight and on the ground (confirm)
+
 ## Magnum
 - [ ] A lets the cylinder's latch go (auto: cyl_latch)
 - [ ] Angle the gun down: the cylinder swings out to the left (auto: cyl_out_down; confirm)

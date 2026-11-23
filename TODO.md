@@ -254,3 +254,26 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] Title cards (the time and place at a level's start): the text only, no black box behind it; and the player's
   view set up so the head doesn't move opposite to the player's own in those first seconds (user)
 
+## Phase 6 (grenade throwing; user, 2026-11-23: in pieces, low usage, no test or install without the user's say)
+- The user's design: a grip low across the waist (below and in line with the headset; never reached crouching by
+  accident) takes a grenade: the gun leaves the hand, the grenade is in it, not armed; let go while throwing: it
+  flies from the hand with the hand's speed and the game's fuse starts then. Hands empty after the throw until a grip
+  over the right shoulder brings back the last weapon held. The grenade modelled exactly as the user's photos (M67:
+  olive sphere, yellow "GRENADE,HAND,FRAG,DELAY / COMB B IP-51-514D" (no "INERT": user); fuze, spoon, ring pin); every
+  grenade seen in the game drawn as it, the pickup box kept.
+- [x] 1. the spawn, from the code (NOTES 2026-11-23 "Phase 6")
+- [x] 2. the throw on our release (built, not run): VrRequestThrow(hand) → the wrapper makes the grenade itself
+      (FUN_001DD000) with the hand's place and speed; no animation, no recompile
+- [x] 3. (built, not run) the right grip at the right hip (and standing, a band across the waist) takes a grenade,
+      the gun hidden (the first-person list: the hands too, till piece 4) and not fired; let go, thrown; empty till a
+      grip over the right shoulder. The game's own trigger throw is off in the headset (the M203 keeps it)
+- [x] 4. (built, not run) the M67 in the right hand while one is held; the gun's bones collapsed, the arms drawn again
+- [ ] the throw's sound as the grenade leaves the hand, and only then (user): the game's came with its throw
+      animation, which no longer runs; look in /chars/guns/GrdPin.wdo/.wdd and /sound/banks/Anim.awd for it
+- [x] 5. (built, not seen) the world's grenade draw (stride 24, 220 vertices, 479 indices: found by a dev throw)
+      drawn as the M67 with its texture
+- [ ] co-op (user, 2026-11-23): giving ammo to another player: the magazine taken at the chest can be dropped on the
+      ground for them (any time, whatever gun is out); better, handed over: it stays in the hand till their hand
+      meets it
+- [ ] sounds (user, 2026-11-23): a magazine landing on the ground, and one taken from the chest (from the game's files
+      if they have them, else open-source files the user finds)
