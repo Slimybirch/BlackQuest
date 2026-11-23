@@ -230,3 +230,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] Make the guns work for AR platforms and physical gun stocks (user, 2026-11-22)
 - [ ] Shotgun reloads (shells one at a time) and the magnum: the cylinder swings out to the side, a speed loader
   (a ring of rounds) from the chest put in, swung back in; the cylinder spun by hand (user)
+- [ ] No fire-mode change animation on any gun; the mode still changes on its button (right stick up, the pad's
+  d-pad up), and no blur with it (user)
+- [ ] No blur when objectives or tips come up (user)
+- [ ] Title cards (the time and place at a level's start): the text only, no black box behind it; and the player's
+  view set up so the head doesn't move opposite to the player's own in those first seconds (user)

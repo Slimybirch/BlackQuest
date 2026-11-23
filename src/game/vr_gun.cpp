@@ -17,9 +17,11 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "app/app.h"
@@ -27,6 +29,7 @@
 #include "core/log.h"
 #include "d3d/stereo.h"
 #include "game/layout.h"
+#include "game/vr_stocks.h"
 #include "xdk/hle.h"
 
 #include "xr.h"
@@ -1088,9 +1091,10 @@ void NoteGun(int bone, int slide, float travel, const float* mid, const float* u
 }
 
 // ---- stocks: the viewmodels of the M16 (and its M203 and silver ones) and the M249 end at the receiver, a first
-// person gun never showing its stock; in vr it's in view, so one is added (user: from photos of a carbine's
-// collapsible stock and the M249's fixed one). Real size, in the gun's mesh (metres; z to the muzzle, y up), on its
-// root bone, coloured from the texture of the gun's own black pistol grip; drawn as a second draw of the gun's
+// person gun never showing its stock; in vr it's in view, so one is added: the M16 a carbine's 6-position stock on
+// its buffer tube, the M249 its fixed stock (vr_stocks.h, lofted by tools/stocks.py from the user's photos), real
+// size in the gun's mesh, on its root bone, with a texture of its own painted from the gun's (VrStockBake). Drawn as a second draw of the
+// gun's, both windings (the gun draw's culling either way; vulkan.cpp turns it into a strip when the gun's is one)
 struct StockMesh {
     std::vector<uint8_t> verts;  // 36 bytes each, as the gun's: position, weights, bones, normal, uv
     std::vector<uint16_t> idx;
@@ -1102,89 +1106,29 @@ uint32_t PackNormal(const float* n) {
     };
     return q(n[0], 11) | q(n[1], 11) << 11 | q(n[2], 10) << 22;
 }
-void StockVertex(StockMesh& m, const float* p, const float* n, int bone, float u, float v) {
-    uint8_t b[36] = {};
-    std::memcpy(b, p, 12);
-    b[12] = 255;
-    int16_t ix[4] = {int16_t(bone), 0, 0, 0};
-    std::memcpy(b + 16, ix, 8);
-    uint32_t pn = PackNormal(n);
-    std::memcpy(b + 24, &pn, 4);
-    float uv[2] = {u, v};
-    std::memcpy(b + 28, uv, 8);
-    m.verts.insert(m.verts.end(), b, b + 36);
-}
-// a flat face (3+ points, convex or star shaped from its middle), both windings (the gun draw's culling either way)
-void StockFace(StockMesh& m, const std::vector<std::array<float, 3>>& pts, const float* n, int bone, float u, float v) {
-    uint16_t at = uint16_t(m.verts.size() / 36);
-    float mid[3] = {};
-    for (auto& q : pts)
-        for (int i = 0; i < 3; i++) mid[i] += q[i] / float(pts.size());
-    StockVertex(m, mid, n, bone, u, v);
-    for (auto& q : pts) StockVertex(m, q.data(), n, bone, u, v);
-    for (uint16_t k = 0; k < pts.size(); k++) {
-        uint16_t a = uint16_t(at + 1 + k), b = uint16_t(at + 1 + (k + 1) % pts.size());
-        m.idx.insert(m.idx.end(), {at, a, b, at, b, a});
+StockMesh MakeStock(const float* pos, const float* nrm, const float* uvs, size_t nverts, const uint16_t* idx,
+                    size_t nidx, int bone) {
+    StockMesh m;
+    m.verts.resize(nverts * 36);
+    for (size_t i = 0; i < nverts; i++) {
+        uint8_t* b = &m.verts[i * 36];
+        std::memcpy(b, pos + i * 3, 12);
+        b[12] = 255;
+        int16_t ix[4] = {int16_t(bone), 0, 0, 0};
+        std::memcpy(b + 16, ix, 8);
+        uint32_t pn = PackNormal(nrm + i * 3);
+        std::memcpy(b + 24, &pn, 4);
+        std::memcpy(b + 28, uvs + i * 2, 8);
     }
-}
-// a side profile (z, y) extruded across x (-w..w): its two sides and the rim round it
-void StockSlab(StockMesh& m, const std::vector<std::array<float, 2>>& zy, float w, int bone, float u, float v) {
-    std::vector<std::array<float, 3>> l, r;
-    for (auto& q : zy) l.push_back({-w, q[1], q[0]}), r.push_back({w, q[1], q[0]});
-    const float nl[3] = {-1, 0, 0}, nr[3] = {1, 0, 0};
-    StockFace(m, l, nl, bone, u, v);
-    StockFace(m, r, nr, bone, u, v);
-    float cz = 0, cy = 0;
-    for (auto& q : zy) cz += q[0] / zy.size(), cy += q[1] / zy.size();
-    for (size_t k = 0; k < zy.size(); k++) {
-        const auto& a = zy[k];
-        const auto& b = zy[(k + 1) % zy.size()];
-        // the rim's normal: square to the edge in the profile, away from its middle
-        float n[3] = {0, b[0] - a[0], -(b[1] - a[1])};
-        Normalize(n);
-        float mz = (a[0] + b[0]) / 2 - cz, my = (a[1] + b[1]) / 2 - cy;
-        if (n[2] * mz + n[1] * my < 0)
-            for (float& x : n) x = -x;
-        StockFace(m, {{-w, a[1], a[0]}, {w, a[1], a[0]}, {w, b[1], b[0]}, {-w, b[1], b[0]}}, n, bone, u, v);
-    }
-}
-// a tube along z (eight sides), its back end closed
-void StockTube(StockMesh& m, float y, float rad, float z0, float z1, int bone, float u, float v) {
-    constexpr int kSides = 8;
-    std::vector<std::array<float, 3>> e1;
-    for (int k = 0; k < kSides; k++) {
-        float a0 = 2 * 3.14159265f * k / kSides, a1 = 2 * 3.14159265f * (k + 1) / kSides, am = (a0 + a1) / 2;
-        float n[3] = {std::cos(am), std::sin(am), 0};
-        StockFace(m, {{rad * std::cos(a0), y + rad * std::sin(a0), z0}, {rad * std::cos(a1), y + rad * std::sin(a1), z0},
-                      {rad * std::cos(a1), y + rad * std::sin(a1), z1}, {rad * std::cos(a0), y + rad * std::sin(a0), z1}},
-                  n, bone, u, v);
-        e1.push_back({rad * std::cos(a0), y + rad * std::sin(a0), z1});
-    }
-    const float nb[3] = {0, 0, -1};
-    StockFace(m, e1, nb, bone, u, v);
+    m.idx.assign(idx, idx + nidx);
+    for (size_t i = 0; i + 2 < nidx; i += 3) m.idx.insert(m.idx.end(), {idx[i], idx[i + 2], idx[i + 1]});
+    return m;
 }
 const StockMesh* StockOf(const std::string& code) {
-    // m16 (receiver's back at z -0.12, the bore at y 0.071): the buffer tube on the bore's line, the carbine's
-    // stock slid over its back (14 cm, 4.4 cm wide, the butt 15 cm tall)
-    static const StockMesh m16 = [] {
-        StockMesh m;
-        const float u = 0.0817f, v = -0.1590f;  // the pistol grip's black
-        StockTube(m, 0.066f, 0.0155f, -0.115f, -0.33f, 75, u, v);
-        StockSlab(m, {{{-0.215f, 0.086f}, {-0.355f, 0.090f}, {-0.355f, -0.062f}, {-0.335f, -0.062f},
-                       {-0.245f, 0.045f}, {-0.215f, 0.048f}}},
-                  0.022f, 75, u, v);
-        return m;
-    }();
-    // m249 (receiver's back at z -0.14, its top y 0.105): the fixed stock, its top on the receiver's line, its
-    // underside sweeping down to a 17 cm butt 30 cm back
-    static const StockMesh m249 = [] {
-        StockMesh m;
-        const float u = 0.4785f, v = -0.0369f;
-        StockSlab(m, {{{-0.125f, 0.104f}, {-0.435f, 0.094f}, {-0.435f, -0.076f}, {-0.405f, -0.078f},
-                       {-0.215f, 0.000f}, {-0.125f, 0.022f}}},
-                  0.021f, 90, u, v);
-        return m;
-    }();
+    static const StockMesh m16 = MakeStock(kM16StockPos, kM16StockNrm, kM16StockUv, std::size(kM16StockPos) / 3,
+                                           kM16StockIdx, std::size(kM16StockIdx), 75);
+    static const StockMesh m249 = MakeStock(kM249StockPos, kM249StockNrm, kM249StockUv, std::size(kM249StockPos) / 3,
+                                            kM249StockIdx, std::size(kM249StockIdx), 90);
     if (code == "M16" || code == "M45" || code == "BNS") return &m16;
     if (code == "HVY" || code == "HV5") return &m249;
     return nullptr;
@@ -1318,6 +1262,239 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
     return true;
 }
 
+// render thread, once per gun texture: the stock's own texture (vulkan.cpp uploads it and binds it for the stock's
+// draw alone), painted the way the game's guns are (user: shadows in the crevices, darkened edges): each triangle's
+// cell (tools/stocks.py lays them out) filled with the receiver patch tiled at its point on the stock, mirrored at
+// each repeat, shaded down to the gun's own plastic (its pistol grip's mean; user: the bare patch read too light; the
+// M249's a little darker again), then darkened by how much of the stock is near and in front of it (disks of its own surface within 3 cm)
+// and by nearness to a sharp edge. From the game's texture at run time: no texel of it is kept in the source.
+// tex: the gun's texture, BGRA texels, 512 x 256
+struct StockSrc {
+    const float *pos, *nrm, *uv, *st;
+    const uint8_t* edge;
+    size_t tris;
+    uint32_t aw, ah;
+    int patch[4], tone[4];  // texels of the gun's texture
+    float px_per_m;         // the patch's scale on the stock
+    float darker;           // and on top of the tone
+};
+const StockSrc* StockSrcOf(const std::string& code) {
+    static const StockSrc m16 = {kM16StockPos, kM16StockNrm, kM16StockUv, kM16StockSt, kM16StockEdge,
+                                 std::size(kM16StockEdge), kM16StockAtlas[0], kM16StockAtlas[1],
+                                 {358, 192, 390, 207}, {35, 120, 85, 200}, 600, 0.36f};
+    static const StockSrc m249 = {kM249StockPos, kM249StockNrm, kM249StockUv, kM249StockSt, kM249StockEdge,
+                                  std::size(kM249StockEdge), kM249StockAtlas[0], kM249StockAtlas[1],
+                                  {248, 120, 296, 152}, {235, 170, 290, 245}, 1200, 0.36f};  // user: both darker, as a photo of
+                                                                                         // one has its stock
+    if (code == "M16" || code == "M45" || code == "BNS") return &m16;
+    if (code == "HVY" || code == "HV5") return &m249;
+    return nullptr;
+}
+bool BakeStock(const std::string& code, const uint8_t* tex, uint32_t pitch, uint32_t tw, uint32_t th,
+               std::vector<uint8_t>& out, uint32_t& ow, uint32_t& oh) {
+    const StockSrc* s = StockSrcOf(code);
+    if (!s || tw != 512 || th != 256) return false;
+    const auto started = std::chrono::steady_clock::now();
+    auto texel = [&](int x, int y) { return tex + size_t(y) * pitch + size_t(x) * 4; };
+    auto mean = [&](const int* r) {
+        double sum = 0;
+        int n = 0;
+        for (int y = r[1]; y < r[3]; y++)
+            for (int x = r[0]; x < r[2]; x++, n++) sum += (texel(x, y)[0] + texel(x, y)[1] + texel(x, y)[2]) / 3.0;
+        return n ? sum / n : 0.0;
+    };
+    const float tone = (mean(s->patch) > 0 ? float(mean(s->tone) / mean(s->patch)) : 1.0f) * s->darker;
+    using V3 = std::array<float, 3>;
+    auto P = [&](size_t i) { return V3{s->pos[i * 3], s->pos[i * 3 + 1], s->pos[i * 3 + 2]}; };
+    auto N = [&](size_t i) { return V3{s->nrm[i * 3], s->nrm[i * 3 + 1], s->nrm[i * 3 + 2]}; };
+    auto dot = [](const V3& a, const V3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    auto unit = [&](V3 a) {
+        float l = std::sqrt(dot(a, a));
+        if (l > 1e-9f)
+            for (float& c : a) c /= l;
+        return a;
+    };
+    // the occluders: each triangle cut into disks about 1 cm across, facing out as its corners' normals do
+    struct Disk {
+        V3 c, n;
+        float area;
+    };
+    std::vector<Disk> disks;
+    for (size_t t = 0; t < s->tris; t++) {
+        V3 a = P(t * 3), b = P(t * 3 + 1), c = P(t * 3 + 2);
+        V3 ab{b[0] - a[0], b[1] - a[1], b[2] - a[2]}, ac{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        V3 x{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]};
+        float area = 0.5f * std::sqrt(dot(x, x));
+        if (area < 1e-9f) continue;
+        V3 n = unit({N(t * 3)[0] + N(t * 3 + 1)[0] + N(t * 3 + 2)[0], N(t * 3)[1] + N(t * 3 + 1)[1] + N(t * 3 + 2)[1],
+                     N(t * 3)[2] + N(t * 3 + 1)[2] + N(t * 3 + 2)[2]});
+        float longest = std::max({std::sqrt(dot(ab, ab)), std::sqrt(dot(ac, ac)),
+                                  std::hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2])});
+        // by area (a long thin strip a few disks, not one every centimetre of its length)
+        int k = std::clamp(int(std::ceil(std::sqrt(2 * area) / 0.010f)), 1, int(std::ceil(longest / 0.010f)));
+        for (int i = 0; i < k; i++)
+            for (int j = 0; j < k - i; j++)
+                for (int up = 0; up < 2; up++) {
+                    if (up && j == k - i - 1) continue;
+                    // the small triangle's middle in barycentric steps of 1/k
+                    float u = (i + (up ? 2 : 1) / 3.0f) / k, v = (j + (up ? 2 : 1) / 3.0f) / k;
+                    disks.push_back({{a[0] + ab[0] * u + ac[0] * v, a[1] + ab[1] * u + ac[1] * v,
+                                      a[2] + ab[2] * u + ac[2] * v},
+                                     n, area / float(k * k)});
+                }
+    }
+    constexpr float kReach = 0.03f;
+    // a flat grid of kReach cells over the stock's box
+    V3 lo{1e9f, 1e9f, 1e9f};
+    for (const Disk& d : disks)
+        for (int c = 0; c < 3; c++) lo[c] = std::min(lo[c], d.c[c]);
+    auto cell = [&](const V3& p) {
+        return std::array<int, 3>{int(std::floor((p[0] - lo[0]) / kReach)), int(std::floor((p[1] - lo[1]) / kReach)),
+                                  int(std::floor((p[2] - lo[2]) / kReach))};
+    };
+    std::array<int, 3> dim{1, 1, 1};
+    for (const Disk& d : disks) {
+        auto g = cell(d.c);
+        for (int c = 0; c < 3; c++) dim[c] = std::max(dim[c], g[c] + 1);
+    }
+    std::vector<std::vector<uint32_t>> grid(size_t(dim[0]) * dim[1] * dim[2]);
+    for (uint32_t i = 0; i < disks.size(); i++) {
+        auto g = cell(disks[i].c);
+        grid[(size_t(g[2]) * dim[1] + g[1]) * dim[0] + g[0]].push_back(i);
+    }
+    auto occlusion = [&](const V3& p, const V3& n) {
+        std::array<int, 3> g = cell(p);
+        float occ = 0;
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dz = -1; dz <= 1; dz++) {
+                    int gx = g[0] + dx, gy = g[1] + dy, gz = g[2] + dz;
+                    if (gx < 0 || gy < 0 || gz < 0 || gx >= dim[0] || gy >= dim[1] || gz >= dim[2]) continue;
+                    for (uint32_t i : grid[(size_t(gz) * dim[1] + gy) * dim[0] + gx]) {
+                        const Disk& d = disks[i];
+                        V3 to{d.c[0] - p[0], d.c[1] - p[1], d.c[2] - p[2]};
+                        float r2 = dot(to, to);
+                        if (r2 < 1e-8f || r2 > kReach * kReach) continue;
+                        float r = std::sqrt(r2);
+                        float cr = dot(n, to) / r, ce = -dot(d.n, to) / r;
+                        if (cr <= 0.05f || ce <= 0) continue;
+                        occ += d.area * cr * ce / (3.14159265f * r2 + d.area);
+                    }
+                }
+        return occ;
+    };
+    // the patch: mirrored at each repeat, bilinear
+    const float pw = float(s->patch[2] - s->patch[0] - 1), ph = float(s->patch[3] - s->patch[1] - 1);
+    const float wm = (pw + 1) / s->px_per_m, hm = (ph + 1) / s->px_per_m;
+    auto fold = [](float t) {
+        t = std::fmod(std::fabs(t), 2.0f);
+        return t < 1 ? t : 2 - t;
+    };
+    auto sample = [&](float sx, float sy, float* o) {
+        float fx = s->patch[0] + fold(sx / wm) * pw, fy = s->patch[1] + fold(sy / hm) * ph;
+        int x0 = int(fx), y0 = int(fy);
+        int x1 = std::min(x0 + 1, s->patch[2] - 1), y1 = std::min(y0 + 1, s->patch[3] - 1);
+        float ax = fx - x0, ay = fy - y0;
+        for (int c = 0; c < 4; c++)
+            o[c] = (texel(x0, y0)[c] * (1 - ax) + texel(x1, y0)[c] * ax) * (1 - ay) +
+                   (texel(x0, y1)[c] * (1 - ax) + texel(x1, y1)[c] * ax) * ay;
+    };
+    ow = s->aw, oh = s->ah;
+    out.assign(size_t(ow) * oh * 4, 0);
+    {  // the gaps between cells: the patch's mean, so filtering at a cell's rim never pulls in black
+        float m[4];
+        sample(0.5f * wm, 0.5f * hm, m);
+        for (size_t i = 0; i < size_t(ow) * oh; i++)
+            for (int c = 0; c < 4; c++) out[i * 4 + c] = uint8_t(std::clamp(m[c] * (c < 3 ? tone : 1.0f), 0.0f, 255.0f));
+    }
+    constexpr float kEdge = 0.35f, kEdgeWidth = 0.0015f, kOcc = 1.1f;
+    const float px_m = 1.0f / 600.0f;  // tools/stocks.py ATLAS_PX_PER_M
+    for (size_t t = 0; t < s->tris; t++) {
+        float U[3][2];
+        for (int k = 0; k < 3; k++) U[k][0] = s->uv[(t * 3 + k) * 2] * ow, U[k][1] = s->uv[(t * 3 + k) * 2 + 1] * oh;
+        float den = (U[1][1] - U[2][1]) * (U[0][0] - U[2][0]) + (U[2][0] - U[1][0]) * (U[0][1] - U[2][1]);
+        if (std::fabs(den) < 1e-6f) continue;
+        int x0 = std::max(0, int(std::floor(std::min({U[0][0], U[1][0], U[2][0]}))) - 2);
+        int x1 = std::min(int(ow) - 1, int(std::ceil(std::max({U[0][0], U[1][0], U[2][0]}))) + 1);
+        int y0 = std::max(0, int(std::floor(std::min({U[0][1], U[1][1], U[2][1]}))) - 2);
+        int y1 = std::min(int(oh) - 1, int(std::ceil(std::max({U[0][1], U[1][1], U[2][1]}))) + 1);
+        // the occlusion worked out once a 3 x 3 block of texels (at the block's first texel), the rest share it
+        const int bw = (x1 - x0) / 3 + 1;
+        std::vector<float> occ_block(size_t(bw) * ((y1 - y0) / 3 + 1), -1.0f);
+        for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++) {
+                float px = x + 0.5f, py = y + 0.5f;
+                float b[3];
+                b[0] = ((U[1][1] - U[2][1]) * (px - U[2][0]) + (U[2][0] - U[1][0]) * (py - U[2][1])) / den;
+                b[1] = ((U[2][1] - U[0][1]) * (px - U[2][0]) + (U[0][0] - U[2][0]) * (py - U[2][1])) / den;
+                b[2] = 1 - b[0] - b[1];
+                // past the triangle (its cell's rim): its nearest point's values
+                for (float& v : b) v = std::max(v, 0.0f);
+                float sum = b[0] + b[1] + b[2];
+                for (float& v : b) v /= sum;
+                V3 p{}, n{};
+                float st[2] = {0, 0};
+                for (int k = 0; k < 3; k++) {
+                    size_t i = t * 3 + k;
+                    for (int c = 0; c < 3; c++) p[c] += b[k] * s->pos[i * 3 + c], n[c] += b[k] * s->nrm[i * 3 + c];
+                    st[0] += b[k] * s->st[i * 2], st[1] += b[k] * s->st[i * 2 + 1];
+                }
+                n = unit(n);
+                float col[4];
+                sample(st[0], st[1], col);
+                float& ob = occ_block[size_t((y - y0) / 3) * bw + (x - x0) / 3];
+                if (ob < 0) ob = occlusion(p, n);
+                float shade = std::clamp(1.0f - kOcc * ob, 0.35f, 1.0f);
+                for (int k = 0; k < 3; k++) {
+                    if (!(s->edge[t] >> k & 1)) continue;
+                    const float* a = U[k];
+                    const float* e = U[(k + 1) % 3];
+                    float ex = e[0] - a[0], ey = e[1] - a[1];
+                    float f = std::clamp(((px - a[0]) * ex + (py - a[1]) * ey) / std::max(ex * ex + ey * ey, 1e-6f), 0.0f, 1.0f);
+                    float d = std::hypot(px - a[0] - ex * f, py - a[1] - ey * f) * px_m;
+                    shade *= 1 - kEdge * std::exp(-d / kEdgeWidth);
+                }
+                uint8_t* o = &out[(size_t(y) * ow + x) * 4];
+                for (int c = 0; c < 3; c++) o[c] = uint8_t(std::clamp(col[c] * tone * shade, 0.0f, 255.0f));
+                o[3] = uint8_t(std::clamp(col[3] * shade, 0.0f, 255.0f));
+            }
+    }
+    LOGR("vr gun: stock texture baked, %ux%u, %zu disks, the patch shaded by %.2f, in %.0f ms", ow, oh, disks.size(),
+         tone, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    return true;
+}
+
+// the bake on a thread of its own (a second or so on the headset: the render thread never waits for it). Start: the
+// gun's texture (BGRA) for the held gun, once per key (the texture's address); take: 0 still baking, 1 done (out
+// filled, once), -1 none for this gun. Render thread
+struct StockBakeJob {
+    std::atomic<int> state{0};
+    std::vector<uint8_t> out;
+    uint32_t w = 0, h = 0;
+};
+std::map<uint32_t, std::shared_ptr<StockBakeJob>> g_bakes;
+void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th) {
+    if (g_bakes.count(key)) return;
+    auto job = std::make_shared<StockBakeJob>();
+    g_bakes[key] = job;
+    std::string code = HeldGunCode();
+    std::thread([job, code, tex = std::move(tex), pitch, tw, th] {
+        bool ok = BakeStock(code, tex.data(), pitch, tw, th, job->out, job->w, job->h);
+        job->state = ok ? 1 : -1;
+    }).detach();
+}
+int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h) {
+    auto it = g_bakes.find(key);
+    if (it == g_bakes.end()) return -1;
+    int st = it->second->state;
+    if (st == 1) {
+        out.swap(it->second->out);
+        w = it->second->w, h = it->second->h;
+        it->second->state = 2;  // taken
+    }
+    return st == 2 ? -1 : st;
+}
+
 // render thread: the stock drawn with this gun draw, if the held gun gets one and this is the draw its pistol grip is
 // in (the stock takes that texture's black): vertices as the gun's (36 bytes), 16 bit indices
 bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16, uint32_t count,
@@ -1348,6 +1525,29 @@ bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* in
     if (!it->second) return false;
     verts = m->verts.data(), vbytes_out = uint32_t(m->verts.size());
     idx = m->idx.data(), icount = uint32_t(m->idx.size());
+    // dev_stockcut in the app folder: index ranges "from to" (fractions of the stock's triangles, both windings
+    // kept), each drawn alone in turn for 3 s, to find a part by
+    static const std::vector<std::array<float, 2>> dev_cut = [] {
+        std::vector<std::array<float, 2>> v;
+        std::ifstream f(app::ExeDir() / "dev_stockcut");
+        for (float a, b; f >> a >> b;) v.push_back({a, b});
+        return v;
+    }();
+    if (!dev_cut.empty()) {
+        static const auto t0 = std::chrono::steady_clock::now();
+        size_t i = size_t(std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count() / 3) % dev_cut.size();
+        static std::map<std::pair<const StockMesh*, size_t>, std::vector<uint16_t>> cut;
+        auto k = std::make_pair(m, i);
+        if (!cut.count(k)) {
+            size_t tris = m->idx.size() / 6, a = size_t(dev_cut[i][0] * tris), b = size_t(dev_cut[i][1] * tris);
+            auto& v = cut[k];
+            v.assign(m->idx.begin() + a * 3, m->idx.begin() + b * 3);
+            v.insert(v.end(), m->idx.begin() + (tris + a) * 3, m->idx.begin() + (tris + b) * 3);
+        }
+        static size_t told = SIZE_MAX;
+        if (told != i) told = i, LOGR("vr gun: dev_stockcut %.3f %.3f", dev_cut[i][0], dev_cut[i][1]);
+        idx = cut[k].data(), icount = uint32_t(cut[k].size());
+    }
     return true;
 }
 

@@ -1154,3 +1154,150 @@ WA2000's bolt should be worked by hand after every shot, the game's animation go
   vertices as the gun's (36 bytes: position, weights, bones, normal packed 11:11:10, uv), uv a point in the gun's
   own black pistol grip (M16 0.0817 -0.159, M249 0.4785 -0.0369, from the disc), both windings. Seen drawn (test
   hands, M16 and M249), flat black; their shapes not yet judged in the hand.
+
+## 2026-11-22: the stocks textured from the handguards
+
+- User: the M16's stock in the texture of its handguard; the M249's likewise (its own handguard: the M16's
+  coordinates would read another part of the M249's texture sheet).
+- Found on the disc: the M16's handguard (bone 75, z 0.13..0.31, r 0.032 round the bore at y 0.0715) repeats every
+  4.6 cm along its length, u 0.309 (z 0.150) to 0.170 (0.195) and back; round it v -0.62 at its sides to -0.84 at
+  its top and bottom, a quarter turn (5 cm of arc). The M249's handguard side (bone 90, x 0.024..0.030) is mapped
+  flat: u = 0.134 - 2.27 (z - 0.341), v = -0.254 - 5.26 (y - 0.028), over z 0.341..0.371, y 0.028..0.070.
+- StockFace now cuts each face into cells of that patch's size (its own s, t: along z and up the sides, along the
+  edge and across the rims, along and round the tube) and textures each cell with the patch, mirrored in odd cells
+  as the handguard repeats; the side outlines are cut at their one inward corner into two convex pieces.
+- Seen (test hands, side on): the M16's stock and tube in the handguard's ribs; the M249's in its patch, which
+  holds repeating oval shapes (as on its handguard side), mirrored cell to cell: a busy, quilted look.
+- Added to TODO (user): no fire-mode change animation, the mode kept on right stick up (the pad's d-pad up), no blur;
+  no blur for objectives and tips; the title cards' text without its black box, and the head not moving opposite
+  to the player in a level's first seconds.
+
+## 2026-11-22: detailed stocks from the user's photos, plain black
+
+- User: plain black stocks (the handguard texture's cooling holes showed on the M249's), and new photos: an M4
+  6-position stock for the M16, the FN M249 stock; as detailed as possible.
+- tools/stocks.py lofts them from cross-sections (smooth normals) and writes src/game/vr_stocks.h (positions,
+  normals, triangles); with a folder argument it also renders shaded side and three-quarter previews, which were
+  checked against the photos. M16 (1734 vertices, 2852 triangles): the end plate and castle nut, the buffer tube
+  (r 1.55 cm) on the bore's line, the stock z -0.200..-0.368 (round top over the tube, two rib grooves along each
+  side, a web deepening from nothing at the front to the toe at y -0.060, 4.4 cm wide at the butt), a pad to
+  -0.380, the release lever under the front, the sling mount at the toe. M249 (3114 vertices, 5712 triangles), from
+  the side-on photo at 1180 px = 30 cm (z = -0.125 - (px - 160) x 0.000254, y = 0.105 - (py - 140) x 0.000254):
+  the mounting flange with its lugs, the slim wrist, the comb rising to the flat top, the underside's rounded chin,
+  the rubber pad; superellipse sections 3.7-4.9 cm wide.
+- Colour: one point of the gun's own texture. The pistol grip's black (the first try) was too dark for the light to
+  show any shape. dev_stockuv (the app folder: "u v" pairs, each for 3 s) cycled candidates on the headset: the
+  back of each receiver shows the shape as a dark grey-black with a sheen: M16 u 0.99 v -0.40 (its strip at
+  u 0.978..0.999), M249 u 0.6752 v -0.7416.
+- Seen with test hands, side on (the shapes and the colour candidates); installed with the chosen colours.
+
+## 2026-11-22: the M16 stock in more detail (user: the M249's is perfect, keep it)
+
+- tools/stocks.py m16(): four grooves along each side of the housing (smooth dips 1.4 mm deep, 6 degrees wide at
+  12, -2, -16 and -30 degrees, fading over the first and last centimetre), a 1.2 mm collar at its front, the castle
+  nut's four notches; the release latch swept along a curve from its hinge (two bosses) under the housing's front
+  back 4.5 cm, a flat lever 1.2 cm wide ending in a thicker finger tab curling down, in its pocket; the web now
+  starts behind the latch (z -0.25); the sling slot's rim (raised 1.3 mm, crisp: a recess let into the smooth loft
+  shaded as a smudge in the preview) on each side, z -0.300..-0.346; ridges across the butt pad's face; a sling loop
+  under the toe. 8020 vertices, 13828 triangles. Previews checked; installed and seen with test hands (the
+  test view is from behind and below, against a lit window: the pad's ridges and the loop show in silhouette, the
+  sides' details are in shadow there).
+
+### 2026-11-22: the M16 stock traced off the photo
+- The user wanted the M16 stock exact to their photos. The old one was a loft from my reading of the photos (round
+  housing with grooves); the photos (an M4 stock, side-on and three-quarter, only 204 x 192 px) show something
+  else: a flat-sided housing with 3 rows of 5 windows, a web with a sling slot through it, a lever under it with its
+  tab hanging down, a lock-pin knob, a raked butt pad, a sling loop under the toe. Now traced: the side-on photo
+  upscaled with a pixel grid (scratchpad up.py), every outline read off it in photo px, mapped by p16() at 0.95 mm
+  a px (188 px = 17.9 cm; the front at z -0.200, the tube's middle on y 0.066). Flat-faced extruded profiles
+  (slab(): ear-clipped sides, tapered 1.1 to 1.5 cm half width front to butt), the windows as a frame of rails
+  and posts 2.5 mm proud of the housing's sides, the slot as the web built in bands round it. 2086 vertices. The
+  side preview matches the photo's outline. Built, not installed yet.
+- Revised (user, marked on the render): the housing is a round tube (r 1.85 cm; the windows' frame now curved
+  strips of its wall over a 1.65 cm core), the butt pad oval seen from behind (straight sides, round ends 4.2 cm
+  across, edges rounded over, the ridges cut to its width; the web stops at py 156 inside its round bottom), the
+  sling loop lying flat across the stock under the toe. 3208 vertices. Built, not installed.
+- The sling loop (user): a rectangle of rod 2.6 cm across the stock, hanging 1.3 cm below the pad's bottom from a
+  hinge block at the toe (px 21..30, py 157..166). Installed on the headset.
+- dev_bright (vulkan.cpp, the frame filter's post.z): a gamma lift of the whole frame for test shots, the value
+  in the file (2 if empty). Shot at 2.2 and 4: the scene lifts well, but the stock barely does: its colour is the
+  pistol grip's texel, near pure black, so a lift has little to work on. The windows' frame, the pad's oval edge
+  and the hanging loop show; the faces stay black. Markers removed, the game stopped.
+
+### 2026-11-22: the stock's sliver, and the stocks' greys
+- The line the user circled by the M16's stock (a thin strap from the castle nut down to the sling loop, a faint
+  wedge beside it) was the stock's own draw: the gun's pipeline draws triangle strips (vulkan.cpp, a.strip; the
+  M16's gun draw is one), and the stock's indices are a list, so each triangle was joined to the next. Most joins
+  were small and hidden; the join from the list's last triangle (the loop) to the reversed copy's first (the
+  castle nut) was the sliver. Found by elimination on the headset: not the sleeves, the cord's bones (87 90 99 102),
+  the left arm or the gun's mesh (dev_hidebone); gone with the stock drawn empty; the drawn data dumped and matching
+  vr_stocks.h exactly; only whole-stock draws had it. Fix: when the gun's draw is a strip, the stock goes as a strip
+  of lone triangles (a a b c c, the joins without area), both windings (a strip's culling flips with each
+  triangle's place). dev_stockcut (vr_gun.cpp: "from to" fractions of the stock's triangles, each drawn alone in
+  turn for 3 s) kept for finding parts; parts of the M16 stock: tube 0-0.078, housing 0.078-0.685, web -0.712,
+  lever -0.729, pad and ridges -0.892, loop -1.
+- Colours (user: grey like the receiver): M16 u 0.91 v -0.33 (the lower receiver's back, verts 299-303 of the
+  mesh), M249 u 0.70 v -0.76 (its receiver's flat side). Picked by single-colour runs; dev_stockuv's cycling log
+  lags the screen, so its labels can't be trusted for a burst. Seen at normal brightness: both match their
+  receivers, the M16's line gone. Test markers removed.
+- dev_bright (vulkan.cpp) stays as a test-shot tool.
+- Textured instead (user: the colour to change with the light as the receiver's does): the stocks now carry a plain
+  patch of their own receiver's texture, alpha included (the gun textures' alpha is the worn-shine mask). The gun
+  textures are in each .db: DXT5, 512 x 256, at offset 512, the size at 440 (scratchpad guns/dxt.py decodes them);
+  texel (x, y) is u = x/512, v = y/256 - 1. tools/stocks.py: split_long() cuts every edge over 1.2 cm at its middle
+  (shared cuts, no cracks), texture() projects each vertex square to its normal's main axis and tiles the patch
+  mirrored. Patches, found by searching for the evenest shade and checked texel by texel: M16 x 358..390 y 192..207
+  (its lower receiver between the pins and the bottom edge; at 600 texels/m, stretched 2x so the folds sit 2.5 cm
+  apart: a thinner strip folded faster than the triangles and smeared), M249 x 248..296 y 120..152 at 1200/m (its
+  receiver's scale, measured off its vertices). M16 18676 vertices 32782 triangles, M249 7730 / 14768. Textured
+  previews (scratchpad texprev.py) clean. dev_stockuv removed. The strip form of the stock's indices is made once
+  per list. Built, not installed (needs the user's okay).
+- The M249 stock retraced (user: model it exactly, smaller, its front lined up with the receiver): off the user's
+  new side photo (968 x 729), scaled so its flange (py 85..350) is the receiver's back end in the mesh (z -0.144,
+  y 0.039..0.105, 4.4 cm wide; the old one, 0.0254 cm a px off a bigger crop, made the flange 12 x 6 cm): 0.249 mm
+  a px, 20 cm long, 3 flange heights as in the whole gun's photo. Wrist, comb, the cheek rest bevelled in above its
+  crease, the chin, the pad with 16 ridges, the sling swivel; the flange the receiver's size, squarer. Textured as
+  before (its receiver's patch). 7265 vertices. Installed and seen lit on the headset: the flange flush with the receiver's back, the M16's textured stock clean, no line. Test markers removed.
+- The M16 stock scaled up (user, with a photo of a whole carbine for scale): against that photo's receiver (its
+  back to the handguard's rear, 0.24 m in the mesh: 1.05 mm a px) the stock is 21 cm long and 15 cm tall, its front
+  6 cm behind the receiver's end. tools/stocks.py: K16 = 1.2 times every size (S16 1.14 mm a photo px, the housing
+  r 2.22 cm, the web, lever, pad 5 cm across, loop), the front moved to z -0.178, still on the bore's line. 21438
+  vertices. Built; not installed (the install was refused this turn without a fresh okay).
+- The M16 stock's own texture (user: the stretched receiver patch came out too light; a new texture modeled on the
+  gun's). Made at run time, so nothing game-derived is in the repo: vulkan.cpp decodes the gun's stage-0 texture
+  (DecodeLevel, once per texture address), shades the receiver patch the stock's uvs use (vr_gun.cpp
+  VrStockTexture: x 358..390 y 192..207) down to the mean of the gun's own plastic (the pistol grip, x 35..85
+  y 120..200: x0.73 on the M16), uploads it (PixelImage, outside the pass) and binds it in stage 0's place for the
+  stock's draw only (its own descriptor set; the gun's set back after). Alpha (the shine) kept. Log line "vulkan:
+  stock texture from ..". The M249 keeps the gun's texture as it is. Built with the 1.2x M16 stock; not installed
+  yet (needs the user's okay this turn).
+- Tested on the headset (lit): the first build made no texture: DecodeLevel leaves DXT as blocks (its Host format
+  is BC3), so the size check failed quietly; now DecodeDxt turns the blocks into BGRA first. Log: "stock texture:
+  stage 0 .. 512x256 format 0f" then "stock texture from 83cb7200, the patch shaded by 0.73". The stock now reads
+  as dark as the receiver, 1.2x bigger, no line. Test markers removed, the game stopped.
+
+### 2026-11-22: the stocks' painted shading
+- User: the game's guns have shadows and darkened edges painted into their textures; the stocks should too. Shorter
+  normals do nothing (tried with a dev switch: the game's lighting normalises), so it's in a texture of the stocks'
+  own. tools/stocks.py atlas(): every triangle unshared with its own cell (shelf-packed, 600 texels/m, 2 texels of
+  rim; M16 1024x1024, M249 1024x512), per corner its atlas uv and st (metres on the plane square to its triangle's
+  main axis, so the patch tiles without the old smearing across folds), per triangle its sharp edges (35 degrees,
+  or open). No game texel in it: vr_gun.cpp BakeStock paints the cells at run time from the gun's texture
+  (vulkan.cpp decodes it, DXT to BGRA): the receiver patch mirrored at each repeat (bilinear), times the plastic
+  tone (M16 x0.73, the grip's mean; M249 1), times occlusion (disks of the stock's own surface about 1 cm across,
+  by area, within 3 cm, in front of the texel and facing it: area cos cos / (pi r^2 + area), x1.1, floor 0.35;
+  worked out once a 3x3 block) and sharp-edge darkening (0.35, falling off over 1.5 mm). Alpha shaded the same.
+  On its own thread (about 0.7 s on the headset for either); the stock waits for it (not drawn till its texture is
+  up). Log: "vr gun: stock texture baked, ..". Seen lit on the headset: the M16's window frame and housing edges
+  shaded like the gun's, the M249's edges and crease. First tries took 17 s and 10.6 s on the render thread
+  (6 mm disks; a long thin strip cut into thousands): disks by area and the thread fixed it.
+- The M249's stock darker (user, with a photo of the gun): its tone now from its own pistol grip (x 235..290
+  y 170..245, x0.86 of the patch) and 0.8 more on top (StockSrc::darker): about 0.69 in all; the painted shading
+  stays on top of it. Installed and seen lit on the headset ("patch shaded by 0.69"); markers removed.
+- Darker still (user): the M249's darker 0.8 -> 0.58, about 0.5 of the patch in all; the M16 the same 0.58 on its
+  grip tone (0.42 in all). Installed and seen lit on the headset: both darker, their edges and crevices still show.
+- A bit darker again (user, "almost there"): both darker 0.58 -> 0.46: the M16 0.33 of its patch in all, the M249
+  0.39. Installed and seen lit on the headset; edges and crevices still show. Markers removed.
+- Darker again (user): both 0.46 -> 0.36: the M16 0.26 of its patch, the M249 0.31 ("patch shaded by" in the
+  log). Seen lit on the headset; each step shows less than its number (the game's light on the gun is mostly flat
+  ambient, which evens out the texture's shade). Markers removed.

@@ -61,3 +61,6 @@ local.properties
 
 # the pal patch carries game bytes: fetched at build time by CMakeLists.txt, never committed
 europe.patch
+# generated at build time by tools/stocks.py (too big for git)
+/src/game/vr_stocks.h
+__pycache__/

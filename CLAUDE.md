@@ -36,7 +36,7 @@ An unofficial Android (arm64) port of the original Xbox game *Black*, made with 
 
 ## Build
 
-Everything runs on Windows. Requirements: Visual Studio 2022 C++ tools, plus Android SDK Platform 34, NDK `28.2.13676358` and CMake `3.31.6`. Java 17–21 is needed for Gradle 8.7 (`.vscode/settings.json` points to JDK 17). Python is used only to pull the xbe out of an ISO.
+Everything runs on Windows. Requirements: Visual Studio 2022 C++ tools, plus Android SDK Platform 34, NDK `28.2.13676358` and CMake `3.31.6`. Java 17–21 is needed for Gradle 8.7 (`.vscode/settings.json` points to JDK 17). Python pulls the xbe out of an ISO and, during the native build, generates the vr stocks' meshes (`tools/stocks.py` → `<build>/game/vr_stocks.h`, too big for git).
 
 - `build.bat` runs the full pipeline:
   1. Checks the tools.

@@ -49,6 +49,9 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
 bool VrMeleeHidden();  // src/game/vr_body.cpp: a melee swing is on
 bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16, uint32_t count,
              int32_t base, const uint8_t*& verts, uint32_t& vbytes_out, const uint16_t*& idx, uint32_t& icount);
+// the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
+void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
+int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base);  // vr_gun.cpp
 bool VrRecording();    // src/game/vr_body.cpp: dev_dumpreload's window
@@ -153,7 +156,11 @@ float3 Fxaa(float2 uv) {
 }
 
 // the frame at a point with what the graphics settings add before a filter
-float3 Frame(float2 uv) { return Tone(post.y > 0 ? Fxaa(uv) : Fetch(uv)); }
+// post.z: a dev lift of the shadows (dev_bright), to see models in a dark scene
+float3 Frame(float2 uv) {
+    float3 c = Tone(post.y > 0 ? Fxaa(uv) : Fetch(uv));
+    return post.z > 0 ? pow(c, 1 / post.z) : c;
+}
 
 float4 psplain(O i) : SV_Target { return float4(Frame(i.uv), 1); }
 
@@ -3249,6 +3256,51 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     VkSampler samplers[4];
     for (int i = 0; i < 4; i++) samplers[i] = StageSampler(s, i, stages, clamp);
     VkDescriptorSet set = Set(stages.view, samplers);
+    // the stock's own texture (vr_gun.cpp paints it from the gun's, on a thread): bound in stage 0's place for the
+    // stock alone; till it's ready the stock isn't drawn (its uvs are for its own texture)
+    VkDescriptorSet stock_set = VK_NULL_HANDLE;
+    if (stock_on) {
+        static std::map<uint32_t, Image> stock_tex;
+        static std::set<uint32_t> started;
+        TextureDesc d;
+        if (s.textures[0] && Describe(s.textures[0], d) && !d.cube && d.depth == 1) {
+            auto it = stock_tex.find(d.data);
+            if (it == stock_tex.end()) {
+                if (started.insert(d.data).second) {
+                    std::vector<uint8_t> px;
+                    uint32_t pitch = 0;
+                    DecodeLevel(d, 0, 0, static_cast<const uint8_t*>(kernel::HostPtr(d.data)), nullptr, px, pitch);
+                    const FormatInfo& fi = Format(d.format);
+                    if (fi.compressed) {  // DXT blocks (DecodeLevel leaves them): to BGRA texels
+                        std::vector<uint8_t> texels;
+                        DecodeDxt(fi.host, px, pitch, d.width, d.height, 1, texels);
+                        px.swap(texels);
+                        pitch = d.width * 4;
+                    }
+                    if (px.size() >= size_t(pitch) * d.height)
+                        ::game::VrStockBakeStart(d.data, std::move(px), pitch, d.width, d.height);
+                }
+                std::vector<uint8_t> baked;
+                uint32_t bw = 0, bh = 0;
+                int st = ::game::VrStockBakeTake(d.data, baked, bw, bh);
+                if (st != 0) {
+                    Image im;
+                    if (st == 1) {
+                        EndRender();  // the copy goes outside a pass
+                        if (!PixelImage(im, baked, bw * 4, bw, bh)) im = {};
+                    }
+                    it = stock_tex.emplace(d.data, im).first;  // made or not, once
+                }
+            }
+            if (it != stock_tex.end() && it->second.view) {
+                VkImageView views[4];
+                for (int i = 0; i < 4; i++) views[i] = stages.view[i];
+                views[0] = it->second.view;
+                stock_set = Set(views, samplers);
+            }
+        }
+        if (!stock_set) stock_on = false;
+    }
 
     // the rendering
     BeginRender(draw_rt_ ? &draw_rt_->img : nullptr, draw_ds_ ? &draw_ds_->img : nullptr);
@@ -3361,17 +3413,35 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     }
     emit(eye_m, nullptr);
     if (stock_on) {
-        Alloc v = Upload(stock_vbytes, 16), ix = Upload(stock_icount * 2, 4);
+        Alloc v = Upload(stock_vbytes, 16);
         std::memcpy(v.cpu, stock_v, stock_vbytes);
-        std::memcpy(ix.cpu, stock_i, stock_icount * 2);
         VkDeviceSize voff = v.off;
         vkCmdBindVertexBuffers(Cb(), 0, 1, &v.buf, &voff);
-        vkCmdBindIndexBuffer(Cb(), ix.buf, ix.off, VK_INDEX_TYPE_UINT16);
         float pc[20] = {};
         std::memcpy(pc, eye_m, 64);
         vkCmdPushConstants(Cb(), layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), pc);
-        vkCmdDrawIndexed(Cb(), stock_icount, 1, 0, 0, 0);
-        // the gun's own buffers back for the magazine passes
+        if (stock_set) BindSet(stock_set, vc.off, dc.off);
+        // the stock is a triangle list, the gun's pipeline may draw strips (the M16's does): a list read as a strip
+        // joins each triangle to the next, a sliver from the stock's last part to its first. As a strip, each
+        // triangle alone between repeated indices (a a b c c: the joins have no area). Both windings still: a
+        // strip's culling flips with each triangle's place in it
+        // (made once per index list: the stocks' are fixed)
+        static std::map<std::pair<const uint16_t*, uint32_t>, std::vector<uint16_t>> strips;
+        const uint16_t* ind = stock_i;
+        uint32_t icount = stock_icount;
+        if (a.strip) {
+            auto& strip = strips[{stock_i, stock_icount}];
+            if (strip.empty())
+                for (uint32_t i = 0; i + 2 < stock_icount; i += 3)
+                    strip.insert(strip.end(), {stock_i[i], stock_i[i], stock_i[i + 1], stock_i[i + 2], stock_i[i + 2]});
+            ind = strip.data(), icount = uint32_t(strip.size());
+        }
+        Alloc ix = Upload(icount * 2, 4);
+        std::memcpy(ix.cpu, ind, icount * 2);
+        vkCmdBindIndexBuffer(Cb(), ix.buf, ix.off, VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(Cb(), icount, 1, 0, 0, 0);
+        // the gun's own buffers and textures back for the magazine passes
+        if (stock_set) BindSet(set, vc.off, dc.off);
         if (a.buffer_count) vkCmdBindVertexBuffers(Cb(), 0, a.buffer_count, vbufs, voffs);
         if (a.index_count)
             vkCmdBindIndexBuffer(Cb(), ib.buf, ib.off, a.index16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
@@ -3645,11 +3715,19 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     uint32_t filter = std::min(game::Opt().screen_filter, 8u);
     uint32_t crt = filter <= 2 ? filter : 0;
     bool fxaa = game::Opt().anti_aliasing == 1, ssaa = game::Opt().anti_aliasing == 2;
-    bool post = game::Opt().hdr || fxaa;
+    // dev_bright (a gamma, 2 if empty) lifts the frame's shadows, for looking at models in test shots
+    static const float bright = [] {
+        std::ifstream f(app::ExeDir() / "dev_bright");
+        if (!f) return 0.0f;
+        float g = 0;
+        return f >> g && g > 0 ? g : 2.0f;
+    }();
+    bool post = game::Opt().hdr || fxaa || bright > 0;
     // opts.z: the taps a side over each screen pixel, 2 averaging SSAA's samples
     float c[24] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
     c[20] = game::Opt().hdr ? 1.0f : 0.0f;
     c[21] = fxaa ? 1.0f : 0.0f;
+    c[22] = bright;
     if (t) {
         // a texel of the frame, seconds that wrap before a float loses them, the colour look (4 vibrant on)
         using clock = std::chrono::steady_clock;
