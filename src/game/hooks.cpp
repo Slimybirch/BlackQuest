@@ -1,6 +1,8 @@
 // Hooks for default.xbe
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <filesystem>
 #include <cmath>
 #include <thread>
 
@@ -8,6 +10,7 @@
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
 #include "core/input.h"
+#include "core/log.h"
 #include "d3d/stereo.h"
 #include "game/layout.h"
 #include "xdk/d3d8.h"
@@ -401,6 +404,7 @@ static void RestoreAmmo(uint32_t weapon, const KeptAmmo& kept) {
 // and holds its next shot where the wait ends
 namespace game {
 uint32_t VrHideReserve(uint32_t ctrl);  // vr_reload.cpp: the reserve word to hide, 0 none
+uint32_t VrHideReserve2(uint32_t ctrl);  // and the M203's
 }
 X86_EXTERN_FUNC(__imp__sub_001EEFD0);
 X86_FUNC(sub_001EEFD0) {
@@ -408,9 +412,11 @@ X86_FUNC(sub_001EEFD0) {
     // phase 5: reloading by hand: every way the game starts a reload (0x1EF4D7, FUN_001BB340 at 0x1BB35E, both
     // called from in here) needs reserve rounds, so the player's gun shows none while this runs; the reserve comes
     // back after, with whatever the call added (a pickup)
-    uint32_t hidden = game::VrHideReserve(weapon);
-    uint16_t saved = hidden ? G<uint16_t>(hidden) : 0;
+    uint32_t hidden = game::VrHideReserve(weapon), hidden2 = game::VrHideReserve2(weapon);
+    if (hidden2 == hidden) hidden2 = 0;
+    uint16_t saved = hidden ? G<uint16_t>(hidden) : 0, saved2 = hidden2 ? G<uint16_t>(hidden2) : 0;
     if (hidden) G<uint16_t>(hidden) = 0;
+    if (hidden2) G<uint16_t>(hidden2) = 0;
     float& wait = G<float>(weapon + kWeaponWait);
     float rest = wait;
     float dt = Dt();
@@ -419,6 +425,7 @@ X86_FUNC(sub_001EEFD0) {
     __imp__sub_001EEFD0(ctx, base);
     bool shot = Rounds(weapon) < rounds;
     if (hidden) G<uint16_t>(hidden) = uint16_t(std::min<uint32_t>(saved + G<uint16_t>(hidden), 0xFFFF));
+    if (hidden2) G<uint16_t>(hidden2) = uint16_t(std::min<uint32_t>(saved2 + G<uint16_t>(hidden2), 0xFFFF));
     RestoreAmmo(weapon, kept);
     uint32_t me = R32(weapon + kWeaponOwner);
     // the rapid fire cheat: a shot's wait, its fire mode's +0x20, is that many times shorter
@@ -675,7 +682,16 @@ void DrawListRoom(X86Context&, uint8_t*) {
 
 // reload animations start the screen blur
 // (never in the headset: a full view blur there is sickening)
-bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur && !xr::Active(); }
+bool ReloadBlur(X86Context& ctx, uint8_t*) {
+    // dev_modelog: every first-person animation that gets here, by name (to find the fire-mode change's)
+    static const bool dev = std::filesystem::exists(app::ExeDir() / "dev_modelog");
+    if (dev) {
+        char name[32] = {};
+        std::memcpy(name, HostPtr(ctx.ebp + 0x5C), 31);
+        LOGR("dev_modelog: fp animation %s", name);
+    }
+    return game::Opt().reload_blur && !xr::Active();
+}
 
 // the blur holds for the animation's frames times the last frame's time: frames of the game's frame rate instead
 constexpr uint32_t kAnimationFrames = 0x1C;

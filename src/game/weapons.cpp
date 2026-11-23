@@ -984,6 +984,16 @@ bool GunWaves(const std::string& code, std::vector<uint8_t>& out) {
     return false;
 }
 
+// the gun's first-person .db (its skeleton, mesh, animations and its sounds' dictionary), from the disc
+bool GunDb(const std::string& code, std::vector<uint8_t>& out) {
+    for (int n : Levels()) {
+        char path[64];
+        std::snprintf(path, sizeof(path), "Levels\\Level_%02d\\fpguns\\bg1_%s.db", n, Lower(code).c_str());
+        if (GameFileExists(path)) return LoadGameFile(path, out);
+    }
+    return false;
+}
+
 // the table code of the weapon in the player's hand ("AK1", "PST"...), empty when none; game thread (vr_gun.cpp)
 std::string HeldCode() {
     Level l;

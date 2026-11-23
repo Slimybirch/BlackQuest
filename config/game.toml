@@ -423,6 +423,12 @@ at = 0x17B239
 call = "ReloadBlur"
 on_false = 0x17B3AA
 
+# the fire mode's change (FUN_001BB3C0): the mode advanced (FUN_001BAE70), its animation's state 30 next; false: none
+[[hook]]
+at = 0x1BB3DB
+call = "FireModeAnim"
+on_false = 0x1BB3E5
+
 [[hook]]
 at = 0x17B31C
 call = "ReloadBlurHold"

@@ -1301,3 +1301,240 @@ WA2000's bolt should be worked by hand after every shot, the game's animation go
 - Darker again (user): both 0.46 -> 0.36: the M16 0.26 of its patch, the M249 0.31 ("patch shaded by" in the
   log). Seen lit on the headset; each step shows less than its number (the game's light on the gun is mostly flat
   ambient, which evens out the texture's shade). Markers removed.
+
+### 2026-11-22: shotguns, a shell at a time
+- User: the SPAS 12 (SHG/SH5) and Remington 870 (RM1/RM5) loaded a shell at a time, pumped after each shot, a
+  shell loadable after any number of shots up to the game's own count, shells pinched between the off hand's
+  thumb and index finger. Off the game's reload (kGameReload) and onto ours (vr_reload.cpp GunParts .shells).
+- Skeletons (.db): both Shotgun_Root 108. SPAS: Shotgun_Pumpgrip 111 (z 0.212..0.454), Shotgun_Shell 114 (a mesh
+  of its own, 275 vertices, drawn by the game only in its reload: z 0.129..0.177, round y -0.054, r 7.5 mm; its
+  texture u 0.947..1.0, hull v -0.067..-0.225, brass v -0.001..-0.067; the SPAS texture is 256 x 256),
+  Shotgun_Trigger 117. Remington: Door 111 (loading gate), Shotgun_Door 114 (ejection cover), Shotgun_Pumpgrip 117
+  (z 0.229..0.434), Shotgun_Shell 120 (in the gun's main mesh, z 0.12..0.177 under the receiver).
+- Sounds (.db dictionaries, scratchpad guns/gen2.py): SPAS Cock0 (0.56 s, split at 0.23 s: pump back / forward),
+  Ld1 a shell in; Remington Cock0 / Cock1, Ld0. The game's own per-shot pump is muted: sound::Mute has two slots
+  now (the Remington's back and forward are two samples).
+- How it plays: the shell is the gun's own shell bone (mag), carried in the off hand from the chest (grip), loaded
+  when its tip comes within 3 cm of the loading port's line (kShellReach; the port = the shell bone's rest, its
+  axis the barrel's way, 5 cm deep): into the chamber if it's live, else waiting (g_pending) for the pump. Each shot
+  (the bolt rule, as the walther) puts the rest waiting and the chamber empty; pumping (the off hand's grip anywhere
+  on the pump: a 17 cm zone along it, 5 cm round, worked 8 cm back) chambers them; pumping a live round throws it
+  out (as a real gun); pumping on nothing leaves the chamber empty (the next shell waits for a pump). No drop, no
+  eject button, no lock on the last shot; a shell let go of away from the gun goes back (nothing taken). The game's
+  pump animation after a shot isn't drawn (vr_gun.cpp WorkedGun: the pump back on the root, the arms kept, as the
+  walther's bolt). The fingers pinch a held shell (thumb 0.85, index 0.7, the rest loose).
+- The SPAS's shell is ours (vr_gun.cpp MakeSpasShell, the same size and place, its texture where the game's is),
+  drawn as the gun's extra mesh (the stocks' draw; no texture of its own: the gun's) and in the hand pass too
+  (vulkan.cpp: the extra mesh drawn with the hand's constants when VrStockShell). The shell is hidden in the gun
+  except while going in.
+- dev_shells (vr_reload.cpp): from 6 s into a shotgun, every 6 s: a shell in the hand (0.5 s), out along the port
+  (0.5 s), loaded, then the pump worked back (1.5 s) and forward; it logs each phase. Tested on the headset with
+  dev hands, both guns: shells load ("shell in, clip 6"), the pump moves back (seen) and cycles with the game's
+  sounds, the per-shot pump is quiet. The held shell is drawn where the real controllers are (they lay on the
+  desk; dev hands only fake the arms' pose), so its place in the pinch needs the user's hands.
+- SPAS modes and pumping from the fore-grip (user): the game's SPAS has no second mode (dev_modeflip: the d-pad's
+  up pressed every 6 s, the weapon's words diffed round each press: nothing flips with it; the game pumps after
+  every shot whatever is pressed). So ours: the fire-mode button (the right stick up) on the SPAS switches pump /
+  semi-auto (vr_reload.cpp, kept per gun; a click: sound::Cue). Any gun: the button's press buzzes the gun hand very
+  lightly (vr_body.cpp, 0.12 for 20 ms); a gun the game gives modes still plays its own sound. Pump mode is read off
+  the game: a shot needs the hand's pump only if the game starts its own pump within 0.7 s of it (vr_gun.cpp
+  g_cycled_ms, when WorkedGun's part is off its rest); semi-auto: the next round's in.
+- The pump is the fore-grip now (no rack zone for shells): the off hand holding the fore-end aims two-handed; a shot
+  that needs the pump puts it in pump mode, the hand locked on the pump from its most forward point: a clear rock
+  back, 7 cm (kPumpStroke) with the hand at least 0.5 m/s back along the barrel (kPumpSpeed) when it gets there,
+  counts (the back sound, a buzz); forward again under a quarter of the stroke chambers (the forward sound) and it's
+  aiming again. A slower or shorter pull moves the pump but counts for nothing; letting go of the fore-end cancels.
+  The drawn off hand goes back with the pump (vr_gun.cpp PumpBack, into the arms' left delta).
+- Tested on the headset with dev hands (dev_lefton, dev_autofire, dev_shells, dev_modeflip): pump mode "fired, pump
+  to chamber" then "pumped, clip 6" every cycle with a shell loaded between; with the mode button "mode semi-auto",
+  shots "fired semi-auto, clip 5, 4", back to pump "pump to chamber". Markers removed.
+
+### 2026-11-23: the user's shotgun test, fixes
+- Play log: a shell was taken twice (SPAS and Remington state 2, a second each) and let go: the take was the off
+  hand's grip, and the user pinched (its trigger). Shells are taken and held on the off hand's trigger now
+  (vr_reload.cpp take), and xr::TakeLeftTrigger keeps that trigger from the game (its grenade) while the off hand
+  is at the chest with a shotgun or holds a shell.
+- The pump stays open (user: to load shells): worked back and let go of, it stays back (pump_open); shells loaded
+  then wait in the tube; taken again, the hand is locked on it at the back, and forward chambers. Opening throws out
+  a live round and puts the rest in the tube. A clear rock back on the fore-end opens it at any time, not only
+  after a shot that needs it.
+- The shot clock (the weapon controller's +0xDC, a float: set to the kind's interval at a shot, counting down; the
+  game fires only at 0): found with dev_dumpkind (the ammo kind's words: +0x20 is the interval, SPAS 1.315 s,
+  Remington 1.67, Walther 1.999, pistol 0.3; the kind is shared by every gun of the type, enemies' too, so it's left
+  alone) and dev_shotclock (the controller's clocks every 0.1 s). The SPAS in semi-auto clears it whenever the fire
+  trigger is up (vr_body.cpp VrFireHeld, the pad's analog 7): dev_rapid (pulls every 0.3 s, over the controller's
+  trigger, which lay pressed on the desk) fired every 0.3 s, where before it was every 1.33 s. A pump or bolt
+  worked by hand clears it too (the Remington fired 0.5 s after a pump).
+- The rock after a shot: a worked gun's root (SPAS, Remington, Walther) is held where it rests (vr_gun.cpp
+  RootRest: taken 1.5 s after the gun is out and not cycling, or 3 s: the walther's handle never sits on its root),
+  and the arms kept on that root while the game's root moves. Logged "root held at rest" for all three.
+- Walther: the handle's reach 3.5 -> 6 cm (the play log had the hand 5-6 cm off it when the user reached for it).
+- Not found yet: the off hand turning on the Uzi and Walther (the log shows nothing for it; test screenshots were
+  washed out by the boundary showing on the desk).
+- The off hand on the uzi and walther (user: turned when free, and neither could be held): dev_lefthand logs the
+  game's left hand relative to the gun's root, once a gun. M16 rows 0.035 0.532 -0.846 | -0.974 0.206 0.089 |
+  0.222 0.821 0.526, palm 0.003 0.034 0.167 (under the handguard); AK and SPAS within a few degrees of it. Uzi: palm
+  0.231 -0.470 -0.336 (hidden half a metre off), Walther: turned, palm 7 cm out at the stock's side. The free hand's
+  angle and the fore-grip's point both come from that hand (VrGunPose's rest, g_rest from the palm). So on the Uzi
+  and Walther (SMG SM5 SNR SN5) the left hand and its fingers are put at the M16's angle to the root, the palm at
+  the gun's kGrips fore-grip (vr_gun.cpp VrPoseArms). After: Uzi left palm 0.205 -0.471 -0.458 (8 cm ahead of the
+  handle), Walther 20 cm ahead. Test shots with dev hands show the hand under each gun's front with dev_lefton;
+  the views were washed by the boundary again, so the user's hands are the check.
+
+### 2026-11-23: the magnum, reloaded by hand
+- User: the cylinder released on the mag-drop button (A), swung out by angling the gun down or rolling it
+  counter-clockwise; a speed loader from the chest between the thumb and fingers; the cylinder spun by hand.
+- Its .db: Pistol_Magazine_loader 9 (the speed loader, z -0.019..-0.008 behind the cylinder), Bullet1..6 12..27 (the
+  rounds, in the chambers to z 0.028), Pistol_Root 111, Pistol_Hammer 114, Pistol_Magazine_Pin 117 (the crane arm
+  before the cylinder, down to y 0.015), Pistol_Magazine 120 (the cylinder, its axis x 0.001 y 0.045). Sounds:
+  MgnUnLd0 (out), MgnLd0 (the rounds in), MgnLd3 (shut), MgnLd1/2, MgnCock0.
+- vr_reload.cpp (GunParts .revolver, kMagnum; off the game's reload): A lets the latch go; out it swings when the
+  gun's muzzle is 45 degrees under level or it's rolled 45 counter-clockwise (from the gun hand's aim pose); its
+  rounds wait (none fire). Out, the off hand's grip at the chest takes a speed loader; it seats with its rounds'
+  tips within 2 cm of the chambers' line (the magazines' seating, the well from the swung cylinder): what was in
+  it goes back to the reserve, six in. A swipe within 8 cm spins it (the swipe's speed about its axis over 2 cm,
+  slowing, settling on a chamber); the off hand's grip on it, or a clockwise flick of the gun hand (6 rad/s),
+  shuts it and the rounds can fire. vr_gun.cpp: the cylinder and crane turn 80 degrees out about the crane's pin
+  (x -0.002 y 0.018), the cylinder about its axis with the spin, its rounds in it while it has any; the loader
+  hidden but in the hand (the hand pass takes its six rounds too) or going in; the fingers round the loader.
+- dev_revolver: from 6 s into the magnum, every 10 s: latch, out, a loader in the hand, seated, spun, shut.
+  Run on the headset with dev hands (2026-11-23): two cycles of latch, out ("6 in it"), loader in ("6 rounds,
+  reserve 30"), spin, shut ("clip 6") with the game's own sounds; the screenshots were washed by the boundary
+  again and taken side on, so the swing's side and the loader in the hand need the user's eyes.
+- Fixes from the magnum's test (user: it looked to go both ways): the speed loader's and rounds' bones are parked
+  out of view by the game but in its reload (the rounds were drawn high over the player), so the rounds and the
+  loader's seat are drawn on the cylinder's bone (in the mesh they sit in its chambers). The swing went right: the
+  mesh's +x is the player's left (C -x: logged, "mesh +x is C -1.00 0 0"), so it turns the other way about a pin at
+  x +0.002 y 0.018. Measured (vr gun: "cylinder swung", once): angled down 60 degrees, -0.027 -0.010 0.017 (C:
+  left and down); rolled 60 counter-clockwise, -0.000 -0.033 -0.003 (the gun's left, which points down rolled).
+  dev_fakegun ("pitch roll" degrees) turns the test hands' gun, and the revolver's swing waits for those angles.
+
+## 2026-11-23: the in-game test checklist (TOTEST.md on the left wrist)
+
+- `TOTEST.md` (repo root) is the single list of what waits for the user's hands; `tools/embed.py` builds it into the
+  library (`<build>/game/vr_totest_md.h`, CMake), `src/game/vr_totest.cpp` parses its `- [ ]` lines: the text, then a
+  last parenthesis `(auto: a, b; confirm)`. An item with no events is confirm-only.
+- Shown one at a time on a card over the left wrist (VR SETTINGS > TEST CHECKLIST, on by default): white while
+  waiting, green and DONE once all its events came while it was current (and PASS if it asks for it), then after
+  1.5 s the next. Its events show under it, each `[x]` green once seen.
+- PASS / SKIP: the gun hand's aim ray held on one for 1 s (a fill shows it; a buzz on choosing; the ray must leave
+  before the next). PASS also overrides a missed event. SKIP sends it to the back for this run only.
+- Passes are appended to `totest_done.txt` in the app folder (`pass<TAB>line`), and left out next run (delete the file
+  to start over). Log lines: `vr totest: ...`.
+- Drawing: the settings panel's path. When the panel is shut and an item is waiting, imgui is drawn into the screen
+  swapchain (cleared transparent) with only the card window in its top left 768x432 (`xr::kCardW/H`), and
+  `xr::EndFrame(..., card)` adds a 0.17 m quad of that corner: 9 cm above the grip, 7 cm back toward the wrist (the
+  left aim pose's frame), turned to face the head (yaw, then tilt). `xr::CardPointer` is the right aim ray on it
+  (`RayOnQuad`, shared with the panel's pointer).
+- Events (`TestEvent(name)`, any thread; `x:CODE` names take the variant codes as their first, e.g. SN5 → SNR):
+  vr_reload.cpp: shell_taken, shell_in, shell_in_open, pump_open, pumped, pump_left_open, pump_live_out,
+  fore_grip:CODE, fore_grip_shotgun, fire_after_pump / fire_after_rack:CODE (a shot within 3 s of the hand's pump
+  or rack), spas_semi, spas_rapid (three shots each within 0.8 s in the SPAS's semi-auto), cyl_latch, cyl_out_down /
+  cyl_out_roll, cyl_spin (a swipe over 6 rad/s), loader_taken, loader_in, cyl_shut_push / cyl_shut_flick,
+  mag_in:CODE, rack:CODE; vr_body.cpp: mode_press; vr_gun.cpp: stock:CODE (its bake done).
+- Not yet seen in the headset (built only, 2026-11-23).
+- FAIL (user, same day): a third button, red, between PASS and SKIP. A failed item turns red ("FAILED: kept for
+  review"), is written `fail<TAB>line` to totest_done.txt and stays off the card; the card's header counts the
+  failed. To bring one back after a fix, its TOTEST.md line gets `retest N` in its parenthesis (a new line, a new
+  key; the parser ignores parts that aren't `auto:` or `confirm`). Skips aren't written: they come back next run.
+
+## 2026-11-23: launchers by hand (RPG, grenade launcher), the fire-mode blur hunt
+
+- **Bones** (each `.db`, as before): RPG root 108, RPG_Rocket 111 (only the part out of the tube is modelled: z
+  0.132..0.607 on the bore at y 0.056; its back flange r 0.039 at the muzzle z 0.134, a narrow bar r 0.021 about z
+  0.18..0.28, the warhead r 0.043 to 0.36, the nose to 0.607), RPG_Site 114. The grenade launcher (GRL) is built on
+  the shotgun skeleton: Shotgun_Root 105, Shotgun_Clip 108, Shotgun_Pumpgrip 111 (the tube, z 0.074..0.550),
+  Shotgun_Shell 114 (the grenade, z 0.109..0.199, tip forward), Site 117, Small_Site 120. The M16+M203 (BNS):
+  BottomLead 87, Flap_Bone 90, G_Slide 93 (the M203's barrel, z 0.200..0.572), GrenadeShell 96, MidLead 99, TopLead 102.
+- **Ours** (vr_reload.cpp kRpg, kGrl; GunParts .launcher, .take, .root): one round at a time, shells' rules otherwise
+  (a start with more in the gun puts the rest in the reserve). Taken with the off hand's grip, not the pinch: the
+  rocket over the left shoulder (a 14 cm ball, the weapon switch's mirrored), grenades low by the waist (a column
+  45-85 cm under the head, 18 cm round). The RPG's rocket goes in backward (mesh -z), held by its bar (hold 0); the
+  GRL's tube opens forward only after a shot (kTubeStroke 10 cm at the pump's 0.5 m/s; dir -1 through the pump code,
+  travel -0.10 so the bone and the off hand go forward), stays open let go, the grenade goes into its back tip
+  first, back again shuts it. The round is drawn on the root bone while loaded (moving with an open tube), gone when
+  empty (the game hides it, so the held one is posed from the root too). The game's reload for both is off
+  (kGameReload is empty now).
+- **Hints** over the off hand (vr_totest.cpp DrawTip; SetTip in vr_reload.cpp): "Grip over your left shoulder for a
+  rocket", "Push the tube forward to open it", "Grip low by your waist for a grenade". The strip under the checklist
+  card in the screen swapchain (y 448, 112 high), its own 15 cm quad 4 cm ahead of the grip and 4 cm up, facing the
+  head (xr::EndFrame's tip).
+- **Fixed**: MagFrame's front for a part whose up is the barrel's way (shotgun shells, rockets, grenades) was a zero
+  vector, so the held shell drew flat: now the mesh's top.
+- **dev_shells** works the tube: open at phases 0-2, the grenade taken at 3, seated 4-5, shut at 6.
+- **The fire-mode blur**: not the reload blur (FUN_0017B130's, already off in VR: ReloadBlur jumps past it). The
+  post controller's mode (`*0x2D1990 + 0x830D4`) is set by several others: 0x1C6850 (9, a zoom's), 0x1F6C67/0x1F6C88
+  (3 and 7, damage), 0x1FDBB2, 0x149227, 0x20DFB2, 0x2030BB/0x2031D9. "SetFireRateMode" (0x2910BC) is a HUD event
+  (0x13495C, the fire mode byte at `[[player+0x2CC]+0xF4]+0x20`). **dev_modelog** logs every first-person animation
+  through 0x17B239 by name, and the post mode and weapon state as they change with the time since the mode press:
+  one run with dev_modeflip on a gun with modes (AK, M16) names both.
+- Not yet: the M203 (BNS) grenades by hand: how the game fires and reloads them (its alt ammo at weapon +0xF8) needs
+  a run.
+- **The fire-mode change, found** (dev_modelog run, 2026-11-23): on every gun with modes the press goes through
+  FUN_001BB3C0 (esi the controller): if the kind has modes (`[ctrl+0xEC]+0xC4`) it calls FUN_001BAE70 (ecx the ammo
+  object: its mode byte +0x20 becomes (mode + 1) % 3, mode 2 sets +0x14 = 1, and the HUD's fire-rate word), then
+  sets state 30 (0x1BB3DB). State 30 (the jump table's case at 0x1EF1DD) asks for animation 8, `FP_<gun>_S_105`, and
+  holds the gun in state 31 for about 2 s, back to 0 with `FP_<gun>_S_001`. The post blur's mode didn't change with
+  it (the blur seen is the animation's, the gun pulled up to the face). So the mode changes at the press, the state
+  is only the animation: hook **FireModeAnim** at 0x1BB3DB (on_false 0x1BB3E5, the ret) skips it for the player's gun
+  in the headset and plays the gun's FireSelect itself (the animation's `gunaudio` trigger played it). Tested with
+  dev_modeflip: AK, M16 and M16+M203 change mode (+0x20 0→1→2), no _105, no state 30/31, FireSelect heard in the log.
+  The M16+M203's mode press only cycles the rifle's modes: its grenades are another input.
+- **Sounds by name** (PlayNamedSound): the gun's `.db` dictionary entries hold the name at +0x60 (not the first letters
+  after +0x44: AK1's FireSelect entry has a 'd' in a field before it), some with the gun's prefix ("Rpg-Ld0",
+  "Grdlch-Cock", "Shtg01-Cock0"): matched after the dash. The launchers (no kGunAudio entry) play Cock (open), C0
+  (shut), Ld0 (load) from it.
+- **Launcher runs** (dev hands, dev_shells + dev_autofire + dev_lefton): RPG "shell in, clip 1" after each shot, five
+  times to an empty reserve, the rocket drawn on its front; GRL: fired → "the tube to open" → open (Grdlch-Cock) →
+  grenade in (waiting 1, Grdlch-Ld0) → shut (Grdlch-C0) → clip 1 → fired, to an empty reserve. The checklist card and
+  hint are hidden under dev_fakehands (the desk's controllers put them in the face). The pale jagged shape in the
+  dev-hand shots is the level's (it stays with the card hidden).
+
+## 2026-11-23: the M203 (M16+M203, BNS) by hand
+
+- User: the M203 fires on the off hand's trigger, and should only with that hand gripping the gun. Ours: on BNS the
+  pad's left trigger is held back from the game (xr::TakeLeftTrigger) unless VrLeftOnGun.
+- Its ammo is the weapon's second object (+0xF8), its reserve by its kind's slot as the first's. The game's own M203
+  reload is held off as the rifle's is: the state machine wrapper (hooks.cpp) hides both reserve words
+  (VrHideReserve2).
+- The gun switches parts (vr_reload.cpp, pseudo code "B203", kM203Tube): from when the M203 is empty with grenades
+  in the reserve (and the off hand's free) until it's loaded and its barrel shut; the rifle's magazine the rest of
+  the time. B203 is a launcher like the GRL: barrel G_Slide 93 forward 10 cm to open (an empty launcher with a tube
+  counts as fired now: the M203's shot was the rifle's code's), the grenade from the waist into the barrel's back
+  tip first, back to shut. Its sounds from the BNS files (Ld0 the load; no open/shut samples: our clicks).
+- The grenade is ours (GrenadeShell 96 has no mesh): vr_gun.cpp MakeM203Grenade, a 40 mm round z 0.200..0.300 on the
+  bore (y 0.0055), merged into the BNS's extra mesh with the stock (each its own bone), textured with one texel of
+  the stock's bake; in the hand pass the extra mesh draws with the stock's texture (vulkan.cpp). In the rifle's turn
+  bone 96 sits on the root while loaded, else gone.
+- dev_altfire: the off hand's trigger pulled 0.3 s every 4 s in play. dev_modelog also logs the second ammo's clip,
+  size and reserve as they change.
+- **Run with dev hands (2026-11-23)**: the M203's shots count down its ammo's **+0x14** (an int), not the clip word
+  (+0x18 stays 1: a shot needs it non-zero). Its alt fire (state 2, animation `FP_bns_S_126`, request 12) is in the
+  state machine at 0x1EFDBE: +0x14 > 0 fires (0x1EFEED dec), else state 3 refills it at once to the kind's +0x98
+  (3) and the reserve (slot 5) is never touched: the stock game's M203 is endless. The hand-grenade count (character
+  +0x286) was 0 throughout: the off hand's trigger on BNS is the M203's alone. Ours: one at a time (the game's 3 at the
+  start: 2 to the reserve), +0x14 is B203's clip (Ammo.clip), each load one from the reserve; the trigger is held back
+  from the game while it's empty (a pull would be the endless refill) and unless the off hand grips the gun with its
+  grip held (user: also in toggle grip, where the hand stays on let go; dev_lefton counts as held). Seen: fired →
+  "B203 empty, the tube to open" → open → grenade in (reserve 7→6) → shut "clip 1" → fired, five times to the end;
+  the barrel forward in the shots. dev_altfire takes a hold in ms (the file), skips while the trigger's held back;
+  dev_nohide2 turns the M203's reserve hiding off (it made no difference: the game never reads it there).
+- **The M203's grenade is an M433 HEDP** (user's photo, 2026-11-23; vr_gun.cpp MakeM203Grenade, PaintM433): 40 mm
+  across, 121.5 mm long, measured off the photo's sides at 0.164 mm a pixel (the band edges sag toward the front:
+  the camera looks down, so the printing is placed against the nearest edge at the front). Rim 0..7.4 (dark green,
+  chamfered), case to 60 (olive), a dark joint to 61, the silver body to 93, the gold ogive (a half ellipse 19.4 round,
+  28 up) and the fuze's pin. Printed in 5 x 7 letters: FUZE, PIBD, M550 / LOT 2213425 (gold), PROJ 40MM / M433 HEDP
+  (silver), CTG40MM HEDP / AMMLOT GA-WS-14-1 (the case, a shade darker), centred on the mesh's +x. Painted into a
+  512 x 512 strip under the M16 stock's atlas (the BNS's bake only: its stock's v scaled to make room). The M203's
+  barrel opens 13 cm (the round goes in whole; tubes now open their own parts' travel).
+- **The M16+M203's own texture is 256 x 256** (not the M16's 512 x 256), so its stock had never baked (BakeStock
+  refused it; it drew with the gun's texture). Now a StockSrc of its own: the receiver's flat 180..208 x 198..208, the
+  pistol grip 20..30 x 150..175 (read off a dump: dev_dumptex writes tex_<code>.bgra when a bake is refused), 300 px/m;
+  baked 1024 x 1536 with the M433's strip, the stock seen textured on the headset.
+- **Open**: the M433 isn't seen drawn yet. dev_grenadeout puts it 11 cm over the gun (logged there, between the
+  muzzle and the stock in C) but no screenshot shows it; the stock in the same extra mesh draws. dev_grenaderoot
+  builds it on the root bone (75) instead of 96, to tell bone 96's constants from its drawing: that run was stopped
+  (user: will test the grenade later).
+- dev_grenadeout and dev_grenaderoot removed (user: no placing it to be seen; it's taken from the waist and inspected
+  in the hand when the user tests). The grenade is only ever in the barrel (loaded), going in, or in the off hand.
+

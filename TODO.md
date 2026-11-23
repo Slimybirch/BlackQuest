@@ -1,5 +1,10 @@
 # TODO
 
+## To test by hand
+- The user's hand checks live in TOTEST.md (also shown in the headset, one at a time: VR SETTINGS > TEST CHECKLIST).
+- [ ] Install the in-game checklist build (vr_totest.cpp, built 2026-11-23, waiting for the user's go-ahead), then check
+  the wrist card's place, its readability and the PASS / SKIP pointing in the headset.
+
 ## Phase 0
 - [x] install the Android toolchain (SDK 34, NDK 28.2.13676358, CMake 3.31.6, JDK 17) → `toolchain/`
 - [x] baseline build with `build.bat`, install on the Quest 3 — runs flat (NOTES, "Baseline on the Quest 3")
@@ -202,10 +207,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] user test 7, every gun (dev_give cycles codes): the handle zones (the log's out/up/fwd), seating (the log's
       "held top ... from the well"), each gun's slide travel and knob (guesses: AK 7 cm), the sounds (the log names
       each sample found or not found), rounds riding with the magazine, the floor height, racking loaded
-- [ ] the P90's magazine is held upright in the fist like the others (it lies flat on the gun: held along the
-      forearm would suit it); the M249's belt stays in the gun with the box out
-- [ ] guns that don't lock back (AK, M16, M249) show their handle held back when empty, as the pistol's slide
-- [ ] a round flying out of the port when racked loaded (a shell/round model to throw: find the game's casing)
+- [ ] (user, 2026-11-23: now) guns that don't lock back (AK, M16, M249) show their handle held back when empty, as the
+      pistol's slide (the real bolt's lock is on the gun's far side, not easily seen)
 - [x] the game's own rack sounds: AK AkCock0/AkCock1, pistol PstBrch0/PstBbrch1, found by recording and played
       from where the game's draw played them (NOTES 2026-11-22)
 - [ ] hear them on the headset (dev_racksound or a real rack); the other guns' are in (built 2026-11-22)
@@ -214,24 +217,40 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] AkLd1 / PstLd0b / PstCockP1 if they fit a step (offsets unconfirmed: NOTES)
 - [ ] later: the rack sound synced to the hand (the pull's part as it goes back, the release's when let go; held
       back longer, the release waits); the AK's is already two sounds (AkCock0, AkCock1)
-- [ ] a dropped magazine stays drawn only while the same gun is held (one drop at a time)
-- [ ] polish: the thumb: rests too flat/broken-looking on the thumb rest, and its twist (curl, kThumbRest,
-      kThumbTwist in vr_gun.cpp); every finger wrapping on whatever the hand grips
-- [ ] polish: the elbow rolls over counter-clockwise when the hand reaches to the chest (the IK's pole)
-- [ ] the magazine in the hand held vertical (it sits sideways now): turn HandMag's pose so its up runs along the
-      hand's fingers-to-wrist line, top toward the thumb
 - [ ] button prompts in the Quest's names (e.g. "RIGHT GRIP to pick up" for the game's "X"): find the prompt text
       and button glyph table, map the pad buttons to our VR controls
 - [x] the magazine and slide bones for the other guns: named in each gun's .db (2026-11-22)
-- [ ] the magnum (MGN/MG5): its speed loader and six rounds by hand (the user left it on the game's reload for now)
-- [ ] shotgun shells one at a time; launchers simplified; magazines at the chest drawn on the body
+- [x] the magnum (MGN/MG5): its speed loader and six rounds by hand (built 2026-11-23: see below)
+- [x] shotgun shells one at a time (2026-11-22: the SPAS 12 and Remington 870; built, tested with dev hands)
+- [ ] the user's hand test of the shotguns: shells pinched on the off hand's trigger, the open pump, semi-auto's
+  speed, no rock after shots (SPAS, Remington, Walther)
+- [ ] the user's check of the Uzi's and Walther's off hand (the M16's angle, at a fore-grip: 2026-11-23)
+- [x] launchers (2026-11-23): the RPG and grenade launcher by hand (built, run with dev hands)
+- [x] the M16's M203 (BNS) grenades by hand (2026-11-23, B203, NOTES): run with dev hands; its look is the user's
+- [ ] the M433 grenade: the user inspects it in hand from the waist (not seen drawn in dev screenshots: NOTES "Open")
+- [ ] magazines at the chest drawn on the body
+- [ ] hovering icons where things are taken (user, 2026-11-23): a bullet icon at the chest for ammo, a grenade icon
+  low near the waist for grenades (launcher grenades and thrown ones both taken there, below the chest); the icon
+  moves (lifts, grows) when the hand hovers over it, with the buzz
 - [x] multi-gun pass on the headset with dev hands (2026-11-22): sounds from the disc when unplayed, the P90's well
   turned down; dev markers removed
 - [ ] Make the guns work for AR platforms and physical gun stocks (user, 2026-11-22)
-- [ ] Shotgun reloads (shells one at a time) and the magnum: the cylinder swings out to the side, a speed loader
+- [x] The magnum (built 2026-11-23, to test in TOTEST.md: the swing's side and pivot, the loader in the hand, spin, shut): the cylinder swings out to the side, a speed loader
   (a ring of rounds) from the chest put in, swung back in; the cylinder spun by hand (user)
-- [ ] No fire-mode change animation on any gun; the mode still changes on its button (right stick up, the pad's
+- [x] (built 2026-11-23: FireModeAnim hook, NOTES) No fire-mode change animation on any gun; the mode still changes on its button (right stick up, the pad's
   d-pad up), and no blur with it (user)
+
+## Polish (user, 2026-11-23: moved here from Phase 5)
+- [ ] the P90's magazine is held upright in the fist like the others (it lies flat on the gun: held along the
+      forearm would suit it); the M249's belt stays in the gun with the box out
+- [ ] a round flying out of the port when racked loaded (a shell/round model to throw: find the game's casing)
+- [ ] a dropped magazine stays drawn only while the same gun is held (one drop at a time)
+- [ ] the thumb: rests too flat/broken-looking on the thumb rest, and its twist (curl, kThumbRest,
+      kThumbTwist in vr_gun.cpp); every finger wrapping on whatever the hand grips
+- [ ] the elbow rolls over counter-clockwise when the hand reaches to the chest (the IK's pole)
+- [ ] the magazine in the hand held vertical (it sits sideways now): turn HandMag's pose so its up runs along the
+      hand's fingers-to-wrist line, top toward the thumb
 - [ ] No blur when objectives or tips come up (user)
 - [ ] Title cards (the time and place at a level's start): the text only, no black box behind it; and the player's
   view set up so the head doesn't move opposite to the player's own in those first seconds (user)
+

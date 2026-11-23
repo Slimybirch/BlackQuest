@@ -37,6 +37,9 @@ bool InvertX();
 bool InvertY();
 void SetInvert(bool x, bool y);
 }  // namespace gyro
+namespace game {
+void VrTotestUi();  // src/game/vr_totest.cpp: the test checklist's card
+}  // namespace game
 
 // native/touch.cpp: the touch controls' layout
 namespace touch {
@@ -251,7 +254,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload };
+             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest };
 
 using rows::Kind;
 using rows::Row;
@@ -324,6 +327,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kVrTurn, "TURNING"},
     {Kind::Value, kVrGrip, "OFF-HAND GRIP"},
     {Kind::Value, kVrReload, "RELOAD"},
+    {Kind::Value, kVrTotest, "TEST CHECKLIST"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -537,6 +541,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             // blackquest: magazines by hand (where the gun's is known), or the game's button reload
             if (step) o.vr_manual_reload = !o.vr_manual_reload;
             std::snprintf(text, sizeof(text), o.vr_manual_reload ? "BY HAND" : "BUTTON");
+            return true;
+        case kVrTotest:
+            // blackquest: the hand-test checklist's card on the left wrist (TOTEST.md)
+            if (step) o.vr_totest = !o.vr_totest;
+            std::snprintf(text, sizeof(text), o.vr_totest ? "ON" : "OFF");
             return true;
         case kVrGrip:
             // blackquest: the off hand holds the gun while the grip is held, or a press takes it and the next lets go
@@ -1126,6 +1135,8 @@ void DrawUi(double fps) {
     if (MenuOpen()) {
         PollCapture();
         DrawPanel();
+    } else {
+        ::game::VrTotestUi();  // the test checklist's card, in its own pass (nothing otherwise)
     }
 }
 

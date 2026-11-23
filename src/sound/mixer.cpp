@@ -482,11 +482,18 @@ uint32_t StartHash(uint32_t addr) {
     return h;
 }
 
-std::atomic<uint64_t> g_mute{0};
-void Mute(uint32_t len, uint32_t rate) { g_mute.store(uint64_t(len) << 32 | rate, std::memory_order_relaxed); }
+// two: a pump gun's back and forward are two samples (the remington's)
+std::atomic<uint64_t> g_mute[2]{};
+void Mute(uint32_t len, uint32_t rate, int slot) {
+    if (slot >= 0 && slot < 2) g_mute[slot].store(uint64_t(len) << 32 | rate, std::memory_order_relaxed);
+}
 bool Muted(uint32_t len, uint32_t rate) {
-    uint64_t m = g_mute.load(std::memory_order_relaxed);
-    return m && m == (uint64_t(len) << 32 | rate);
+    uint64_t k = uint64_t(len) << 32 | rate;
+    for (auto& m : g_mute) {
+        uint64_t v = m.load(std::memory_order_relaxed);
+        if (v && v == k) return true;
+    }
+    return false;
 }
 
 void Seen(uint32_t addr, uint32_t len, uint32_t rate) {

@@ -19,6 +19,9 @@ base port's guide, still accurate unless noted). The plan, phases and hard rules
   black-pc (**GPL: learn facts and addresses, never copy code**), black-seamless-coop (MIT, keep its notice).
 - The user's xbe is NTSC-U with a region/media-patched certificate (NOTES.md, "The disc").
 - Toolchain here: VS Build Tools 2026 (MSVC 14.51) satisfies `build.bat`'s VS check.
+- `TOTEST.md` lists what waits for the user's hands in the headset: add every new thing to test there, one line each
+  with its completion `(auto: events)` and/or `(confirm)` (the game reads it: `src/game/vr_totest.cpp` shows it on
+  the left wrist, `TestEvent("name")` completes items), and mark lines `- [x]` once the user confirms them.
 - Every address goes into NOTES.md with how it was found. At each phase's end: stop, give a headset checklist.
 - VR code: `native/xr.cpp` (OpenXR, controls, the panel quad), `native/vulkan.cpp` (stereo, the gun in the hand,
   bone posing calls), `src/game/vr_body.cpp` (head-driven view, gestures, dev markers), `src/game/vr_gun.cpp` (gun

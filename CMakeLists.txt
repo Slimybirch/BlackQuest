@@ -101,9 +101,16 @@ add_custom_command(OUTPUT ${VR_STOCKS}
                    COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/stocks.py --out ${VR_STOCKS}
                    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/stocks.py
                    COMMENT "Generating the vr stocks' meshes")
+# TOTEST.md built in: the in-game test checklist (vr_totest.cpp) reads it
+set(VR_TOTEST ${CMAKE_CURRENT_BINARY_DIR}/game/vr_totest_md.h)
+add_custom_command(OUTPUT ${VR_TOTEST}
+                   COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed.py
+                           ${CMAKE_CURRENT_SOURCE_DIR}/TOTEST.md ${VR_TOTEST} kTotestMd
+                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/TOTEST.md ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed.py
+                   COMMENT "Embedding TOTEST.md")
 
 add_library(main SHARED ${RUNTIME_SOURCES} ${GAME_HOST_SOURCES} ${ANDROID_SOURCES} ${GEN_SOURCES} ${IMGUI_SOURCES}
-            ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp ${VR_STOCKS})
+            ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp ${VR_STOCKS} ${VR_TOTEST})
 # compat/ for the SDK's x86 header, the SDK harness's for the Winsock and DXGI names its portable runtime uses
 target_include_directories(main PRIVATE ${NATIVE}/compat ${SDK}/harness/compat ${NATIVE} ${GAME} ${SDK}/runtime ${GEN}
                            ${CMAKE_CURRENT_BINARY_DIR} ${glslang_SOURCE_DIR})

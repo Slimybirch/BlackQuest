@@ -59,6 +59,8 @@ void Rumble(uint16_t left, uint16_t right);
 void Pulse(int hand, float amplitude, float seconds);
 // game thread: the left grip holds the gun (the left hand is at it or on it): kept from the game's white button
 void TakeLeftGrip(bool taken);
+// game thread: the left trigger pinches a shotgun's shell (at the chest, or one held): kept from the game's grenade
+void TakeLeftTrigger(bool taken);
 // which an image of ScreenImages is: eye 0 or 1, or the theater screen; and its size
 constexpr int kTheater = 2;
 int ImageEye(uint32_t index);
@@ -81,7 +83,14 @@ bool RenderEye(int eye, EyeView& out);
 bool BeginFrame();
 bool AcquireScreen(int eye, uint32_t& index);
 void ReleaseScreen(int eye);
-void EndFrame(bool drawn, bool theater = true, bool panel = false);
+void EndFrame(bool drawn, bool theater = true, bool panel = false, bool card = false, bool tip = false);
+// the test checklist's card (vr_totest.cpp): imgui drawn into the screen swapchain's top left kCardW x kCardH, shown
+// (card) on a small quad over the left wrist facing the head, when the settings panel isn't open; a hint (tip: the
+// launchers' "grip over your left shoulder") the strip under it, kTipH high from kTipY, on a smaller quad just over
+// the off hand
+constexpr uint32_t kCardW = 768, kCardH = 432, kTipY = 448, kTipH = 112;
+// render thread: where the right controller's ray meets the card (0..1 across and down); false: off it or not shown
+bool CardPointer(float& u, float& v);
 // the settings panel over play (stereo): the screen's swapchain on a quad 1 m ahead of where the head looked when it
 // opened, alpha blended over the eyes
 // render thread: the touch controllers for the settings panel's navigation (left stick, A), and the right

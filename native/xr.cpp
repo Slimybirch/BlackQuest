@@ -121,6 +121,10 @@ Controls g_controls;
 // the quad imgui was last shown on (the theater screen or the settings panel), for the pointer. render thread
 XrPosef g_ui_pose{{0, 0, 0, 1}, {0, 0, 0}};
 XrExtent2Df g_ui_size{};
+// the test checklist's card as last shown (size 0: not shown). render thread
+constexpr float kCardMetres = 0.17f, kTipMetres = 0.15f;
+XrPosef g_card_pose{{0, 0, 0, 1}, {0, 0, 0}};
+XrExtent2Df g_card_size{};
 
 const char* ResultName(XrResult r) {
     static char buf[XR_MAX_RESULT_STRING_SIZE];
@@ -634,6 +638,8 @@ void Rumble(uint16_t left, uint16_t right) {
     g_rumble.store(v, std::memory_order_relaxed);
 }
 void TakeLeftGrip(bool taken) { g_left_grip_taken.store(taken, std::memory_order_relaxed); }
+std::atomic<bool> g_left_trigger_taken{false};
+void TakeLeftTrigger(bool taken) { g_left_trigger_taken.store(taken, std::memory_order_relaxed); }
 void Pulse(int hand, float amplitude, float seconds) {
     if (hand < 0 || hand > 1) return;
     uint32_t a = uint32_t(std::clamp(amplitude, 0.0f, 1.0f) * 255), ms = uint32_t(std::clamp(seconds, 0.0f, 1.0f) * 1000);
@@ -649,6 +655,31 @@ XrVector3f Rotate(const XrQuaternionf& q, XrVector3f v, bool inverse = false) {
 }
 }  // namespace
 
+// the right aim ray where it meets a quad (z = 0 in its own space, facing +z): 0..1 across and down
+bool RayOnQuad(const Controls& c, const XrPosef& p, const XrExtent2Df& size, float& u, float& v) {
+    if (!c.aim_ok[1] || size.width <= 0) return false;
+    XrQuaternionf aq{c.aim[1][0], c.aim[1][1], c.aim[1][2], c.aim[1][3]};
+    XrVector3f d = Rotate(p.orientation, Rotate(aq, {0, 0, -1}), true);
+    XrVector3f o = Rotate(p.orientation,
+                          {c.aim_pos[1][0] - p.position.x, c.aim_pos[1][1] - p.position.y,
+                           c.aim_pos[1][2] - p.position.z},
+                          true);
+    if (o.z <= 0 || d.z >= -1e-3f) return false;
+    float t = -o.z / d.z;
+    u = (o.x + d.x * t) / size.width + 0.5f;
+    v = 0.5f - (o.y + d.y * t) / size.height;
+    return u >= 0 && u <= 1 && v >= 0 && v <= 1;
+}
+
+bool CardPointer(float& u, float& v) {
+    Controls c;
+    {
+        std::lock_guard lock(g_controls_lock);
+        c = g_controls;
+    }
+    return c.live && RayOnQuad(c, g_card_pose, g_card_size, u, v);
+}
+
 bool MenuControls(MenuInput& in) {
     Controls c;
     {
@@ -660,24 +691,7 @@ bool MenuControls(MenuInput& in) {
     in.stick[1] = c.stick[0][1];
     in.a = c.a;
     in.trigger = c.trigger[1] > 0.5f;
-    in.pointing = false;
-    if (c.aim_ok[1] && g_ui_size.width > 0) {
-        // the right aim ray in the quad's own space: the quad is z = 0, facing +z
-        const XrPosef& p = g_ui_pose;
-        XrQuaternionf aq{c.aim[1][0], c.aim[1][1], c.aim[1][2], c.aim[1][3]};
-        XrVector3f d = Rotate(p.orientation, Rotate(aq, {0, 0, -1}), true);
-        XrVector3f o = Rotate(p.orientation,
-                              {c.aim_pos[1][0] - p.position.x, c.aim_pos[1][1] - p.position.y,
-                               c.aim_pos[1][2] - p.position.z},
-                              true);
-        if (o.z > 0 && d.z < -1e-3f) {
-            float t = -o.z / d.z;
-            float x = o.x + d.x * t, y = o.y + d.y * t;
-            in.u = x / g_ui_size.width + 0.5f;
-            in.v = 0.5f - y / g_ui_size.height;
-            in.pointing = in.u >= 0 && in.u <= 1 && in.v >= 0 && in.v <= 1;
-        }
-    }
+    in.pointing = RayOnQuad(c, g_ui_pose, g_ui_size, in.u, in.v);
     return true;
 }
 bool HeadAngles(float& yaw, float& pitch) {
@@ -808,7 +822,7 @@ bool AcquireScreen(int eye, uint32_t& index) {
 
 void ReleaseScreen(int eye) { xrReleaseSwapchainImage(Chain(eye), nullptr); }
 
-void EndFrame(bool drawn, bool theater, bool panel) {
+void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
     struct Unlock {
         ~Unlock() {
             if (g_frame_locked) g_session_lock.unlock();
@@ -855,13 +869,63 @@ void EndFrame(bool drawn, bool theater, bool panel) {
         over.subImage.imageRect = {{0, 0}, {int32_t(kScreenW), int32_t(kScreenH)}};
         over.pose = at;
         over.size = {kPanelMetres, kPanelMetres * kScreenH / kScreenW};
+        // the test checklist's card over the back of the left wrist, a little up, and the hint just over the off hand:
+        // each turned to face the head
+        g_card_size = {};
+        XrPosef tip_pose{{0, 0, 0, 1}, {0, 0, 0}};
+        XrExtent2Df tip_size{};
+        if ((card || tip) && !panel) {
+            Controls c;
+            {
+                std::lock_guard lock(g_controls_lock);
+                c = g_controls;
+            }
+            if (c.hand_ok[0] && c.aim_ok[0] && c.head_ok) {
+                XrQuaternionf aq{c.aim[0][0], c.aim[0][1], c.aim[0][2], c.aim[0][3]};
+                auto facing = [&](XrVector3f off, float up) {
+                    XrVector3f o = Rotate(aq, off);
+                    XrVector3f p{c.hand[0][0] + o.x, c.hand[0][1] + o.y + up, c.hand[0][2] + o.z};
+                    float dx = c.head[0] - p.x, dy = c.head[1] - p.y, dz = c.head[2] - p.z;
+                    float yaw = std::atan2(dx, dz), tilt = -std::atan2(dy, std::sqrt(dx * dx + dz * dz));
+                    XrQuaternionf qy{0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
+                    float sx = std::sin(tilt * 0.5f), cx = std::cos(tilt * 0.5f);
+                    // qy * qx (the tilt about the quad's own x, then the turn)
+                    return XrPosef{{qy.w * sx, qy.y * cx, -qy.y * sx, qy.w * cx}, p};
+                };
+                if (card) {
+                    g_card_pose = facing({0, 0.02f, 0.07f}, 0.09f);  // toward the wrist from the grip
+                    g_card_size = {kCardMetres, kCardMetres * kCardH / kCardW};
+                }
+                if (tip) {
+                    tip_pose = facing({0, 0, -0.04f}, 0.04f);  // ahead of the grip, just over the hand
+                    tip_size = {kTipMetres, kTipMetres * kTipH / kCardW};
+                }
+            }
+        }
+        XrCompositionLayerQuad wrist{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        wrist.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        wrist.space = g_local;
+        wrist.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        wrist.subImage.swapchain = g_screen;
+        wrist.subImage.imageRect = {{0, 0}, {int32_t(kCardW), int32_t(kCardH)}};
+        wrist.pose = g_card_pose;
+        wrist.size = g_card_size;
+        XrCompositionLayerQuad hint = wrist;
+        hint.subImage.imageRect = {{0, int32_t(kTipY)}, {int32_t(kCardW), int32_t(kTipH)}};
+        hint.pose = tip_pose;
+        hint.size = tip_size;
         const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&proj),
-                                                        reinterpret_cast<XrCompositionLayerBaseHeader*>(&over)};
+                                                        reinterpret_cast<XrCompositionLayerBaseHeader*>(&over),
+                                                        nullptr};
         XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
         ei.displayTime = g_display_time;
         ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         ei.layerCount = drawn && g_views_valid ? (panel && placed ? 2 : 1) : 0;
         if (panel && placed) g_ui_pose = over.pose, g_ui_size = over.size;
+        if (ei.layerCount == 1 && g_card_size.width > 0)
+            layers[ei.layerCount++] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&wrist);
+        if (ei.layerCount >= 1 && !(panel && placed) && tip_size.width > 0)
+            layers[ei.layerCount++] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&hint);
         ei.layers = layers;
         XrResult r = xrEndFrame(g_session, &ei);
         if (XR_FAILED(r)) LOG_FIRST(4, "xr: xrEndFrame failed (%s)", ResultName(r));
@@ -946,7 +1010,8 @@ void ApplyPad(int port, input::Pad& p) {
     const uint8_t a[8] = {uint8_t(c.a ? 255 : 0), uint8_t(c.b ? 255 : 0), uint8_t(c.x ? 255 : 0),
                           uint8_t(c.y ? 255 : 0), analog(c.grip[1]),
                           analog(g_left_grip_taken.load(std::memory_order_relaxed) ? 0.0f : c.grip[0]),
-                          analog(c.trigger[0]), analog(c.trigger[1])};
+                          analog(g_left_trigger_taken.load(std::memory_order_relaxed) ? 0.0f : c.trigger[0]),
+                          analog(c.trigger[1])};
     for (int i = 0; i < 8; i++) p.analog[i] = std::max(p.analog[i], a[i]);
     if (start) p.buttons |= 1 << 4;
     if (back) p.buttons |= 1 << 5;

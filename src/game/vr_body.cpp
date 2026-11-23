@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <string>
 
 #include "app/app.h"
 #include "common/menu.h"
@@ -26,6 +28,13 @@ using namespace kernel;
 using namespace layout;
 
 namespace game {
+bool VrDevModePress();  // vr_reload.cpp: dev_modeflip's press of the fire-mode button now
+void TestEvent(const std::string& name);  // vr_totest.cpp: the test checklist
+bool VrM203TriggerTaken();  // vr_reload.cpp: the M203's trigger (the off hand's) kept from the game
+std::atomic<int> g_mode_presses{0};  // the fire-mode button's presses (vr_reload.cpp: the SPAS's own modes)
+int VrModePresses() { return g_mode_presses.load(std::memory_order_relaxed); }
+std::atomic<bool> g_fire_held{false};  // the game's fire trigger as the pad last gave it (vr_reload.cpp: semi-auto)
+bool VrFireHeld() { return g_fire_held.load(std::memory_order_relaxed); }
 
 namespace {
 
@@ -101,6 +110,12 @@ void VrControls(input::Pad& pad) {
     int64_t now = NowMs();
     if (pad.ry > kStickPress) pad.buttons |= 1 << 0;
     if (pad.ry < -kStickPress) pad.buttons |= 1 << 1;
+    // the fire mode's press (the stick up): a very small buzz in the gun hand (user; the game plays the gun's own
+    // sound for it)
+    static bool mode_was = false;
+    bool mode = pad.ry > kStickPress;
+    if (mode && !mode_was) xr::Pulse(1, 0.12f, 0.02f), g_mode_presses++, TestEvent("mode_press");
+    mode_was = mode;
     pad.ry = 0;
     xr::Hand hand[2];
     float head[3];
@@ -154,9 +169,28 @@ void DevPad(input::Pad& pad) {
     bool play = now - g.play_ms < 2000;
     if (start && !play && now % 1500 < 150) pad.analog[0] = 255;
     if (fire && play && now % 3000 < 400) pad.analog[7] = 255;
+    // dev_altfire: the off hand's trigger (the M203's) pulled now and then in play, between dev_autofire's, held as
+    // many ms as the file says (300 if none), every 6 s
+    static const int alt_ms = [] {
+        std::ifstream f(app::ExeDir() / "dev_altfire");
+        int ms = 0;
+        if (!f) return -1;
+        f >> ms;
+        return ms > 0 ? ms : 300;
+    }();
+    if (alt_ms > 0 && play && now % 6000 >= 2000 && now % 6000 < 2000 + alt_ms && !VrM203TriggerTaken())
+        pad.analog[6] = 255;  // (not while the M203's trigger is held back, as a real one's)
     // dev_firehold: the trigger held down in play (automatic fire, for catching the flash in a screenshot)
     static const bool hold = std::filesystem::exists(app::ExeDir() / "dev_firehold");
     if (hold && play) pad.analog[7] = 255;
+    // dev_rapid: the trigger pulled for 0.12 s every 0.3 s in play, and let go between (fast semi-auto)
+    static const bool rapid = std::filesystem::exists(app::ExeDir() / "dev_rapid");
+    if (rapid && play) pad.analog[7] = now % 300 < 120 ? 255 : 0;  // over the controller's (it may lie pressed)
+    static bool dev_mode_was = false;
+    bool dev_mode = play && VrDevModePress();
+    if (dev_mode) pad.buttons |= 1;  // dev_modeflip: the d-pad's up (the fire mode)
+    if (dev_mode && !dev_mode_was) g_mode_presses++;
+    dev_mode_was = dev_mode;
     // dev_menu: the settings panel opens once, 5 s into play (or 20 s after boot without autostart: the title)
     static const bool menu = std::filesystem::exists(app::ExeDir() / "dev_menu");
     static int64_t boot = now, first_play = 0;
@@ -198,6 +232,13 @@ void VrPad(input::Pad& pad) {
         }
     }
     if (NowMs() - g.play_ms < 250) VrControls(pad);
+    {
+        bool held = pad.analog[7] > 64;
+        static int flips = 0;
+        if (held != g_fire_held.load(std::memory_order_relaxed) && flips < 12)
+            flips++, LOGR("vr body: fire trigger %s (pad poll)", held ? "down" : "up");
+        g_fire_held.store(held, std::memory_order_relaxed);
+    }
     float head;
     uint32_t world = R32(kWorld);
     if (!world || !xr::HeadHeight(head)) {

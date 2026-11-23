@@ -113,6 +113,7 @@ const app::GameInfo app::kGame = {
                 {"vr_snap_turn", nullptr, &game::Opt().vr_snap_turn},
                 {"vr_grip_toggle", &game::Opt().vr_grip_toggle, nullptr},
                 {"vr_manual_reload", &game::Opt().vr_manual_reload, nullptr},
+                {"vr_totest", &game::Opt().vr_totest, nullptr},
                 {"dynamic_resolution", &game::Opt().dynamic_resolution, nullptr},
                 {"dynamic_target_fps", nullptr, &game::Opt().dynamic_target_fps},
                 {"dynamic_min_percent", nullptr, &game::Opt().dynamic_min_percent},

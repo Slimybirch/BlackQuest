@@ -52,6 +52,9 @@ bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* in
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
 void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
 int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
+void VrHudWanted(bool& card, bool& tip);  // vr_totest.cpp: the checklist's card, the off hand's hint, this frame
+void VrTotestCardPass(bool on);   // the imgui frame being drawn is the card's
+bool VrStockShell();  // the extra mesh is the held shotgun's shell (drawn in the hand too)
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base);  // vr_gun.cpp
 bool VrRecording();    // src/game/vr_body.cpp: dev_dumpreload's window
@@ -3257,7 +3260,8 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     for (int i = 0; i < 4; i++) samplers[i] = StageSampler(s, i, stages, clamp);
     VkDescriptorSet set = Set(stages.view, samplers);
     // the stock's own texture (vr_gun.cpp paints it from the gun's, on a thread): bound in stage 0's place for the
-    // stock alone; till it's ready the stock isn't drawn (its uvs are for its own texture)
+    // stock alone; till it's ready the stock isn't drawn (its uvs are for its own texture). None for this gun (a
+    // shotgun's shell): drawn with the gun's
     VkDescriptorSet stock_set = VK_NULL_HANDLE;
     if (stock_on) {
         static std::map<uint32_t, Image> stock_tex;
@@ -3299,7 +3303,12 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
                 stock_set = Set(views, samplers);
             }
         }
-        if (!stock_set) stock_on = false;
+        bool own_none = false;
+        if (TextureDesc dd; s.textures[0] && Describe(s.textures[0], dd)) {
+            auto it = stock_tex.find(dd.data);
+            own_none = it != stock_tex.end() && !it->second.view;
+        }
+        if (!stock_set && !own_none) stock_on = false;
     }
 
     // the rendering
@@ -3412,8 +3421,12 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         }
     }
     emit(eye_m, nullptr);
+    // the extra mesh's buffers, kept for the hand pass (a shotgun's shell is drawn in the hand too)
+    Alloc stock_vb{}, stock_ib{};
+    uint32_t stock_draw_count = 0;
     if (stock_on) {
         Alloc v = Upload(stock_vbytes, 16);
+        stock_vb = v;
         std::memcpy(v.cpu, stock_v, stock_vbytes);
         VkDeviceSize voff = v.off;
         vkCmdBindVertexBuffers(Cb(), 0, 1, &v.buf, &voff);
@@ -3438,6 +3451,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         }
         Alloc ix = Upload(icount * 2, 4);
         std::memcpy(ix.cpu, ind, icount * 2);
+        stock_ib = ix, stock_draw_count = icount;
         vkCmdBindIndexBuffer(Cb(), ix.buf, ix.off, VK_INDEX_TYPE_UINT16);
         vkCmdDrawIndexed(Cb(), icount, 1, 0, 0, 0);
         // the gun's own buffers and textures back for the magazine passes
@@ -3450,6 +3464,18 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         Alloc vc2 = Constants(hand_mag.data(), sizeof(hand_mag));
         BindSet(set, vc2.off, dc.off);
         emit(eye_m, nullptr);
+        // a shell of ours (the SPAS's own is a mesh the game draws only in its reload): in the hand with the rest
+        if (stock_draw_count && ::game::VrStockShell()) {
+            VkDeviceSize voff = stock_vb.off;
+            if (stock_set) BindSet(stock_set, vc2.off, dc.off);  // the M203's grenade: the stock's texture
+            vkCmdBindVertexBuffers(Cb(), 0, 1, &stock_vb.buf, &voff);
+            vkCmdBindIndexBuffer(Cb(), stock_ib.buf, stock_ib.off, VK_INDEX_TYPE_UINT16);
+            vkCmdDrawIndexed(Cb(), stock_draw_count, 1, 0, 0, 0);
+            if (stock_set) BindSet(set, vc2.off, dc.off);
+            if (a.buffer_count) vkCmdBindVertexBuffers(Cb(), 0, a.buffer_count, vbufs, voffs);
+            if (a.index_count)
+                vkCmdBindIndexBuffer(Cb(), ib.buf, ib.off, a.index16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+        }
     }
     if (drop_mag_on) {
         Alloc vc3 = Constants(drop_mag.data(), sizeof(drop_mag));
@@ -3941,16 +3967,22 @@ void VulkanBackend::Present(const Surface& front) {
         // the settings panel over play: imgui on the screen's swapchain, a quad of its own
         uint32_t pidx = 0;
         bool panel = !theater && begun && app::MenuOpen() && xr::AcquireScreen(xr::kTheater, pidx);
-        if (panel) {
+        // or, the panel shut, the test checklist's card (the same swapchain, its corner on a quad at the left wrist)
+        bool want_card = false, want_tip = false;
+        if (!theater && begun && !panel && !app::MenuOpen()) ::game::VrHudWanted(want_card, want_tip);
+        bool card = (want_card || want_tip) && xr::AcquireScreen(xr::kTheater, pidx);
+        if (panel || card) {
             panel_ = true;
+            ::game::VrTotestCardPass(card);
             DrawFrame(nullptr, pidx);
+            ::game::VrTotestCardPass(false);
             panel_ = false;
         }
         Submit(false, false);
-        if ((theater && got[0]) || panel) xr::ReleaseScreen(xr::kTheater);
+        if ((theater && got[0]) || panel || card) xr::ReleaseScreen(xr::kTheater);
         for (int e = 0; e < 2 && !theater; e++)
             if (got[e]) xr::ReleaseScreen(e);
-        xr::EndFrame(got[0] && got[1], theater, panel);
+        xr::EndFrame(got[0] && got[1], theater, panel, card && want_card, card && want_tip);
         if (presents_ % 360 == 0) {
             const float* p = stat_proj_;
             // flat z: pretransformed depth-tested draws off the 2d layer (cpu-projected effects would show here)
