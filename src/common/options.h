@@ -27,6 +27,10 @@ struct Options {
     bool vr_grip_toggle = false;
     bool vr_totest = true;  // vr: TOTEST.md's unchecked items one at a time on a card over the left wrist (user)
     bool vr_manual_reload = true;  // vr: magazines out and in by hand where the gun's magazine is known (phase 5)  // vr: the off hand's grip takes the gun with a press and lets go with the next (user)
+    // vr: a physical gunstock (user): the barrel aims from the gun hand to the off hand whenever it's ahead, no grip
+    bool vr_gunstock = false;
+    uint32_t vr_gun_angle = 45;     // vr: the gun's pitch on the controller, degrees + 45 (0..90: -45 down..+45 up)
+    uint32_t vr_stock_height = 10;  // vr: the off controller over the barrel's line on a stock, cm + 10 (-10..+10)
     uint32_t vr_snap_turn = 0;  // vr: degrees a flick of the right stick turns the body; 0 turns smoothly (user)
     // the render resolution follows the frame rate (native/dynamic_resolution.cpp): down when it falls under the
     // target, up again once it holds the target this many seconds; within min and max, percent of the screen's

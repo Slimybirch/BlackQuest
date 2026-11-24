@@ -41,6 +41,9 @@
 #include "vk_shader.h"
 #include "xr.h"
 
+namespace app {
+void SetPanelPass(bool on);  // src/common/menu.cpp: imgui is drawing the settings panel's own image
+}
 namespace game {
 float VrViewLift();  // src/game/vr_body.cpp
 bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot, float* pos);  // src/game/vr_gun.cpp
@@ -3925,7 +3928,7 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         VkExtent2D v;
         ~Restore() { e = v; }
     } restore{swap_extent_, keep};
-    bool eye_image = stereo_ && xr::ImageEye(index) != xr::kTheater;
+    bool eye_image = stereo_ && xr::ImageEye(index) < xr::kTheater;
     EndRender();
     VkCommandBuffer cb = Cb();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -4024,7 +4027,8 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         vkCmdDraw(cb, 3, 1, 0, 0);
     }
     // imgui makes one frame per call: on the theater screen, or over play on the panel, never in an eye
-    if (!eye_image) RenderUi();
+    // (the settings panel shown, imgui runs in its pass alone: another pass would take its clicks with no window)
+    if (!eye_image && (panel_ || !xr_ || !app::MenuOpen())) RenderUi();
     if (dynamic_)
         end_rendering_(cb);
     else
@@ -4187,22 +4191,30 @@ void VulkanBackend::Present(const Surface& front) {
                 if (got[e]) DrawFrame(eyes[e], idx[e]);
             }
         }
-        // the settings panel over play: imgui on the screen's swapchain, a quad of its own
-        uint32_t pidx = 0;
-        bool panel = !theater && begun && app::MenuOpen() && xr::AcquireScreen(xr::kTheater, pidx);
-        // or, the panel shut, the test checklist's card (the same swapchain, its corner on a quad at the left wrist)
-        bool want_card = false, want_tip = false;
-        if (!theater && begun && !panel && !app::MenuOpen()) ::game::VrHudWanted(want_card, want_tip);
-        bool card = (want_card || want_tip) && xr::AcquireScreen(xr::kTheater, pidx);
-        if (panel || card) {
+        // the settings panel beside the game's menus: imgui on its own swapchain (xr.cpp places its quad)
+        uint32_t pidx = 0, cidx = 0;
+        bool panel = begun && app::MenuOpen() && xr::AcquireScreen(xr::kPanel, pidx);
+        if (panel) {
             panel_ = true;
-            ::game::VrTotestCardPass(card);
+            app::SetPanelPass(true);
             DrawFrame(nullptr, pidx);
+            app::SetPanelPass(false);
+            panel_ = false;
+        }
+        // the test checklist's card (the screen's swapchain in play, its corner on a quad at the left wrist)
+        bool want_card = false, want_tip = false;
+        if (!theater && begun && !app::MenuOpen()) ::game::VrHudWanted(want_card, want_tip);
+        bool card = (want_card || want_tip) && xr::AcquireScreen(xr::kTheater, cidx);
+        if (card) {
+            panel_ = true;
+            ::game::VrTotestCardPass(true);
+            DrawFrame(nullptr, cidx);
             ::game::VrTotestCardPass(false);
             panel_ = false;
         }
         Submit(false, false);
-        if ((theater && got[0]) || panel || card) xr::ReleaseScreen(xr::kTheater);
+        if ((theater && got[0]) || card) xr::ReleaseScreen(xr::kTheater);
+        if (panel) xr::ReleaseScreen(xr::kPanel);
         for (int e = 0; e < 2 && !theater; e++)
             if (got[e]) xr::ReleaseScreen(e);
         xr::EndFrame(got[0] && got[1], theater, panel, card && want_card, card && want_tip);

@@ -63,6 +63,8 @@ void TakeLeftGrip(bool taken);
 void TakeLeftTrigger(bool taken);
 // which an image of ScreenImages is: eye 0 or 1, or the theater screen; and its size
 constexpr int kTheater = 2;
+constexpr int kPanel = 3;  // the settings panel's own swapchain (beside the game's menus)
+bool LastTheater();  // the last frame went to the theater screen (menus, films, loading), not the eyes
 int ImageEye(uint32_t index);
 VkExtent2D ImageExtent(uint32_t index);
 

@@ -40,8 +40,6 @@ constexpr uint32_t kScreenW = 1920;
 constexpr uint32_t kScreenH = 1080;
 constexpr float kScreenMetres = 3.2f;
 constexpr float kScreenDistance = 2.6f;
-constexpr float kPanelMetres = 1.6f;    // the settings panel over play: its quad's width, and how far ahead
-constexpr float kPanelDistance = 1.2f;
 
 XrInstance g_instance = XR_NULL_HANDLE;
 XrSystemId g_system = XR_NULL_SYSTEM_ID;
@@ -54,6 +52,10 @@ std::vector<VkImage> g_images;
 XrSwapchain g_eye_chain[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
 uint32_t g_eye_images = 0;
 uint32_t g_screen_images = 0;  // the quad screen's, after both eyes' in g_images
+// the settings panel's swapchain (user: beside the pause menu and the title's menus, no button combo): its images
+// last in g_images, from g_panel_first
+XrSwapchain g_panel = XR_NULL_HANDLE;
+size_t g_panel_first = SIZE_MAX;
 VkExtent2D g_eye_extent{};
 // the views the frame being drawn is drawn with (located a frame ahead: draws run before the present that waits
 // for the headset), and the ones just located for the next. the layer says which pose the pixels were drawn for,
@@ -592,6 +594,18 @@ bool CreateSession(VkInstance instance, VkPhysicalDevice pd, VkDevice dev, uint3
     // debug: a file named stereo_off in the app's folder keeps theater mode
     if (std::filesystem::exists(app::ExeDir() / "stereo_off")) LOGR("xr: stereo off (stereo_off file)");
     else if (!CreateEyes(sc)) LOGR("xr: no eye swapchains, theater mode only");
+    // the settings panel's (the screen's size: its layout as the theater's)
+    if (XR_SUCCEEDED(xrCreateSwapchain(g_session, &sc, &g_panel))) {
+        uint32_t pn = 0;
+        xrEnumerateSwapchainImages(g_panel, 0, &pn, nullptr);
+        std::vector<XrSwapchainImageVulkan2KHR> pim(pn, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR});
+        if (XR_SUCCEEDED(xrEnumerateSwapchainImages(g_panel, pn, &pn,
+                                                    reinterpret_cast<XrSwapchainImageBaseHeader*>(pim.data())))) {
+            g_panel_first = g_images.size();
+            for (const auto& im : pim) g_images.push_back(im.image);
+            LOGR("xr: settings panel %ux%u, %u images", kScreenW, kScreenH, pn);
+        }
+    }
 
     if (!CreateActions()) LOGR("xr: no controller input");
     // a frame takes the lock for one display period at most, so this gets in between frames
@@ -706,6 +720,7 @@ bool HeadHeight(float& y) {
     return true;
 }
 int ImageEye(uint32_t index) {
+    if (index >= g_panel_first) return kPanel;
     if (!Stereo()) return kTheater;
     return index < g_eye_images ? 0 : index < 2 * g_eye_images ? 1 : kTheater;
 }
@@ -805,10 +820,14 @@ bool BeginFrame() {
     return fs.shouldRender;
 }
 
-XrSwapchain Chain(int eye) { return Stereo() && eye != kTheater ? g_eye_chain[eye & 1] : g_screen; }
+XrSwapchain Chain(int eye) {
+    if (eye == kPanel) return g_panel;
+    return Stereo() && eye != kTheater ? g_eye_chain[eye & 1] : g_screen;
+}
 
 bool AcquireScreen(int eye, uint32_t& index) {
     XrSwapchain chain = Chain(eye);
+    if (!chain || (eye == kPanel && g_panel_first == SIZE_MAX)) return false;
     if (!g_frame_begun || XR_FAILED(xrAcquireSwapchainImage(chain, nullptr, &index))) return false;
     XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
     wi.timeout = XR_INFINITE_DURATION;
@@ -816,13 +835,37 @@ bool AcquireScreen(int eye, uint32_t& index) {
         xrReleaseSwapchainImage(chain, nullptr);
         return false;
     }
-    if (Stereo()) index += eye == kTheater ? 2 * g_eye_images : uint32_t(eye & 1) * g_eye_images;
+    if (eye == kPanel) index += uint32_t(g_panel_first);
+    else if (Stereo()) index += eye == kTheater ? 2 * g_eye_images : uint32_t(eye & 1) * g_eye_images;
     return true;
 }
 
 void ReleaseScreen(int eye) { xrReleaseSwapchainImage(Chain(eye), nullptr); }
 
+// the settings panel's quad to the right of a menu at `at` (its centre, upright, its yaw) of half width `half`, at
+// the same height, turned to face the head
+XrPosef PanelBeside(const XrPosef& at, float half, float panel_w) {
+    const XrQuaternionf& q = at.orientation;
+    float rx = 1 - 2 * (q.y * q.y + q.z * q.z), rz = 2 * (q.x * q.z - q.w * q.y);  // the menu's +x
+    float l = std::sqrt(rx * rx + rz * rz);
+    if (l < 1e-3f) rx = 1, rz = 0, l = 1;
+    rx /= l, rz /= l;
+    float d = half + 0.08f + panel_w * 0.5f;
+    XrPosef p;
+    p.position = {at.position.x + rx * d, at.position.y, at.position.z + rz * d};
+    float hx = 0.5f * (g_render_views[0].pose.position.x + g_render_views[1].pose.position.x);
+    float hz = 0.5f * (g_render_views[0].pose.position.z + g_render_views[1].pose.position.z);
+    float yaw = std::atan2(hx - p.position.x, hz - p.position.z);
+    p.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
+    return p;
+}
+constexpr float kPanelBesideHud = 1.0f, kPanelBesideScreen = 1.6f;  // its width beside the paused hud, the theater
+
+std::atomic<bool> g_last_theater{true};
+bool LastTheater() { return g_last_theater.load(std::memory_order_relaxed); }
+
 void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
+    g_last_theater.store(theater || !Stereo(), std::memory_order_relaxed);
     struct Unlock {
         ~Unlock() {
             if (g_frame_locked) g_session_lock.unlock();
@@ -851,7 +894,8 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
         proj.space = g_local;
         proj.viewCount = 2;
         proj.views = pv;
-        // the settings panel: placed where the head looked as it opened, upright, facing it
+        // the settings panel beside the paused game's menu: the hud plane's place in the room (vulkan.cpp HudMatrix:
+        // 1.5 m ahead of the head's level forward as the pause came, 1.02 m each side), the panel to its right
         static bool placed = false;
         static XrPosef at{};
         if (!panel) placed = false;
@@ -862,19 +906,21 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
             float fx = -2 * (q.x * q.z + q.w * q.y), fz = -(1 - 2 * (q.x * q.x + q.y * q.y));  // -z rotated
             float yaw = std::atan2(-fx, -fz), l = std::sqrt(fx * fx + fz * fz);
             if (l < 1e-3f) fx = 0, fz = -1, l = 1;
-            at.position = {0.5f * (h.position.x + g_render_views[1].pose.position.x) + fx / l * kPanelDistance,
-                           0.5f * (h.position.y + g_render_views[1].pose.position.y) - 0.1f,
-                           0.5f * (h.position.z + g_render_views[1].pose.position.z) + fz / l * kPanelDistance};
-            at.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
+            XrPosef hud;
+            hud.position = {0.5f * (h.position.x + g_render_views[1].pose.position.x) + fx / l * 1.5f,
+                            0.5f * (h.position.y + g_render_views[1].pose.position.y),
+                            0.5f * (h.position.z + g_render_views[1].pose.position.z) + fz / l * 1.5f};
+            hud.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
+            at = PanelBeside(hud, 1.02f, kPanelBesideHud);
         }
         XrCompositionLayerQuad over{XR_TYPE_COMPOSITION_LAYER_QUAD};
         over.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;  // imgui over clear: premultiplied
         over.space = g_local;
         over.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-        over.subImage.swapchain = g_screen;
+        over.subImage.swapchain = g_panel;
         over.subImage.imageRect = {{0, 0}, {int32_t(kScreenW), int32_t(kScreenH)}};
         over.pose = at;
-        over.size = {kPanelMetres, kPanelMetres * kScreenH / kScreenW};
+        over.size = {kPanelBesideHud, kPanelBesideHud * kScreenH / kScreenW};
         // the test checklist's card over the back of the left wrist, a little up, and the hint just over the off hand:
         // each turned to face the head
         g_card_size = {};
@@ -961,11 +1007,21 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
     quad.pose = screen_at;
     quad.size = {kScreenMetres, kScreenMetres * kScreenH / kScreenW};
     g_ui_pose = quad.pose, g_ui_size = quad.size;
-    const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad)};
+    // the settings panel beside the title's menus: to the right of the theater screen
+    XrCompositionLayerQuad side = quad;
+    side.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    side.subImage.swapchain = g_panel;
+    side.size = {kPanelBesideScreen, kPanelBesideScreen * kScreenH / kScreenW};
+    if (panel && g_views_valid) {
+        side.pose = PanelBeside(screen_at, kScreenMetres * 0.5f, kPanelBesideScreen);
+        g_ui_pose = side.pose, g_ui_size = side.size;
+    }
+    const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad),
+                                                    reinterpret_cast<XrCompositionLayerBaseHeader*>(&side)};
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
     ei.displayTime = g_display_time;
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    ei.layerCount = drawn ? 1 : 0;
+    ei.layerCount = drawn ? (panel && g_views_valid ? 2 : 1) : 0;
     ei.layers = layers;
     XrResult r = xrEndFrame(g_session, &ei);
     if (XR_FAILED(r)) LOG_FIRST(4, "xr: xrEndFrame failed (%s)", ResultName(r));
@@ -989,23 +1045,8 @@ void ApplyPad(int port, input::Pad& p) {
     static clock::time_point start_until;
     auto now = clock::now();
     bool start = false, back = false;
-    // the settings panel (blackquest's cheats and vr settings): left grip held + the menu button, anywhere; while
-    // it's open the menu button or B closes it and the game gets nothing
-    static bool combo = false, b_was = false;
-    bool b_edge = c.b && !b_was;
-    b_was = c.b;
-    if (c.menu && !menu_was && (c.grip[0] > 0.6f || app::MenuOpen())) {
-        combo = true;
-        app::ToggleMenu();
-    } else if (b_edge && app::MenuOpen()) {
-        app::ToggleMenu();
-    }
-    if (combo || app::MenuOpen()) {
-        if (!c.menu) combo = false;
-        menu_was = c.menu;
-        back_sent = true;  // the press that opened or closed it is no START
-        return;
-    }
+    // the settings panel (blackquest's cheats and vr settings) comes with the game's own menus, beside them (user:
+    // no button combo; vr_body.cpp), and the game keeps its input
     if (c.menu && !menu_was) {
         menu_down = now;
         back_sent = false;

@@ -307,8 +307,30 @@ void RotateOnto(const float* a, const float* b, float* R) {
 bool HandInCamera(float yaw, float pitch, int hand, float* AC, float* hc, bool kick = true) {
     float A[9], hp[3];
     if (!HandPose(hand, A, hp)) return false;
+    const Options& opt = Opt();
+    if (hand == 1 && opt.vr_gun_angle != 45) {
+        // the gun's angle on the controller (user: a stock's mount): A · Rx, the barrel (-z) up for a positive angle
+        float t = (float(opt.vr_gun_angle) - 45) * 3.14159265f / 180, c = std::cos(t), sn = std::sin(t);
+        for (int i = 0; i < 3; i++) {
+            float y = A[i * 3 + 1], z = A[i * 3 + 2];
+            A[i * 3 + 1] = y * c + z * sn;
+            A[i * 3 + 2] = -y * sn + z * c;
+        }
+    }
     float L[9], lp[3];
-    if (hand == 1 && g_two_aim.load(std::memory_order_relaxed) && HandPose(0, L, lp)) {
+    bool stock = false;
+    if (hand == 1 && opt.vr_gunstock && HandPose(0, L, lp)) {
+        // a physical gunstock (user): both controllers fixed on it, the off one ahead of the gun hand along the
+        // barrel (8-90 cm, within 35 degrees of it): aimed at it, no grip. Its height over the barrel's line taken off
+        // along the gun's up
+        float h = (float(opt.vr_stock_height) - 10) * 0.01f;
+        for (int i = 0; i < 3; i++) lp[i] -= A[i * 3 + 1] * h;
+        float d[3] = {lp[0] - hp[0], lp[1] - hp[1], lp[2] - hp[2]};
+        float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        float along = len > 1e-4f ? -(d[0] * A[2] + d[1] * A[5] + d[2] * A[8]) / len : 0;
+        stock = len > 0.08f && len < 0.9f && along > std::cos(35 * 3.14159265f / 180);
+    }
+    if (hand == 1 && (stock || (g_two_aim.load(std::memory_order_relaxed) && HandPose(0, L, lp)))) {
         float d0[3] = {-A[2], -A[5], -A[8]}, d1[3] = {lp[0] - hp[0], lp[1] - hp[1], lp[2] - hp[2]};
         float len = std::sqrt(d1[0] * d1[0] + d1[1] * d1[1] + d1[2] * d1[2]);
         if (len > 0.08f) {

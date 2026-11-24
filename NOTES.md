@@ -1740,3 +1740,32 @@ brighter and bigger)
   last line (a gpu::ShaderHooks Output of our own, VrShaderHooks, set before any shader) lifts the colour's
   saturation by ext.y and gains it by ext.x, DrawConstants.ext 0 (unchanged) but for the hud's draws (1.35, 0.25,
   re-uploaded and rebound once the draw is known to be the hud's). The shader cache keys on the text: new shaders.
+
+## 2026-11-24: the VR settings panel beside the game's menus; gunstock support
+
+- User: the settings panel with the pause menu and the main menu, drawn to their right, no button combo; physical
+  gunstock support with its options. Committed first: e202e52 (the pause menu fixed, the theater in front, the hud).
+- xr.cpp: a swapchain of the panel's own (g_panel, the screen's size, its images last in the renderer's list from
+  g_panel_first; kPanel = 3, AcquireScreen/ReleaseScreen/ImageEye know it). Its quad (PanelBeside): to the right of
+  the game's menu, 8 cm off its edge, at its height, turned to the head: beside the theater screen (1.6 m wide) on
+  the title's menus, beside the paused hud plane (1.0 m wide; the plane's place as vulkan.cpp's HudMatrix puts it,
+  1.5 m ahead on the head's level forward, 1.02 m each side) in a pause. The pointer (MenuControls' quad) is the
+  panel's while it shows. The combo (left grip + menu) and B closing it are gone; xr::LastTheater says whether the
+  last frame went to the theater screen.
+- vr_body.cpp VrPad: in the headset the panel shows (app::SetMenuOpen, menu.cpp) while the game's paused over play
+  (its logic stopped, the world still drawn) or a title menu page is up (on the theater screen; the page name not
+  "", FMVPlayer, BootSequence, IntroCredits, BlackIntroSequence or memcardmessage); log "the settings panel beside
+  the menu / away". The game keeps its input (game_info.cpp Pad blocks it only off the headset); imgui takes the
+  pointer and the right trigger alone (ui.cpp: the sticks and A are the game's menu's).
+- vulkan.cpp: the panel drawn in a pass of its own on its swapchain (app::SetPanelPass; menu.cpp DrawUi draws the
+  panel only then in the headset), in play or on the theater; while it shows, the other passes run no imgui (a pass
+  with no window would take its clicks). The checklist's card keeps the screen's swapchain in play.
+- Gunstock (VR SETTINGS, GUNSTOCK): PHYSICAL GUNSTOCK (vr_gunstock: the barrel aims from the gun hand to the off hand
+  whenever it's 8-90 cm ahead within 35 degrees of the barrel, no grip), GUN ANGLE (vr_gun_angle, -45..+45 degrees in
+  5s: the gun's pitch on the controller, any time), OFF-HAND HEIGHT (vr_stock_height, -10..+10 cm: the off
+  controller over the barrel's line, taken off along the gun's up before aiming). vr_gun.cpp HandInCamera.
+- Tested on the headset: the panel's swapchain made (1920x1080, 3 images); beside the title's pages (PressStart,
+  blacktitlemenu2: seen to the right of the theater screen, its VR and GUNSTOCK rows), away for films and the
+  memory card message. In a dev pause it came 0.3 s after the game paused; the dev START's pause lets go by itself
+  2.6 s on (the page clears and the logic runs again), so the pause menu and the panel beside it are for the
+  user's hands. Not tested: the pointer on the panel, the gunstock (no controllers).

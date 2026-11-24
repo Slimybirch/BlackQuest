@@ -254,7 +254,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest };
+             kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest, kVrGunstock, kVrGunAngle,
+             kVrStockHeight };
 
 using rows::Kind;
 using rows::Row;
@@ -328,6 +329,10 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kVrGrip, "OFF-HAND GRIP"},
     {Kind::Value, kVrReload, "RELOAD"},
     {Kind::Value, kVrTotest, "TEST CHECKLIST"},
+    {Kind::Heading, -1, "GUNSTOCK"},
+    {Kind::Value, kVrGunstock, "PHYSICAL GUNSTOCK"},
+    {Kind::Value, kVrGunAngle, "GUN ANGLE"},
+    {Kind::Value, kVrStockHeight, "OFF-HAND HEIGHT"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -547,6 +552,25 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             if (step) o.vr_totest = !o.vr_totest;
             std::snprintf(text, sizeof(text), o.vr_totest ? "ON" : "OFF");
             return true;
+        case kVrGunstock:
+            // blackquest: a physical stock holds both controllers: the barrel aims at the off hand, no grip
+            if (step) o.vr_gunstock = !o.vr_gunstock;
+            std::snprintf(text, sizeof(text), o.vr_gunstock ? "ON" : "OFF");
+            return true;
+        case kVrGunAngle: {
+            // blackquest: the gun's pitch on the controller (a stock's mount, or the hand's taste), 5 degrees a step
+            if (step) o.vr_gun_angle = uint32_t(StepRange(int(o.vr_gun_angle), 0, 90, 5, step));
+            int deg = int(o.vr_gun_angle) - 45;
+            std::snprintf(text, sizeof(text), deg ? "%+d DEG" : "0 DEG", deg);
+            return true;
+        }
+        case kVrStockHeight: {
+            // blackquest: on a stock, the off controller this far over (or under) the barrel's line
+            if (step) o.vr_stock_height = uint32_t(StepRange(int(o.vr_stock_height), 0, 20, 1, step));
+            int cm = int(o.vr_stock_height) - 10;
+            std::snprintf(text, sizeof(text), cm ? "%+d CM" : "0 CM", cm);
+            return true;
+        }
         case kVrGrip:
             // blackquest: the off hand holds the gun while the grip is held, or a press takes it and the next lets go
             if (step) o.vr_grip_toggle = !o.vr_grip_toggle;
@@ -1115,6 +1139,14 @@ bool rows::Opens(const Row& row) {
 
 bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
 
+// in the headset the panel comes and goes with the game's own menus (vr_body.cpp), beside them on a swapchain of
+// its own, drawn in a pass of its own (vulkan.cpp)
+void SetMenuOpen(bool open) {
+    if (open != g_open.exchange(open, std::memory_order_relaxed)) g_capture = -1;
+}
+std::atomic<bool> g_panel_pass{false};
+void SetPanelPass(bool on) { g_panel_pass.store(on, std::memory_order_relaxed); }
+
 bool Capturing() { return g_capture >= 0; }
 
 void ToggleMenu() {
@@ -1132,10 +1164,10 @@ void DrawUi(double fps) {
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
     // scale the font with the output height
     io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 720.0f);
-    if (MenuOpen()) {
+    if (MenuOpen() && (!xr::Active() || g_panel_pass.load(std::memory_order_relaxed))) {
         PollCapture();
         DrawPanel();
-    } else {
+    } else if (!MenuOpen()) {
         ::game::VrTotestUi();  // the test checklist's card, in its own pass (nothing otherwise)
     }
 }

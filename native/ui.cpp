@@ -137,12 +137,7 @@ void NewFrame(float width, float height) {
     if (xr::Active() && xr::MenuControls(in)) {
         // the headset: the right controller points and its trigger clicks; the left stick moves and steps, A presses
         // (B closes the panel: xr.cpp). imgui draws the cursor itself: there's no system one in the headset
-        io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
-        io.AddKeyEvent(ImGuiKey_GamepadFaceDown, in.a);
-        io.AddKeyEvent(ImGuiKey_GamepadDpadLeft, in.stick[0] < -0.5f);
-        io.AddKeyEvent(ImGuiKey_GamepadDpadRight, in.stick[0] > 0.5f);
-        io.AddKeyEvent(ImGuiKey_GamepadDpadUp, in.stick[1] > 0.5f);
-        io.AddKeyEvent(ImGuiKey_GamepadDpadDown, in.stick[1] < -0.5f);
+        // (the panel is beside the game's own menus now: the sticks and A stay theirs, the pointer is the panel's)
         static bool pointed = false, held = false;
         in.pointing = in.pointing && app::MenuOpen();  // no cursor over the game's own screens
         io.MouseDrawCursor = in.pointing;

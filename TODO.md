@@ -310,4 +310,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 ## Phase 7 (UI; user, 2026-11-24)
 - [x] (built) the pause menu fixed in space; the menu after quitting in front of the player; the hud 17% bigger and
       brighter (gain 1.35, saturation +25%)
-- [ ] the VR settings window (see "VR controls"), Android's dialogs on the virtual screen, mission 1 headset-on
+- [x] (built) the VR settings panel beside the pause and main menus, no combo; gunstock support and its options
+- [ ] Android's dialogs on the virtual screen, mission 1 headset-on; the settings window's pages (comfort, hands,
+      height, graphics) as planned under "VR controls"
+- [ ] two-handed holds for the Uzi and the Mac-10 (user, 2026-11-24: if there's one already, it doesn't work)

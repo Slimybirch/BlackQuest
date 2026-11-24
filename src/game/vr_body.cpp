@@ -28,6 +28,10 @@ void VrLookUsed(float yaw, float pitch);
 using namespace kernel;
 using namespace layout;
 
+namespace app {
+void SetMenuOpen(bool open);  // src/common/menu.cpp
+}
+
 namespace game {
 bool VrDevModePress();  // vr_reload.cpp: dev_modeflip's press of the fire-mode button now
 void TestEvent(const std::string& name);  // vr_totest.cpp: the test checklist
@@ -247,8 +251,35 @@ void DevPad(input::Pad& pad) {
 bool VrRecording() { return NowMs() < g_record_until.load(); }
 
 // game thread, each pad poll of port 0
+// the title's menu page now (the front end's page name; "" in play and loading)
+std::string PageName() {
+    uint32_t ui = R32(layout::kUi);
+    std::string page;
+    if (ui)
+        for (int i = 0; i < 32; i++) {
+            char ch = char(G<uint8_t>(ui + layout::kPageName + i));
+            if (!ch) break;
+            page += ch;
+        }
+    return page;
+}
+
 void VrPad(input::Pad& pad) {
     DevPad(pad);
+    // the settings panel beside the game's own menus (user: no button combo): the paused game's (its logic stopped,
+    // the world still drawn), or a title menu page (on the theater screen; not a film, the boot's or loading)
+    if (xr::Active()) {
+        static const std::string kNotMenus[] = {"", "FMVPlayer", "BootSequence", "IntroCredits", "BlackIntroSequence",
+                                                "memcardmessage"};
+        std::string page = PageName();
+        bool title_menu = xr::LastTheater() && std::find(std::begin(kNotMenus), std::end(kNotMenus), page) ==
+                                                   std::end(kNotMenus);
+        bool paused = VrMenuOverPlay() && !xr::LastTheater();
+        bool show = title_menu || paused;
+        static bool shown = false;
+        if (show != shown) LOGR("vr body: the settings panel %s (page \"%s\")", show ? "beside the menu" : "away", page.c_str()), shown = show;
+        app::SetMenuOpen(show);
+    }
     // in play the head looks up and down; the right stick turns the body, a flick a step (or smoothly: the game's)
     if (NowMs() - g.play_ms < 250) {
         uint32_t snap = Opt().vr_snap_turn;

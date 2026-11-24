@@ -105,3 +105,7 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] The pause menu stays put in the room when you turn your head (confirm)
 - [ ] Quitting a level: the game's menu comes up in front of you (confirm)
 - [ ] The hud bigger and brighter, readable at low health (confirm)
+- [ ] The VR settings panel appears to the right of the main menu, no button combo (confirm)
+- [ ] The VR settings panel appears to the right of the pause menu, and the pause menu still works with the sticks (confirm)
+- [ ] The panel's settings change with the right controller's pointer and trigger (confirm)
+- [ ] Gunstock on: the gun aims at the off hand without gripping; gun angle and off-hand height adjust it (confirm)

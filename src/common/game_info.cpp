@@ -1,3 +1,4 @@
+#include "xr.h"
 #include <algorithm>
 #include <iterator>
 
@@ -19,7 +20,7 @@ namespace {
 void Pad(int port, input::Pad& pad) {
     input::SeenPad(pad);
     if (port == 0) pad.connected = true;
-    if (app::MenuOpen()) pad = input::Pad{.connected = pad.connected};
+    if (app::MenuOpen() && !xr::Active()) pad = input::Pad{.connected = pad.connected};
     else if (port == 0) {
         input::Keyboard(pad);
         VrPad(pad);
@@ -114,6 +115,9 @@ const app::GameInfo app::kGame = {
                 {"vr_grip_toggle", &game::Opt().vr_grip_toggle, nullptr},
                 {"vr_manual_reload", &game::Opt().vr_manual_reload, nullptr},
                 {"vr_totest", &game::Opt().vr_totest, nullptr},
+                {"vr_gunstock", &game::Opt().vr_gunstock, nullptr},
+                {"vr_gun_angle", nullptr, &game::Opt().vr_gun_angle},
+                {"vr_stock_height", nullptr, &game::Opt().vr_stock_height},
                 {"dynamic_resolution", &game::Opt().dynamic_resolution, nullptr},
                 {"dynamic_target_fps", nullptr, &game::Opt().dynamic_target_fps},
                 {"dynamic_min_percent", nullptr, &game::Opt().dynamic_min_percent},
