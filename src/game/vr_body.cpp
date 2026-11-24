@@ -12,6 +12,7 @@
 
 #include "app/app.h"
 #include "common/menu.h"
+#include "game/flash.h"
 #include "core/log.h"
 #include "core/input.h"
 #include "game/layout.h"
@@ -108,6 +109,16 @@ constexpr int64_t kMeleeHide = 650;    // ms: about the game's melee swing
 // presses near the face aren't taken for it
 constexpr float kShoulderRight = 0.15f, kShoulderBack = 0.08f, kShoulderUp = -0.08f, kShoulderReach = 0.12f;
 
+// the game paused over play (its pause menu): the weapons' logic, which runs every tick of play, hasn't run for a
+// while (the title card and the hud's pages don't stop it). The renderer fixes the hud plane in the room then
+// (vulkan.cpp HudMatrix)
+std::atomic<int64_t> g_logic_ms{0};
+void VrLogicTick() { g_logic_ms.store(NowMs(), std::memory_order_relaxed); }
+bool VrMenuOverPlay() {
+    int64_t t = g_logic_ms.load(std::memory_order_relaxed);
+    return t && NowMs() - t > 300;
+}
+
 void VrControls(input::Pad& pad) {
     int64_t now = NowMs();
     if (pad.ry > kStickPress) pad.buttons |= 1 << 0;
@@ -199,6 +210,19 @@ void DevPad(input::Pad& pad) {
     if (dev_mode) pad.buttons |= 1;  // dev_modeflip: the d-pad's up (the fire mode)
     if (dev_mode && !dev_mode_was) g_mode_presses++;
     dev_mode_was = dev_mode;
+    {
+        // the page's name, as it changes (the menus' log)
+        uint32_t ui = R32(layout::kUi);
+        static std::string last_page;
+        std::string page;
+        if (ui)
+            for (int i = 0; i < 32; i++) {
+                char ch = char(G<uint8_t>(ui + layout::kPageName + i));
+                if (!ch) break;
+                page += ch;
+            }
+        if (page != last_page) LOGR("vr body: page \"%s\" (play %d, input %d)", page.c_str(), play, ui && layout::InputTaken(ui)), last_page = page;
+    }
     // dev_menu: the settings panel opens once, 5 s into play (or 20 s after boot without autostart: the title)
     static const bool menu = std::filesystem::exists(app::ExeDir() / "dev_menu");
     static int64_t boot = now, first_play = 0;

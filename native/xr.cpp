@@ -831,7 +831,13 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
     } unlock;
     if (!g_frame_begun) return;
     g_frame_begun = false;
+    // the theater screen goes in front of the head each time play hands over to it (user: after quitting a level the
+    // menu was off to the side, where the room's forward was at the start): from play's last views, upright, its
+    // yaw; before any play, ahead of the room's origin
+    static bool from_play = false;
+    static XrPosef screen_at{{0, 0, 0, 1}, {0, 0, -kScreenDistance}};
     if (Stereo() && !theater) {
+        from_play = true;
         // the eyes as drawn: the views they were drawn with, then the next frame's draws take the ones just located
         XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW},
                                                   {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
@@ -938,8 +944,21 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
     quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
     quad.subImage.swapchain = g_screen;
     quad.subImage.imageRect = {{0, 0}, {int32_t(kScreenW), int32_t(kScreenH)}};
-    quad.pose.orientation.w = 1;
-    quad.pose.position = {0, 0, -kScreenDistance};
+    if (from_play && g_views_valid) {
+        from_play = false;
+        const XrPosef& h = g_render_views[0].pose;
+        const XrQuaternionf& q = h.orientation;
+        float fx = -2 * (q.x * q.z + q.w * q.y), fz = -(1 - 2 * (q.x * q.x + q.y * q.y));  // -z rotated
+        float l = std::sqrt(fx * fx + fz * fz);
+        if (l < 1e-3f) fx = 0, fz = -1, l = 1;
+        float yaw = std::atan2(-fx, -fz);
+        screen_at.position = {0.5f * (h.position.x + g_render_views[1].pose.position.x) + fx / l * kScreenDistance,
+                              0.5f * (h.position.y + g_render_views[1].pose.position.y),
+                              0.5f * (h.position.z + g_render_views[1].pose.position.z) + fz / l * kScreenDistance};
+        screen_at.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
+        LOGR("xr: the theater screen placed ahead of the head (yaw %.0f deg)", yaw * 57.3f);
+    }
+    quad.pose = screen_at;
     quad.size = {kScreenMetres, kScreenMetres * kScreenH / kScreenW};
     g_ui_pose = quad.pose, g_ui_size = quad.size;
     const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad)};
@@ -996,6 +1015,20 @@ void ApplyPad(int port, input::Pad& p) {
     // a tap: START held for a few frames after the release, so the game's poll sees it
     if (!c.menu && menu_was && !back_sent) start_until = now + std::chrono::milliseconds(100);
     if (now < start_until) start = true;
+    {
+        // dev_pause: the menu button's tap (START) once, 40 s after the first poll (the pause menu without the
+        // controllers)
+        static const bool dev_pause = std::filesystem::exists(app::ExeDir() / "dev_pause");
+        static const auto first = now;
+        static bool tapped = false;
+        static std::chrono::steady_clock::time_point dev_until{};
+        if (dev_pause && !tapped && now - first > std::chrono::seconds(40)) {
+            tapped = true;
+            dev_until = now + std::chrono::milliseconds(150);
+            LOGR("xr: dev_pause: START");
+        }
+        if (now < dev_until) p.buttons |= 1 << 4;  // (here: without live controllers the rest isn't reached)
+    }
     menu_was = c.menu;
     if (!c.live) return;
     p.connected = true;

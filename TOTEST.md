@@ -100,3 +100,8 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 ## Older, not yet confirmed by hand
 - [ ] The aim at distance after the recoil fix (M16, M249, MP5, Uzi) (confirm)
 - [ ] Pistol: rack the slide taking its top or back half (auto: rack:PST)
+
+## Phase 7: UI
+- [ ] The pause menu stays put in the room when you turn your head (confirm)
+- [ ] Quitting a level: the game's menu comes up in front of you (confirm)
+- [ ] The hud bigger and brighter, readable at low health (confirm)

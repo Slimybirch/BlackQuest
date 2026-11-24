@@ -435,9 +435,13 @@ static void ThrowGrenade(X86Context& ctx, uint8_t* base, uint32_t me) {
     __imp__sub_001DD000(ctx, base);
     ctx = saved;
 }
+namespace game {
+void VrLogicTick();  // vr_body.cpp: a weapon's logic ran this tick
+}
 X86_EXTERN_FUNC(__imp__sub_001EEFD0);
 X86_FUNC(sub_001EEFD0) {
     uint32_t weapon = R32(ctx.esp + 4);
+    game::VrLogicTick();  // the game's logic ran (none while it's paused: the renderer fixes the pause menu's plane)
     // phase 5: reloading by hand: every way the game starts a reload (0x1EF4D7, FUN_001BB340 at 0x1BB35E, both
     // called from in here) needs reserve rounds, so the player's gun shows none while this runs; the reserve comes
     // back after, with whatever the call added (a pickup)

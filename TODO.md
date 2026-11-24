@@ -299,11 +299,15 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] the Walther's rock after a shot (its frame held at rest too), its magazine's catch from the well's bottom, its
       off hand 6 cm nearer the trigger (and the GRL's 8 cm out: both had been moved the wrong way)
 - [ ] the Walther's off hand's angle on the fore-end: the user's look (test hands cup it from under)
-- [ ] the WA2000's right side the same way
-- [ ] the Walther: its magazine's and the off hand's angle; the magazine hard to seat; the rock after a shot (fail)
+- [x] the WA2000's right side the same way
+- [x] the Walther: its magazine's and the off hand's angle; the magazine hard to seat; the rock after a shot (fail)
 - [ ] the Uzi and Walther free off hand still turned, the Uzi's fore-grip not taken (fails)
 - [ ] fails to look at: the SPAS's and Remington's shells in the hand; the RPG's rocket in the hand; grenades into the
       GRL's and M203's open tubes and shutting them; the magnum opening by angling down, its speed loader in the
       hand; the M16's magazine and rack; the M16 and M249 stocks' look; the aim at distance; the hand grenade
       pieces (taken, thrown, the M67 in the hand: marked before there were grenades, user)
 
+## Phase 7 (UI; user, 2026-11-24)
+- [x] (built) the pause menu fixed in space; the menu after quitting in front of the player; the hud 17% bigger and
+      brighter (gain 1.35, saturation +25%)
+- [ ] the VR settings window (see "VR controls"), Android's dialogs on the virtual screen, mission 1 headset-on

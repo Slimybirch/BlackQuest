@@ -54,6 +54,7 @@ bool VrMirror(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* i
               int32_t base, bool strip, const uint8_t*& verts, uint32_t& vbytes_out, const void*& idx,
               uint32_t& icount);  // vr_gun.cpp
 void VrDumpGunTexture(uint32_t key, const uint8_t* px, uint32_t pitch, uint32_t w, uint32_t h);  // vr_gun.cpp
+bool VrMenuOverPlay();  // vr_body.cpp: the game paused over play (its pause menu)
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
 void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
 int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
@@ -965,9 +966,26 @@ constexpr float kUnitsPerMetre = 1.0f;
 // the view's raise over the headset's own height: xr::kEyeRaise. the view follows the headset up and down, and
 // game::VrViewLift gives back the game's camera drop while a real crouch crouches it (vr_body.cpp)
 using xr::kEyeRaise;
-// the head-locked hud plane: metres ahead and half its width (30 degrees each side), its height by the screen's shape
+// the head-locked hud plane: metres ahead and half its width (34 degrees each side: user, the hud 15-20% bigger, was
+// 30), its height by the screen's shape
 constexpr float kHudDistance = 1.5f;
-constexpr float kHudHalfWidth = 0.87f;
+constexpr float kHudHalfWidth = 1.02f;
+// the hud brighter (user: its dark made it hard to read as health ran low): each of its pixels' colour times this,
+// its saturation lifted by this (vr_gun's shader hook, DrawConstants ext)
+constexpr float kHudGain = 1.35f, kHudSaturation = 0.25f;
+
+// the hud's brightness in every pixel shader's last line: ext.x the gain, ext.y the saturation's lift, both 0 (no
+// change) but for the hud's draws
+struct VrShaderHooks : gpu::ShaderHooks {
+    std::string Output() const override {
+        return "if (ext.x > 0) {\n"
+               "    float l = dot(outc.rgb, float3(0.299, 0.587, 0.114));\n"
+               "    outc.rgb = lerp(l.xxx, outc.rgb, 1 + ext.y) * ext.x;\n"
+               "}\n"
+               "outc.rgb = saturate(outc.rgb);\n";
+    }
+};
+VrShaderHooks g_vr_hooks;
 
 // row-major 3x3 rotation of a unit quaternion (x, y, z, w)
 void QuatMatrix(const float* q, float* R) {
@@ -985,6 +1003,53 @@ void QuatMatrix(const float* q, float* R) {
 bool HudMatrix(int eye, float aspect, float* out) {
     xr::EyeView ev, other;
     if (!xr::RenderEye(eye, ev) || !xr::RenderEye(1 - eye, other)) return false;
+    // the pause menu (a menu page over play: user, fixed in space): the plane stays in the room where it was ahead
+    // of the head as the menu came up, upright, turned with the head's yaw; the eye looks at it from where it is
+    {
+        static bool fixed = false;
+        static float c[3], Rp[9];
+        // (dev_hudlocked: never fixed, to compare)
+        static const bool locked = std::filesystem::exists(app::ExeDir() / "dev_hudlocked");
+        if (locked || !::game::VrMenuOverPlay()) {
+            fixed = false;
+        } else {
+            if (!fixed) {
+                fixed = true;
+                LOGR("vulkan: the game paused over play: the hud plane fixed in the room");
+                float h[3], R[9];
+                for (int i = 0; i < 3; i++) h[i] = (ev.pos[i] + other.pos[i]) * 0.5f;
+                QuatMatrix(ev.quat, R);
+                float fx = -R[2], fz = -R[8], l = std::sqrt(fx * fx + fz * fz);  // the view's -z, level
+                if (l < 1e-3f) fx = 0, fz = -1, l = 1;
+                fx /= l, fz /= l;
+                c[0] = h[0] + fx * kHudDistance, c[1] = h[1], c[2] = h[2] + fz * kHudDistance;
+                // the plane's x right, y up, z back toward the head
+                float r[9] = {-fz, 0, fx, 0, 1, 0, -fx, 0, -fz};
+                std::memcpy(Rp, r, sizeof(r));
+            }
+            float Re[9];
+            QuatMatrix(ev.quat, Re);
+            // A = Reᵀ Rp (the plane's axes in the eye), b = Reᵀ (c - eye)
+            float A[9], b[3], d[3] = {c[0] - ev.pos[0], c[1] - ev.pos[1], c[2] - ev.pos[2]};
+            for (int i = 0; i < 3; i++) {
+                b[i] = Re[0 * 3 + i] * d[0] + Re[1 * 3 + i] * d[1] + Re[2 * 3 + i] * d[2];
+                for (int j = 0; j < 3; j++)
+                    A[i * 3 + j] = Re[0 * 3 + i] * Rp[0 * 3 + j] + Re[1 * 3 + i] * Rp[1 * 3 + j] + Re[2 * 3 + i] * Rp[2 * 3 + j];
+            }
+            float l = ev.tan[0], r = ev.tan[1], u = ev.tan[2], dn = ev.tan[3];
+            float wh = kHudHalfWidth, hh = kHudHalfWidth / aspect;
+            // the clip's (x, y) to the eye's (X, Y) and its depth Z = -z, each a row over (x, y, z, 1)
+            float X[4] = {A[0] * wh, A[1] * hh, 0, b[0]}, Y[4] = {A[3] * wh, A[4] * hh, 0, b[1]},
+                  Z[4] = {-A[6] * wh, -A[7] * hh, 0, -b[2]};
+            for (int k = 0; k < 4; k++) {
+                out[0 * 4 + k] = (2 * X[k] - (r + l) * Z[k]) / (r - l);
+                out[1 * 4 + k] = (2 * Y[k] - (u + dn) * Z[k]) / (u - dn);
+                out[2 * 4 + k] = 1e-4f * Z[k];
+                out[3 * 4 + k] = Z[k];
+            }
+            return true;
+        }
+    }
     float d[3] = {(ev.pos[0] - other.pos[0]) * 0.5f, (ev.pos[1] - other.pos[1]) * 0.5f,
                   (ev.pos[2] - other.pos[2]) * 0.5f};
     float R[9];
@@ -1502,6 +1567,7 @@ private:
 // ---- Init
 
 bool VulkanBackend::Init(uint32_t width, uint32_t height) {
+    gpu::g_shader_hooks = &g_vr_hooks;  // the hud's brightness (before any shader is made)
     guest_w_ = width;
     guest_h_ = height;
     vkshader::Init(app::ExeDir() / "shadercache");
@@ -3444,6 +3510,12 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         scene_proj_ok_[pe] = true;
     }
     bool hud = overlay && !last_theater_ && !world && !gun;
+    if (hud && stereo_) {
+        // brighter (kHudGain): its constants again with the gain, bound in place of the first
+        c.ext[0] = kHudGain, c.ext[1] = kHudSaturation;
+        dc = Constants(&c, sizeof(c));
+        BindSet(set, vc.off, dc.off);
+    }
     // debug: a file named stereo_noeye in the app's folder keeps both eyes but leaves draws where the game put them
     static const bool noeye = std::filesystem::exists(app::ExeDir() / "stereo_noeye");
     if (stereo_ && !noeye && (world || gun || hud)) {

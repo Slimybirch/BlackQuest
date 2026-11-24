@@ -1720,3 +1720,23 @@ game's M249 is back; tools/m249para.py is no longer built.
   to 5 cm under the seat (2.4 cm past the mouth) and 3 cm round it (GunParts.seat_reach), was 3 cm and 2 cm. Held
   in the off hand (dev_eject, dev_maghand) it's upright, its top past the thumb; the measured magazine (368
   vertices) is 8.8 cm deep and 7 cm tall, its insert straight up.
+
+## 2026-11-24: Phase 7 begins: the in-game UI (user: the pause menu fixed, the menu after quitting in front, the hud
+brighter and bigger)
+
+- The pause menu fixed in space: the game paused over play (vr_body.cpp VrMenuOverPlay: the weapons' logic,
+  hooks.cpp's sub_001EEFD0 wrapper, hasn't run for 300 ms; the menu level and "a page takes input" were tried first
+  and failed: the level's title card loads at the menu level and takes input, and both hold through play) turns
+  the hud plane from head-locked to the room (log "the game paused over play"): vulkan.cpp HudMatrix places it once,
+  1.5 m ahead of the head's level forward as the menu comes up, upright, and each eye sees it from where it is
+  (the clip (x, y) to the plane, to the eye: Reᵀ Rp and Reᵀ(c - eye), then the eye's frustum). dev_pause (xr.cpp
+  ApplyPad, before its live-controller check): START 40 s after the first poll; the game pauses (page "PauseMenu",
+  then "" 2.7 s on, the logic stopped) but no menu draws in that test, head-locked (dev_hudlocked) or fixed: the
+  menu itself is for the user's hands. The pages' names are logged as they change (vr body: page "...").
+- The menu after quitting in front: the theater screen (xr.cpp EndFrame's quad, menus, films, loading) was fixed at
+  the room's origin forward; now each time play hands over to it, it's placed 2.6 m ahead of the head from play's
+  last views (log "theater screen placed ahead of the head"). Before any play, as before.
+- The hud: its plane's half width 0.87 to 1.02 m at 1.5 m (17% bigger); its draws brighter: every pixel shader's
+  last line (a gpu::ShaderHooks Output of our own, VrShaderHooks, set before any shader) lifts the colour's
+  saturation by ext.y and gains it by ext.x, DrawConstants.ext 0 (unchanged) but for the hud's draws (1.35, 0.25,
+  re-uploaded and rebound once the draw is known to be the hud's). The shader cache keys on the text: new shaders.
