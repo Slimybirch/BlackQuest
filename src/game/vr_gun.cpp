@@ -45,6 +45,7 @@ std::string HeldCode();  // weapons.cpp
 }
 
 namespace game {
+void VrScopeHeld(const std::string& code);  // (below: scopes)
 float VrViewLift();                           // vr_body.cpp
 bool VrLookAngles(float& yaw, float& pitch);  // vr_body.cpp
 bool VrMeleeHidden();                          // vr_body.cpp
@@ -302,6 +303,12 @@ void RotateOnto(const float* a, const float* b, float* R) {
         }
 }
 
+// the gun hand's frame in the room (local space: A's columns its axes, -z down the barrel; p the grip) as last
+// posed, for the scope
+std::mutex g_scope_lock;
+float g_scope_a[9], g_scope_p[3];
+int64_t g_scope_ms = 0;
+
 // a hand's aim orientation and grip position in C, for the head angles the camera was built from. kick: the gun hand
 // with the recoil on it. With the off hand on a long gun, the gun hand's barrel turns to point at it
 bool HandInCamera(float yaw, float pitch, int hand, float* AC, float* hc, bool kick = true) {
@@ -355,6 +362,13 @@ bool HandInCamera(float yaw, float pitch, int hand, float* AC, float* hc, bool k
         }
         const float back = turn ? deg * kKickBack : std::min(deg * kKickBack, 0.02f);  // (the walther: 2 cm at most)
         for (int i = 0; i < 3; i++) hp[i] += A[i * 3 + 2] * back;
+    }
+    if (kick && hand == 1) {
+        // the gun's frame in the room as posed (the scope's place, below)
+        std::lock_guard lock(g_scope_lock);
+        std::memcpy(g_scope_a, A, sizeof(g_scope_a));
+        std::memcpy(g_scope_p, hp, sizeof(g_scope_p));
+        g_scope_ms = NowMs();
     }
     float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
     float U[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
@@ -2788,6 +2802,7 @@ void VrGunFrame(X86Context& ctx) {
     Cross(right, f.fwd, f.up);  // up = right × fwd in a right handed frame (x right, y up, z back)
     Normalize(f.up);
     std::string code = weapons::HeldCode();
+    VrScopeHeld(code);
     auto it = kGrips.find(code);
     const Grip& g = it == kGrips.end() ? kDefaultGrip : it->second;
     for (int i = 0; i < 3; i++) f.grip[i] = mc[i] - f.fwd[i] * g.back - f.up[i] * g.down;
@@ -2931,3 +2946,119 @@ X86_FUNC(sub_001DB7B0) {
     }
     __imp__sub_001DB7B0(ctx, base);
 }
+
+// ---- scopes (user, the design of 2026-11-20): the scope as a lens. Its view is drawn by a third replay of the frame
+// (render_thread.cpp, vulkan.cpp: stereo::kScopeEye) from a camera at its eyepiece down the barrel, a narrow field,
+// and each eye draws that picture inside the eyepiece's circle (the eyes' filter pass), turned level with the eye,
+// a reticle over it, dark when the eye is off the scope's axis. So aiming is bringing the scope to the eye; the
+// headset's view never zooms, and the game's own scope (its aim-in zoom and overlay) isn't used in VR. The
+// Walther WA2000 (SNR, SN5) is the game's one scoped gun. dev_scope "up back radius [side]" (metres) moves the eyepiece
+// for tuning; dev_scope_any draws the lens with the eye off its axis too (tests with dev_fakehands)
+namespace game {
+namespace {
+// the eyepiece's centre from the grip, in the gun's frame: up its y, back along +z, right along x; its glass's
+// radius (fitted to the WA2000 in the hand from headset shots, 2026-11-24)
+struct ScopeFit {
+    float up = 0.14f, back = -0.04f, radius = 0.022f, side = -0.025f;
+};
+const ScopeFit& Fit() {
+    static const ScopeFit f = [] {
+        ScopeFit s;
+        std::ifstream in(app::ExeDir() / "dev_scope");
+        float u, b, r, x;
+        if (in >> u >> b >> r) s.up = u, s.back = b, s.radius = r;
+        if (in >> x) s.side = x;
+        return s;
+    }();
+    return f;
+}
+constexpr float kScopeHalfTan = 0.06f;  // the view's half height (about 3.4 degrees: some 4x in the glass)
+std::atomic<bool> g_scoped{false};      // a scoped gun in the hand (from the gun's per-frame update)
+
+bool ScopeFrame(float* A, float* eyepiece) {
+    if (!g_scoped.load(std::memory_order_relaxed)) return false;
+    float p[3];
+    {
+        std::lock_guard lock(g_scope_lock);
+        if (NowMs() - g_scope_ms > 250) return false;
+        std::memcpy(A, g_scope_a, sizeof(g_scope_a));
+        std::memcpy(p, g_scope_p, sizeof(p));
+    }
+    const ScopeFit& f = Fit();
+    for (int i = 0; i < 3; i++) eyepiece[i] = p[i] + A[i * 3] * f.side + A[i * 3 + 1] * f.up + A[i * 3 + 2] * f.back;
+    return true;
+}
+
+void QuatOf(const float* m, float* q) {
+    // a rotation matrix (rows) to x, y, z, w
+    float t = m[0] + m[4] + m[8];
+    if (t > 0) {
+        float s = std::sqrt(t + 1) * 2;
+        q[3] = 0.25f * s, q[0] = (m[7] - m[5]) / s, q[1] = (m[2] - m[6]) / s, q[2] = (m[3] - m[1]) / s;
+    } else if (m[0] > m[4] && m[0] > m[8]) {
+        float s = std::sqrt(1 + m[0] - m[4] - m[8]) * 2;
+        q[3] = (m[7] - m[5]) / s, q[0] = 0.25f * s, q[1] = (m[1] + m[3]) / s, q[2] = (m[2] + m[6]) / s;
+    } else if (m[4] > m[8]) {
+        float s = std::sqrt(1 + m[4] - m[0] - m[8]) * 2;
+        q[3] = (m[2] - m[6]) / s, q[0] = (m[1] + m[3]) / s, q[1] = 0.25f * s, q[2] = (m[5] + m[7]) / s;
+    } else {
+        float s = std::sqrt(1 + m[8] - m[0] - m[4]) * 2;
+        q[3] = (m[3] - m[1]) / s, q[0] = (m[2] + m[6]) / s, q[1] = (m[5] + m[7]) / s, q[2] = 0.25f * s;
+    }
+}
+}  // namespace
+
+void VrScopeHeld(const std::string& code) { g_scoped.store(code == "SNR" || code == "SN5", std::memory_order_relaxed); }
+
+bool VrScopeWanted() {
+    float A[9], e[3];
+    xr::EyeView ev;
+    if (!ScopeFrame(A, e) || !xr::RenderEye(0, ev)) return false;
+    float d[3] = {e[0] - ev.pos[0], e[1] - ev.pos[1], e[2] - ev.pos[2]};
+    return d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 0.5f * 0.5f;  // (within half a metre of the head)
+}
+
+bool VrScopeEye(xr::EyeView& ev) {
+    float A[9], e[3];
+    if (!ScopeFrame(A, e)) return false;
+    std::memcpy(ev.pos, e, sizeof(e));
+    QuatOf(A, ev.quat);
+    // the game's frame is 4:3: as wide again by that, square pixels (the glass uses its middle square)
+    ev.tan[0] = -kScopeHalfTan * 4 / 3, ev.tan[1] = kScopeHalfTan * 4 / 3;
+    ev.tan[2] = kScopeHalfTan, ev.tan[3] = -kScopeHalfTan;
+    return true;
+}
+
+bool VrScopeLens(int eye, float* lens) {
+    float A[9], e[3];
+    xr::EyeView ev;
+    if (!ScopeFrame(A, e) || !xr::RenderEye(eye, ev)) return false;
+    // the eye's axes (columns), the eyepiece in them
+    const float* q = ev.quat;
+    float xx = q[0] * q[0], yy = q[1] * q[1], zz = q[2] * q[2];
+    float xy = q[0] * q[1], xz = q[0] * q[2], yz = q[1] * q[2], wx = q[3] * q[0], wy = q[3] * q[1], wz = q[3] * q[2];
+    float R[9] = {1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy), 2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx),
+                  2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)};
+    float d[3] = {e[0] - ev.pos[0], e[1] - ev.pos[1], e[2] - ev.pos[2]}, c[3];
+    for (int i = 0; i < 3; i++) c[i] = R[0 * 3 + i] * d[0] + R[1 * 3 + i] * d[1] + R[2 * 3 + i] * d[2];
+    if (c[2] > -0.02f) return false;  // behind the eye, or at it
+    float tx = c[0] / -c[2], ty = c[1] / -c[2], tr = Fit().radius / -c[2];
+    float l = ev.tan[0], r = ev.tan[1], u = ev.tan[2], dn = ev.tan[3];
+    lens[0] = (tx - l) / (r - l);
+    lens[1] = (u - ty) / (u - dn);
+    lens[2] = tr / (r - l);
+    lens[3] = tr / (u - dn);
+    // off the axis: the eye seen from the eyepiece against the scope's back (+z), dark past about 12 degrees
+    float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    float along = -(d[0] * A[2] + d[1] * A[5] + d[2] * A[8]) / len;
+    static const bool any = std::filesystem::exists(app::ExeDir() / "dev_scope_any");
+    float off = std::acos(std::clamp(along, -1.0f, 1.0f)) * 180 / 3.14159265f;
+    lens[4] = any ? 0.0f : std::clamp((off - 5) / 7, 0.0f, 1.0f);
+    // the gun's x axis in the eye: its roll against the eye's
+    float gx[3];
+    for (int i = 0; i < 3; i++) gx[i] = R[0 * 3 + i] * A[0] + R[1 * 3 + i] * A[3] + R[2 * 3 + i] * A[6];
+    float roll = std::atan2(gx[1], gx[0]);
+    lens[6] = std::cos(roll), lens[7] = std::sin(roll);
+    return true;
+}
+}  // namespace game

@@ -488,10 +488,17 @@ private:
             }
             if (!present && !waited && pending_.size() < kMaxPending) continue;
             stereo::BeginEye(1);
-            for (Batch* p : pending_) {
+            scope_start_ = states_[1];
+            for (Batch* p : pending_)
                 for (const Cmd& c : p->cmds) Execute(*p, c, 1);
-                Finish(p);
+            // a scoped gun up to the eye: the same commands again from its scope (the eyes show it next frame)
+            if (stereo::Scope()) {
+                stereo::BeginEye(stereo::kScopeEye);
+                states_[2] = scope_start_;
+                for (Batch* p : pending_)
+                    for (const Cmd& c : p->cmds) Execute(*p, c, stereo::kScopeEye);
             }
+            for (Batch* p : pending_) Finish(p);
             pending_.clear();
         }
         std::lock_guard lock(m_);
@@ -505,8 +512,8 @@ private:
     void Execute(const Batch& b, const Cmd& c, int eye) {
         const uint8_t* data = b.bytes.data() + c.data;
         bool once = eye <= 0;   // the left eye's, or mono
-        bool last = eye != 0;   // the right eye's, or mono
-        State& state_ = states_[eye == 1 ? 1 : 0];
+        bool last = eye == 1 || eye < 0;  // the right eye's, or mono (the scope's present keeps its picture alone)
+        State& state_ = states_[eye == 1 ? 1 : eye == stereo::kScopeEye ? 2 : 0];
         switch (c.op) {
             case Op::State: {
                 uint8_t* s = reinterpret_cast<uint8_t*>(&state_);
@@ -524,7 +531,7 @@ private:
             case Op::Clear: inner_->Clear(state_, c.a, c.size ? data : nullptr, c.b, c.c, c.f, c.d); break;
             case Op::Copy: inner_->Copy(c.s1, c.s2, c.a, c.b, c.c); break;
             case Op::Present:
-                if (last) inner_->Present(c.s1);
+                if (last || eye == stereo::kScopeEye) inner_->Present(c.s1);
                 break;
             case Op::Sync:
                 if (once) inner_->Sync(c.a, 0);
@@ -576,7 +583,8 @@ private:
     uint64_t last_present_ = 0;
 
     // the render thread: the state as each eye's replay has it (mono uses the first)
-    State states_[2];
+    State states_[3];  // the left eye's, the right's, the scope's
+    State scope_start_;  // the right eye's state before its replay: the scope's replays from it
     std::vector<Batch*> pending_;  // stereo: drawn for the left eye, not yet for the right
 
     std::mutex m_;

@@ -64,6 +64,9 @@ bool VrMirror(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* i
 void VrDumpGunTexture(uint32_t key, const uint8_t* px, uint32_t pitch, uint32_t w, uint32_t h);  // vr_gun.cpp
 bool VrMenuOverPlay();  // vr_body.cpp: the game paused over play (its pause menu)
 float VrVignette();     // vr_body.cpp: the comfort vignette's darkening now, 0..1
+bool VrScopeWanted();                    // vr_gun.cpp: a scoped gun held up near the eye
+bool VrScopeEye(xr::EyeView& ev);        // vr_gun.cpp: the scope's view (its camera at the eyepiece, down the barrel)
+bool VrScopeLens(int eye, float* lens);  // vr_gun.cpp: where its glass is in an eye's image (the filter's lens, lens2)
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
 void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
 int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
@@ -127,9 +130,10 @@ float4 psmain(O i) : SV_Target {
 // mask's dimming; look.x the corners' shade, look.y the brightness the lines and mask take back. post.x HDR on,
 // post.y FXAA on; both go before the filter, psplain is them alone
 const char* kFilterHlsl = R"(
-cbuffer B : register(b1) { float4 uvrect; float4 opts; float4 crt; float4 look; float4 src; float4 post; };
+cbuffer B : register(b1) { float4 uvrect; float4 opts; float4 crt; float4 look; float4 src; float4 post; float4 lens; float4 lens2; };
 Texture2D img : register(t0);
 Texture2D lut : register(t1);
+Texture2D scope : register(t2);
 SamplerState ls : register(s0);
 SamplerState ps : register(s1);
 struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
@@ -187,6 +191,27 @@ float3 Frame(float2 uv) {
     if (post.w > 0) {
         float2 v = (uv - uvrect.xy) / uvrect.zw * 2 - 1;
         c *= 1 - post.w * smoothstep(0.45, 1.05, length(v));
+    }
+    // lens: the scope's glass in this eye (xy its centre in the frame's 0..1, zw its radii there); lens2: x how dark
+    // (the eye off the scope's axis), zw the cos and sin of the gun's roll against the eye. Its picture (4:3, the
+    // middle square used) turned upright, a reticle over it, its rim shaded
+    if (lens.z > 0) {
+        float2 f = (uv - uvrect.xy) / uvrect.zw;
+        float2 d = (f - lens.xy) / lens.zw;
+        float r = length(d);
+        if (r < 1) {
+            float2 up = float2(d.x, -d.y);
+            float2 s = float2(lens2.z * up.x + lens2.w * up.y, -lens2.w * up.x + lens2.z * up.y);
+            float3 v = scope.SampleLevel(ls, float2(0.5 + s.x * 0.375, 0.5 - s.y * 0.5), 0).rgb;
+            // (the game's gamma ramp, as the eyes' frames have it)
+            if (opts.x > 0) v = float3(lut.Sample(ps, float2(v.r, 0.5)).r, lut.Sample(ps, float2(v.g, 0.5)).g, lut.Sample(ps, float2(v.b, 0.5)).b);
+            v = Tone(v);
+            float hair = (abs(s.x) < 0.014 || abs(s.y) < 0.014) && r < 0.92 ? 1 : 0;
+            float post_ = abs(s.y) < 0.03 && abs(s.x) > 0.45 && r < 0.92 ? 1 : 0;  // the thick outer posts
+            v *= 1 - max(hair, post_) * 0.95;
+            v *= (1 - smoothstep(0.82, 1.0, r)) * (1 - lens2.x);
+            c = v;
+        }
     }
     return c;
 }
@@ -1094,7 +1119,7 @@ bool HudMatrix(int eye, float aspect, float* out) {
 // plane on the game's clip position that keeps that part (EyeHlsl)
 bool EyeMatrix(const State& s, GuestExtent size, int eye, bool gun, float* out, int arm = -1, float* plane = nullptr) {
     xr::EyeView ev;
-    if (!xr::RenderEye(eye, ev)) return false;
+    if (!(eye == stereo::kScopeEye ? ::game::VrScopeEye(ev) : xr::RenderEye(eye, ev))) return false;
     const float* P = s.transforms[kTsProjection].data();  // d3d rows: clip = v · P
     float pc[16], vpc[16];
     Transpose(P, pc);
@@ -1467,6 +1492,11 @@ private:
     bool stereo_ = false;
     int eye_ = 0;
     std::unordered_map<uint64_t, Target> other_targets_;
+    // the scope's view (stereo::kScopeEye): its targets, or the right eye's while it replays; its last picture
+    std::unordered_map<uint64_t, Target> scope_targets_;
+    Image scope_img_;
+    uint64_t scope_frame_ = 0;  // presents_ when it was kept
+    void KeepScope(Target& t);
     // a few seconds' draws, logged: all, world ones, world ones left unmoved; the last world draw's matrices
     uint32_t stat_draws_ = 0, stat_world_ = 0, stat_unmoved_ = 0;
     uint32_t stat_effect_ = 0, stat_gun_ = 0, stat_hud_ = 0, stat_flat_z_ = 0;
@@ -2801,8 +2831,10 @@ Target* VulkanBackend::EnsureTarget(const Surface& s, bool depth) {
     t.depth = depth;
     t.gw = gw;
     t.gh = gh;
-    t.w = std::max(1u, uint32_t(std::lround(gw * scale_)));
-    t.h = std::max(1u, uint32_t(std::lround(gh * scale_)));
+    // (the scope's view at the game's own size: its picture is small in the eye)
+    const float sc = eye_ == stereo::kScopeEye ? 1.0f : scale_;
+    t.w = std::max(1u, uint32_t(std::lround(gw * sc)));
+    t.h = std::max(1u, uint32_t(std::lround(gh * sc)));
     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                               (depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     if (!CreateImage(t.img, depth ? depth_fmt_ : kBgra, t.w, t.h, 1, 1, 1, usage, VK_IMAGE_VIEW_TYPE_2D)) {
@@ -3599,6 +3631,7 @@ bool VulkanBackend::GlowComposite(const State& s, const DrawTextures& stages) co
 }
 
 void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t count, const uint8_t* indices) {
+    if (eye_ == stereo::kScopeEye && (s.transforms[4][0] == 2.0f || s.transforms[4][1] == 1.0f)) return;
     if (DepthCopy(s)) return;
     Assembled& a = asm_;
     if (!Assemble(s, prim, start, count, indices, a)) return;
@@ -4358,9 +4391,14 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         return f >> g && g > 0 ? g : 2.0f;
     }();
     float vignette = eye_image ? ::game::VrVignette() : 0.0f;
-    bool post = game::Opt().hdr || fxaa || bright > 0 || vignette > 0.01f;
+    // the scope's glass, its picture from the last frame or two
+    float lens[8] = {};
+    bool scoped = eye_image && scope_img_ && scope_frame_ + 2 >= presents_ &&
+                  ::game::VrScopeLens(xr::ImageEye(index), lens);
+    bool post = game::Opt().hdr || fxaa || bright > 0 || vignette > 0.01f || scoped;
     // opts.z: the taps a side over each screen pixel, 2 averaging SSAA's samples
-    float c[24] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
+    float c[32] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
+    if (scoped) std::memcpy(c + 24, lens, sizeof(lens));
     c[20] = game::Opt().hdr ? 1.0f : 0.0f;
     c[21] = fxaa ? 1.0f : 0.0f;
     c[22] = bright;
@@ -4390,12 +4428,14 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     Alloc cbuf = Constants(c, sizeof(c));
     const char* hlsl = filter || post ? kFilterHlsl : kBlitHlsl;
     const char* entry = crt ? "pscrt" : filter == 3 ? "pssharpen" : filter ? "pscolor" : post ? "psplain" : "psmain";
+    if (scoped) entry = "psplain";  // (the lens is the plain pass's)
     VkPipeline pipe = t ? FullScreenPipeline(hlsl, entry, swap_fmt_, VK_FORMAT_UNDEFINED, false) : VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
     if (pipe) {
         Transition(t->img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         Transition(lut_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        const VkImageView views[4] = {t->img.view, lut_.view, VK_NULL_HANDLE, VK_NULL_HANDLE};
+        if (scoped) Transition(scope_img_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const VkImageView views[4] = {t->img.view, lut_.view, scoped ? scope_img_.view : dummy_[0].view, VK_NULL_HANDLE};
         const VkSampler samplers[4] = {linear_, point_, point_, point_};
         set = Set(views, samplers);
     }
@@ -4518,7 +4558,7 @@ void VulkanBackend::ApplySettings() {
     float want = app::RenderScale(guest_h_);
     if (std::fabs(want - scale_) <= 1e-4f) return;
     Submit(true, false);
-    for (auto* map : {&targets_, &other_targets_}) {
+    for (auto* map : {&targets_, &other_targets_, &scope_targets_}) {
         for (auto& [key, t] : *map) {
             Retire(t.img);
             Retire(t.fb);
@@ -4547,6 +4587,10 @@ void VulkanBackend::SavePipelineCache() {
 }
 
 void VulkanBackend::Present(const Surface& front) {
+    if (stereo_ && eye_ == stereo::kScopeEye) {
+        if (Target* t = EnsureTarget(front, false)) KeepScope(*t);
+        return;
+    }
     Target* t = EnsureTarget(front, false);
     if (t && LatchCpuWrite(*t)) UploadTarget(*t, front);
     if (ramp_dirty_) UploadGammaRamp();
@@ -4684,9 +4728,40 @@ void VulkanBackend::WaitGpuFrame(uint64_t n) { WaitValue(present_value_[n % (kFr
 void VulkanBackend::BeginEye(int eye) {
     if (!stereo_ || eye == eye_) return;
     EndRender();
-    std::swap(targets_, other_targets_);
     draw_rt_ = draw_ds_ = nullptr;
+    // the scope's view comes after the right eye, its targets swapped in for the right's and back
+    if (eye_ == stereo::kScopeEye) {
+        std::swap(targets_, scope_targets_);
+        eye_ = 1;
+        if (eye == 1) return;
+    }
+    if (eye == stereo::kScopeEye) {
+        if (eye_ == 0) std::swap(targets_, other_targets_);
+        std::swap(targets_, scope_targets_);
+        eye_ = eye;
+        return;
+    }
+    std::swap(targets_, other_targets_);
     eye_ = eye;
+}
+
+// the scope's view's front, copied for the eyes to draw on its glass
+void VulkanBackend::KeepScope(Target& t) {
+    if (!scope_img_ || scope_img_.w != t.w || scope_img_.h != t.h) {
+        Retire(scope_img_);
+        if (!CreateImage(scope_img_, kBgra, t.w, t.h, 1, 1, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         VK_IMAGE_VIEW_TYPE_2D))
+            return;
+    }
+    EndRender();
+    Transition(t.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    Transition(scope_img_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageCopy c{{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0},
+                  {t.w, t.h, 1}};
+    vkCmdCopyImage(Cb(), t.img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, scope_img_.image,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+    Transition(scope_img_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    scope_frame_ = presents_;
 }
 
 VulkanBackend* g_vulkan = nullptr;
@@ -4707,6 +4782,7 @@ void WaitGpuFrame(uint64_t n) {
 
 namespace stereo {
 int Eyes() { return gpu::g_vulkan && gpu::g_vulkan->Stereo() ? 2 : 1; }
+bool Scope() { return Eyes() == 2 && ::game::VrScopeWanted(); }
 void BeginEye(int eye) {
     if (gpu::g_vulkan) gpu::g_vulkan->BeginEye(eye);
 }

@@ -1851,3 +1851,23 @@ brighter and bigger)
   bound image not bound in the last two frames goes (and can be read again). A format the GPU doesn't sample is
   logged and skipped; ASTC LDR is now enabled at device creation (logged: "vulkan: BC .., ASTC LDR ..").
 - The converter must write UNORM (not sRGB) formats: the game's shaders work on gamma-space texels.
+
+## 2026-11-24: scopes, the scope as a lens (the WA2000: SNR, SN5)
+
+- Phase 8 paused (TODO: the pack converter next). The design of 2026-11-20: the zoomed view drawn on the scope's
+  glass, never the headset's view zoomed; the game's aim-in zoom and its scope overlay (WpnScope.bin) aren't used
+  (no control reaches the game's aim-in in VR).
+- render_thread.cpp: with stereo::Scope() (a scoped gun held, its eyepiece within 0.5 m of the head), after the
+  right eye's replay the pending batches replay a third time as stereo::kScopeEye (2), from the right eye's state
+  before its replay (scope_start_). Its present keeps the picture, nothing reaches the headset, no flush.
+- vulkan.cpp: eye 2 has its own targets (scope_targets_, swapped in for the right eye's and back in BeginEye) at the
+  game's own size (640x480, render scale 1); it skips the gun list (mark 2) and the 2D overlay. EyeMatrix takes
+  game::VrScopeEye for it: the camera at the eyepiece, the gun's axes (A), half-height tan 0.06 (about 4x in a
+  glass of ~20 degrees). Present copies its front to scope_img_ (KeepScope). Each eye's filter pass then draws
+  that picture inside the eyepiece's circle (lens/lens2 in the filter's constants, t2): VrScopeLens projects the
+  eyepiece into the eye, turns the picture level by the gun's roll against the eye, the game's gamma and tone on
+  it, a reticle (hairs and outer posts), its rim shaded, dark past ~12 degrees off the scope's axis.
+- vr_gun.cpp: HandInCamera keeps the gun hand's local frame (after the angle, the two-hand aim and the kick);
+  the eyepiece is grip + up 0.14 + back -0.04 + side -0.025 (metres, the gun's frame), radius 0.022, fitted
+  from headset shots with test hands; dev_scope "up back radius [side]" overrides, dev_scope_any draws it off-axis.
+- HLSL trap: `line` is a keyword (a geometry shader's primitive type): a variable named so fails to parse.

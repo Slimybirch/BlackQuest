@@ -118,6 +118,9 @@
 - [ ] silencer by hand (Phase 5 style, with the reload work): hold the silencer in the off hand and twist it onto
       the barrel to fit it; twist the other way to take it off. Find the game's silencer toggle and call it when
       the twist completes; the button stays as a fallback.
+- [x] (built 2026-11-24, headset shots with test hands) the WA2000's scope as a lens: a third replay from the
+      scope, its picture on the eyepiece with a reticle (NOTES "scopes"). Still: the user's own check that it's
+      sharp, aligned and smooth at the eye; the frame rate while scoped; X2/X5 zoom levels (now about 4x)
 - [ ] scoped weapons (Phase 4, with the gun in the hand): the scope as a lens. The zoomed view is rendered to a
       small target and drawn on the scope's glass, so aiming means bringing the scope up to your eye; never zoom
       the whole headset view. The game's own scope overlay and zoom are off in VR.
@@ -324,6 +327,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] two-handed holds for the Uzi and the Mac-10 (user, 2026-11-24: if there's one already, it doesn't work)
 
 ## Phase 8 (HD textures)
+- PAUSED HERE (user, 2026-11-24, for scopes): next is the pack converter, then the coverage report; the dump
+  (9ed43ba) and the loader (cd56b71) are done
 - [x] the texture dump: DUMP TEXTURES, textures_dump/<hash>.png and index.csv (tested: 177 from level 1's start)
 - [x] a dump of every level (2026-11-24, automated: dev_mission + the load-time scan, 8 missions, 1144 textures,
       36 MB, in the scratchpad's texdump_all, never git)
@@ -351,3 +356,13 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 
 ## Phase 11 (release prep; was 10)
 - [ ] signed release build, README and credits (MIT notices kept), the version tag (only with the user's go-ahead)
+
+## Endless mode (user, 2026-11-24: replayability; after co-op, Phase 9)
+- [ ] mission 1's map, started by a hidden switch in the level (or a front-end entry); 3 lives a player, over when
+      every player is out (co-op aware: each player's own count, a spectate while out)
+- [ ] waves of enemies at random spawn points, more each wave; the next wave when the last enemy dies
+- [ ] random weapon pickups at random points, better weapons as the waves go (a tier table by wave)
+- [ ] needs from the code: the enemy spawn (the game's actor/spawn function and its spawn points or nav data),
+      the pickup spawn, the player's death and respawn (checkpoint reload: avoid it, respawn in place), the
+      mission's scripted events and objectives turned off, a wave and lives count on the HUD
+
