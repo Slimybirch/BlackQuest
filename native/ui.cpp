@@ -1,3 +1,6 @@
+#include <string>
+#include <mutex>
+#include <jni.h>
 // ImGui's input on Android: SDL's touches, mouse and keys into ImGui's IO (main thread, under app::UiLock), and the
 // first controller for the settings panel's navigation, read per frame on the render thread
 #include <SDL3/SDL.h>
@@ -178,3 +181,25 @@ void NewFrame(float width, float height) {
 }
 
 }  // namespace ui
+
+// BlackActivity (a Quest): an update's notice, shown on the settings panel's top line (menu.cpp), since an Android
+// dialog isn't seen once the game's in the headset
+namespace {
+std::mutex g_notice_lock;
+std::string g_notice;
+}  // namespace
+namespace app {
+std::string UpdateNotice() {
+    std::lock_guard lock(g_notice_lock);
+    return g_notice;
+}
+}  // namespace app
+extern "C" JNIEXPORT void JNICALL Java_com_slimybirch_blackquest_BlackActivity_nativeUpdateNotice(JNIEnv* env, jclass,
+                                                                                         jstring text) {
+    const char* c = env->GetStringUTFChars(text, nullptr);
+    {
+        std::lock_guard lock(g_notice_lock);
+        g_notice = c ? c : "";
+    }
+    if (c) env->ReleaseStringUTFChars(text, c);
+}

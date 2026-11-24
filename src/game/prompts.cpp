@@ -16,6 +16,7 @@
 #include "common/translations.h"
 #include "game/flash.h"
 #include "xdk/hle.h"
+#include "xr.h"
 
 using namespace kernel;
 
@@ -76,6 +77,15 @@ std::string Wording(uint32_t id, const std::string& pad, bool keyboard, bool tou
     Replace(text, "XBOX HARD DISK", "HARD DISK");
     Replace(text, "XBOX", "PC");
     Replace(text, "Xbox", "PC");
+    if (xr::Active()) {
+        // the headset: the controllers' own wording (the game's), no touch hints; the title's prompt names A (user)
+        if (PressStart(id)) {
+            Replace(text, "START", "A");
+            Replace(text, "Start", "A");
+            Replace(text, "start", "A");
+        }
+        return text == pad ? std::string() : text;
+    }
     if (touch && !keyboard) {
         if (id == kSelect) text = "(DRAG) " + text;
         else if (id == kConfirm) text = "(TAP) " + text;

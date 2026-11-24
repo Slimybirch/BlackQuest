@@ -116,3 +116,5 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] Seated mode: the view at standing height sitting down, no crouch (confirm)
 - [ ] Stand straight and press: crouching then works from your real standing height (confirm)
 - [ ] Refresh rate: 90 and 120 Hz take effect (confirm)
+- [ ] The title says PRESS A, and A starts (confirm)
+- [ ] Mission 1 start to finish in the headset: boot, menus, the mission, pause, quit (confirm)

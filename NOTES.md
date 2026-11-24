@@ -1790,3 +1790,18 @@ brighter and bigger)
   mirrored, not just the controllers swapped) and foveation (the renderer drawing with a fragment density map)
   are bigger and left in TODO. dev_panelfront: the panel over the menu itself, for screenshots. Seen on the
   headset: the page in its sections.
+
+## 2026-11-24: the title's prompt, the Quest's dialogs
+
+- prompts.cpp Wording: in the headset the game's controller wording, no touch hints ((TAP)/(DRAG)/(<)), and the
+  title's PRESS START is PRESS A (user; was the touch port's PRESS ANYWHERE).
+- Dialogs on the Quest (user: hooks for the Quest's permissions?): the headset has no dialog hook of its own; its
+  system shows runtime permission prompts and the settings pages (as 2D windows in Horizon). The storage and game
+  files dialogs come before the game starts its renderer (app::FindGame waits for the files before kernel::Boot, so
+  no XR session yet): the app is a 2D window then and its Android dialogs show. Checked on the headset (SDK 34):
+  MANAGE_APP_ALL_FILES_ACCESS_PERMISSION opens com.android.settings' AppManageExternalStorageActivity (the access
+  page; MANAGE_ALL_FILES_ACCESS_PERMISSION has none; app details go through com.oculus.vrshell's relay). On a
+  Quest (Build.MANUFACTURER Oculus or Meta) the dialogs say headset, and point to the app's own folder
+  (Android/data/<package>/files/assets, no access needed). The update notice, which can come once the game's in
+  VR (where an Android dialog isn't seen), goes to the settings panel's top line instead (nativeUpdateNotice,
+  ui.cpp, menu.cpp DrawPanel), as does CHECK FOR UPDATES' answer.

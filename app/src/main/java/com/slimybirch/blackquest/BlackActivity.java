@@ -35,6 +35,11 @@ import org.libsdl.app.SDLControllerManager;
 // At launch it also asks GitHub for a newer release (UpdateChecker) and tells of it once nothing else is asked.
 public class BlackActivity extends SDLActivity {
     static final String SHARED = "Black";
+    // a Meta Quest (BlackQuest's headset): its dialogs say headset, and once the game's in VR an Android dialog isn't
+    // seen, so the update notice goes to the settings panel instead (native/ui.cpp)
+    static final boolean QUEST = Build.MANUFACTURER.equalsIgnoreCase("Oculus") || Build.MANUFACTURER.equalsIgnoreCase("Meta");
+    private static String device() { return QUEST ? "headset" : "phone"; }
+    private static native void nativeUpdateNotice(String text);
 
     private AlertDialog dialog;  // the one up, at most one at a time
     private boolean notNow;      // the player turned the access down this run
@@ -156,6 +161,11 @@ public class BlackActivity extends SDLActivity {
                 if (isFinishing() || (dialog != null && dialog.isShowing())) return;
                 String msg = failed ? "Couldn't reach GitHub. Check your internet connection and try again."
                                     : "You have the latest version (" + UpdateChecker.installedVersion(this) + ").";
+                if (QUEST) {
+                    nativeUpdateNotice(failed ? "UPDATE CHECK FAILED: no connection" : "UP TO DATE ("
+                            + UpdateChecker.installedVersion(this) + ")");
+                    return;
+                }
                 dialog = new AlertDialog.Builder(this)
                         .setTitle(failed ? "Update check failed" : "No update")
                         .setMessage(msg)
@@ -283,6 +293,11 @@ public class BlackActivity extends SDLActivity {
         // fetches the new source, rebuilds and reinstalls over this one
         msg.append("\n\nTo update, run the BlackQuest launcher on your PC with the headset connected (USB or "
                 + "wireless). It rebuilds the game and installs it over this one; your settings and saves stay.");
+        if (QUEST) {
+            // (in the headset: the panel's top line, beside the game's menus)
+            nativeUpdateNotice("UPDATE AVAILABLE: " + r.name + " - run the BlackQuest launcher on your PC to install it");
+            return;
+        }
         dialog = new AlertDialog.Builder(this)
                 .setTitle("Update available")
                 .setMessage(msg)
@@ -313,8 +328,10 @@ public class BlackActivity extends SDLActivity {
     private void askAllFilesAccess() {
         dialog = new AlertDialog.Builder(this)
                 .setTitle("Storage access")
-                .setMessage("BlackQuest reads the game from the Black folder on your phone's storage:\n\n"
+                .setMessage("BlackQuest reads the game from the Black folder on your " + device() + "'s storage:\n\n"
                         + "/storage/emulated/0/" + SHARED + "\n\n"
+                        + (QUEST ? "(or, with no access needed, from its own folder: Android/data/" + getPackageName()
+                                + "/files/assets, where the PC launcher puts it)\n\n" : "")
                         + (ALL_FILES_ACCESS
                                 ? "On the next screen turn on \"Allow access to manage all files\" for BlackQuest, then come back."
                                 : "Allow BlackQuest to access your storage on the next screen."))
@@ -329,9 +346,10 @@ public class BlackActivity extends SDLActivity {
     private void tellWhereTheGameGoes() {
         dialog = new AlertDialog.Builder(this)
                 .setTitle("Game files")
-                .setMessage("Copy the game into the Black folder on your phone's storage:\n\n"
+                .setMessage("Copy the game into the Black folder on your " + device() + "'s storage:\n\n"
                         + "/storage/emulated/0/" + SHARED + "\n\n"
-                        + "or into a Black folder at the top of your SD card.\n\n"
+                        + (QUEST ? "or into Android/data/" + getPackageName() + "/files/assets.\n\n"
+                                 : "or into a Black folder at the top of your SD card.\n\n")
                         + "Its disc image (.iso), or default.xbe with its folders. The game starts as soon as they "
                         + "are there.\n\n"
                         + "Or import the disc image from your Downloads, a cloud drive or a USB stick.")

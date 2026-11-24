@@ -71,6 +71,8 @@ void SetStartupCheck(bool on);
 }  // namespace host
 
 namespace app {
+std::string UpdateNotice();  // native/ui.cpp: an update's notice for the panel (a Quest), "" none
+
 
 Settings DefaultSettings();  // native/main.cpp: a phone's first run, unlimited frame rate and vsync off
 
@@ -1080,6 +1082,9 @@ void DrawPanel() {
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
         DrawTitle(xr::Active() ? "VR SETTINGS" : "CHEATS");
+        // (a Quest: an update's notice, here since an Android dialog isn't seen in the headset)
+        if (std::string notice = UpdateNotice(); !notice.empty())
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", notice.c_str());
         ImGui::Separator();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         // a scrollbar a thumb can take, not the desktop's thin one

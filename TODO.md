@@ -314,7 +314,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] (built) the VR page in sections: comfort (turn speed), hands, height (view height), gunstock, graphics
       (render resolution, draw distance, TEXTURES: original or the HD pack, for Phase 8), testing
 - [ ] Phase 8: load the HD pack only when TEXTURES is HD PACK (vr_hd_textures)
-- [ ] Android's dialogs on the virtual screen; "PRESS ANYWHERE" on the title (the touch port's); mission 1 headset-on;
+- [x] (built) the title says PRESS A; the Quest's dialogs (before VR: shown; the update notice: on the panel)
+- [ ] mission 1 headset-on (the user, 2026-11-24 evening);
       on the page now: vignette, seated mode, height calibration, refresh rate
 - [ ] left-handed play: the gun in the left hand, the arms and grips mirrored, the shoulder switch, sticks and melee
 - [ ] foveation (XR_FB_foveation: the eyes' render passes with a fragment density map)
