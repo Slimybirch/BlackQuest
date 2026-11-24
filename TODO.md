@@ -268,8 +268,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       the gun hidden (the first-person list: the hands too, till piece 4) and not fired; let go, thrown; empty till a
       grip over the right shoulder. The game's own trigger throw is off in the headset (the M203 keeps it)
 - [x] 4. (built, not run) the M67 in the right hand while one is held; the gun's bones collapsed, the arms drawn again
-- [ ] the throw's sound as the grenade leaves the hand, and only then (user): the game's came with its throw
-      animation, which no longer runs; look in /chars/guns/GrdPin.wdo/.wdd and /sound/banks/Anim.awd for it
+- [x] the throw's sound as the grenade leaves the hand, only then (built, not heard): the game's GrdPin.dav
 - [x] 5. (built, not seen) the world's grenade draw (stride 24, 220 vertices, 479 indices: found by a dev throw)
       drawn as the M67 with its texture
 - [ ] co-op (user, 2026-11-23): giving ammo to another player: the magazine taken at the chest can be dropped on the
@@ -277,3 +276,34 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       meets it
 - [ ] sounds (user, 2026-11-23): a magazine landing on the ground, and one taken from the chest (from the game's files
       if they have them, else open-source files the user finds)
+
+## From the user's checklist and notes (2026-11-24)
+- [x] (built) a grenade's throw: the swing's peak speed (last 100 ms, × 1.5), the gun back at once after
+- [x] (built) the chest zone 13 cm round, its middle under the head (deeper toward the chest, its front as before)
+- [x] (built) the Walther's fore-grip 6 cm nearer the trigger, the grenade launcher's 8 cm farther out
+- [x] (built) the SPAS's shell port placed by the root (its shell bone is parked: the port read 10-13 cm low)
+- [x] (built) launcher rounds and the hand grenade held with the fingers wrapped round, not pinched or closed through
+- [x] (built) the grenade launcher's round is our M433 (on bone 3, its own texture; the tube opens 13 cm)
+- [x] (built) the magnum: a fast counter-clockwise flick swings it out too (a big roll wraps past -180); the
+      flick that shuts it waits 0.6 s after it swings out
+- [x] (built) the magnum: the game's off hand spinning the cylinder no longer shows (cylinder and crane posed
+      from the gun's root, not their own bones); every game animation on it held off once it settles (its root and arms held)
+- [x] the M249's right side: its left mirrored (seen on the headset from the right)
+- [x] the M249 remodelled as the Para: scrapped (user); the game's M249 back
+- [x] the guns' right sides report (NOTES 2026-11-24): every texture shares its left's texels; only the M249 and
+      the WA2000 lack right-side geometry
+- [x] the M249's para stock: two bars one over the other, an oval butt dished for the shoulder
+- [x] the M249's right side: options A and B built and shown (dev_right_b switches to B)
+- [x] the user picked A for the M249 (its upper band fixed); B's switch (dev_right_b) to go once A's confirmed
+- [x] the WA2000's right side (A: its missing left faces copied across)
+- [x] the Walther's rock after a shot (its frame held at rest too), its magazine's catch from the well's bottom, its
+      off hand 6 cm nearer the trigger (and the GRL's 8 cm out: both had been moved the wrong way)
+- [ ] the Walther's off hand's angle on the fore-end: the user's look (test hands cup it from under)
+- [ ] the WA2000's right side the same way
+- [ ] the Walther: its magazine's and the off hand's angle; the magazine hard to seat; the rock after a shot (fail)
+- [ ] the Uzi and Walther free off hand still turned, the Uzi's fore-grip not taken (fails)
+- [ ] fails to look at: the SPAS's and Remington's shells in the hand; the RPG's rocket in the hand; grenades into the
+      GRL's and M203's open tubes and shutting them; the magnum opening by angling down, its speed loader in the
+      hand; the M16's magazine and rack; the M16 and M249 stocks' look; the aim at distance; the hand grenade
+      pieces (taken, thrown, the M67 in the hand: marked before there were grenades, user)
+

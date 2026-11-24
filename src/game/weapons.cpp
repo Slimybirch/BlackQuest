@@ -975,6 +975,9 @@ uint32_t HeldWeapon() {
 
 // a first person gun's sounds file (Levels\Level_NN\fpguns\bg1_<code>.wdd, the same in every level that has it),
 // read whole from the first level with it; false if none
+// any file from the disc, its path from the root ("sound\\pcm\\GrdPin.dav": the grenade's throw, vr_grenade.cpp)
+bool DiscFile(const std::string& path, std::vector<uint8_t>& out) { return LoadGameFile(path, out); }
+
 bool GunWaves(const std::string& code, std::vector<uint8_t>& out) {
     for (int n : Levels()) {
         char path[64];

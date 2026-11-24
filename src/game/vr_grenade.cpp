@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <cstring>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #include "app/app.h"
 #include "core/input.h"
@@ -20,12 +22,28 @@
 using namespace kernel;
 using namespace layout;
 
+namespace sound {
+void CuePcm(const int16_t* p, uint32_t frames, uint32_t rate, float gain);  // mixer.cpp
+}
+namespace weapons {
+bool DiscFile(const std::string& path, std::vector<uint8_t>& out);  // weapons.cpp: a file from the disc
+}
+
 namespace game {
 bool VrHandWorld(int hand, float* pos, float* vel);  // vr_gun.cpp: a hand's grip in the game's world, metres
 
 namespace {
 // the hand's speed as thrown (1: as it was; the game's own throws are a little faster than an arm's)
-constexpr float kThrowGain = 1.2f;
+constexpr float kThrowGain = 1.5f;
+// the throw's speed: the fastest the hand went in this long before it let go (at the release the arm has already
+// slowed: user, the throws all went the same way short)
+constexpr int64_t kPeakMs = 100;
+struct Sample {
+    int64_t ms;
+    float vel[3];
+};
+std::mutex g_samples_lock;
+std::vector<Sample> g_samples;  // while a grenade's held, the hand's world velocity each poll
 std::atomic<int> g_throw_hand{-1};  // a throw asked for, from this hand; -1 none
 std::atomic<int64_t> g_thrown_ms{0};
 int64_t NowMs() {
@@ -35,6 +53,35 @@ int64_t NowMs() {
 }  // namespace
 // steady ms of the last grenade made by hand (vulkan.cpp's dev_drawdiff)
 int64_t VrThrownMs() { return g_thrown_ms.load(); }
+
+namespace {
+// the throw's sound (user: as the grenade leaves the hand, only then): the game's own, /sound/pcm/GrdPin.dav (a RIFF
+// WAVE, 16-bit mono PCM, 48 kHz: the only grenade sound on the disc, which its throw animation played), read once
+void PlayThrowSound() {
+    static std::vector<uint8_t> wav;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        if (!weapons::DiscFile("sound\\pcm\\GrdPin.dav", wav)) LOGR("vr grenade: no GrdPin.dav on the disc");
+    }
+    // its chunks: fmt (channels, rate, bits), data
+    uint32_t rate = 0, channels = 0, bits = 0;
+    for (size_t o = 12; o + 8 <= wav.size();) {
+        uint32_t len;
+        std::memcpy(&len, &wav[o + 4], 4);
+        if (!std::memcmp(&wav[o], "fmt ", 4) && o + 24 <= wav.size()) {
+            channels = wav[o + 10] | wav[o + 11] << 8;
+            std::memcpy(&rate, &wav[o + 12], 4);
+            bits = wav[o + 22] | wav[o + 23] << 8;
+        } else if (!std::memcmp(&wav[o], "data", 4) && channels == 1 && bits == 16) {
+            uint32_t n = uint32_t(std::min<size_t>(len, wav.size() - o - 8) / 2);
+            sound::CuePcm(reinterpret_cast<const int16_t*>(&wav[o + 8]), n, rate, 1.0f);
+            return;
+        }
+        o += 8 + len + (len & 1);
+    }
+}
+}  // namespace
 
 // any thread: throw now from this hand (its place and speed when the game thread takes it, within the frame)
 void VrRequestThrow(int hand) { g_throw_hand.store(hand); }
@@ -48,8 +95,20 @@ bool VrTakeThrow(float* pos, float* vel) {
         LOGR("vr grenade: a throw asked for, the hand not known: none");
         return false;
     }
+    {
+        // the peak of the swing's last kPeakMs, if faster than now
+        std::lock_guard lock(g_samples_lock);
+        int64_t now = NowMs();
+        float best = vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2];
+        for (const Sample& s : g_samples) {
+            float sp = s.vel[0] * s.vel[0] + s.vel[1] * s.vel[1] + s.vel[2] * s.vel[2];
+            if (now - s.ms <= kPeakMs + 50 && sp > best) best = sp, std::memcpy(vel, s.vel, 12);
+        }
+        g_samples.clear();
+    }
     for (int i = 0; i < 3; i++) vel[i] *= kThrowGain;
     g_thrown_ms = NowMs();
+    PlayThrowSound();
     LOGR("vr grenade: thrown from %.2f %.2f %.2f at %.2f %.2f %.2f m/s", pos[0], pos[1], pos[2], vel[0], vel[1], vel[2]);
     return true;
 }
@@ -110,9 +169,17 @@ bool VrGrenadeGrip(bool grip, bool grip_was, const xr::Hand* right, const float*
         }
     } else if (hold == kHoldGrenade) {
         ours = true;
+        float p[3], v[3];
+        if (VrHandWorld(1, p, v)) {
+            std::lock_guard lock(g_samples_lock);
+            int64_t now = NowMs();
+            g_samples.push_back({now, {v[0], v[1], v[2]}});
+            while (!g_samples.empty() && now - g_samples.front().ms > kPeakMs) g_samples.erase(g_samples.begin());
+        }
         if (!grip) {
+            // thrown, and the gun's back in the hand at once (user: no second grenade can be thrown with it)
             VrRequestThrow(1);
-            g_hold = hold = kHoldEmpty;
+            g_hold = hold = kHoldGun;
         }
     } else if (hold == kHoldEmpty) {
         ours = true;

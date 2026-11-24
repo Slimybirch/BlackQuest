@@ -540,6 +540,19 @@ void CueAdpcm(const uint8_t* p, uint32_t len, uint32_t rate, float gain) {
     std::lock_guard lock(g_cue_lock);
     g_cues.emplace_back(std::move(out), 0);
 }
+// 16-bit mono PCM from host memory (a .dav read from the disc: the grenade's throw)
+void CuePcm(const int16_t* p, uint32_t frames, uint32_t rate, float gain) {
+    if (!p || !rate || frames < 2) return;
+    double step = double(rate) / audio::kRate;
+    std::vector<float> out;
+    for (double t = 0; t < frames - 1; t += step) {
+        size_t i = size_t(t);
+        float f = float(t - i);
+        out.push_back(gain * (p[i] + (p[i + 1] - p[i]) * f) / 32768.0f);
+    }
+    std::lock_guard lock(g_cue_lock);
+    g_cues.emplace_back(std::move(out), 0);
+}
 
 void MixCues(float* out, uint32_t frames) {
     std::lock_guard lock(g_cue_lock);

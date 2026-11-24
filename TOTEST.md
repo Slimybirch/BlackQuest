@@ -47,6 +47,7 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] Standing: the right grip low across the front of the waist takes a grenade; the gun goes away (confirm)
 - [ ] The right grip at the right hip takes one too, standing and crouched; crouched, the waist band doesn't (confirm)
 - [ ] Throw and let go: it flies from the hand at the hand's speed, the fuse starting then (confirm)
+- [ ] The throw's sound plays as it leaves the hand, and not before (confirm)
 - [ ] Hands empty after; a grip over the right shoulder brings the last gun back (confirm)
 - [ ] The off hand's trigger no longer throws a grenade (but still fires the M203) (confirm)
 - [ ] The M67 in the hand looks like the photos (no INERT), held fuze up, spoon to the palm (confirm)
@@ -62,6 +63,9 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] Swipe across the open cylinder: it spins and settles on a chamber (auto: cyl_spin; confirm)
 - [ ] Shut it with the off hand's grip on it (auto: cyl_shut_push)
 - [ ] Shut it with a clockwise flick of the gun hand (auto: cyl_shut_flick)
+- [ ] A big fast counter-clockwise roll swings it out too, and the hand coming back doesn't shut it (confirm)
+- [ ] No game animation takes over the magnum or the hands while it's out (after its first moment) (confirm)
+- [ ] The cylinder never turns by itself (the game's spin with the off hand gone) (confirm)
 
 ## Off hands
 - [ ] Uzi: the free off hand isn't turned (confirm)
@@ -75,6 +79,13 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] No rock animation after a shot (confirm)
 
 ## Every gun
+- [ ] M249: the para stock (two bars, one over the other; the oval butt sits in the shoulder) (confirm)
+- [ ] M249: its right side closed (receiver wall, plates, slot, port cover, handguard), matching the left (confirm)
+- [ ] WA2000: its right side solid (the wooden stock, fore-end and receiver), matching the left (confirm)
+- [ ] Walther: no rock in the hand after a shot (confirm)
+- [ ] Walther: the magazine slides home once its top reaches the well's bottom (auto: mag_in:SNR; confirm)
+- [ ] Walther: the off hand on the fore-end, nearer the trigger, at a natural angle (confirm)
+- [ ] Grenade launcher: the off hand farther out on the tube (confirm)
 - [ ] The fire-mode press (right stick up) gives a very small buzz in the gun hand (auto: mode_press; confirm)
 - [ ] Fire-mode change on the AK or M16: no animation, no blur, the gun stays ready, its click plays (auto: mode_no_anim; confirm)
 - [ ] Other guns' reloads unchanged: a magazine out and in, and a rack, on the M16 (auto: mag_in:M16, rack:M16)

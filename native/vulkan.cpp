@@ -48,7 +48,12 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
                 const void* indices, bool index16, uint32_t index_count, int32_t base_vertex);  // vr_gun.cpp: own hands
 bool VrMeleeHidden();  // src/game/vr_body.cpp: a melee swing is on
 bool VrStock(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16, uint32_t count,
-             int32_t base, const uint8_t*& verts, uint32_t& vbytes_out, const uint16_t*& idx, uint32_t& icount);
+             int32_t base, bool strip, const uint8_t*& verts, uint32_t& vbytes_out, const uint16_t*& idx,
+             uint32_t& icount);
+bool VrMirror(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices, bool index16, uint32_t count,
+              int32_t base, bool strip, const uint8_t*& verts, uint32_t& vbytes_out, const void*& idx,
+              uint32_t& icount);  // vr_gun.cpp
+void VrDumpGunTexture(uint32_t key, const uint8_t* px, uint32_t pitch, uint32_t w, uint32_t h);  // vr_gun.cpp
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
 void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
 int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
@@ -58,7 +63,8 @@ bool VrStockShell();  // the extra mesh is the held shotgun's shell (drawn in th
 bool VrGrenadeInHand();  // vr_grenade.cpp: a hand grenade held (the extra mesh is it)
 int64_t VrThrownMs();    // vr_grenade.cpp: steady ms of the last throw (dev_drawdiff)
 bool VrM67World(const uint8_t*& verts, uint32_t& bytes, const uint16_t*& idx, uint32_t& count);  // vr_gun.cpp
-bool VrGrenadeTexture(std::vector<uint8_t>& px, uint32_t& w, uint32_t& h);  // vr_gun.cpp: its texture, BGRA
+bool VrOwnTexture(int id, std::vector<uint8_t>& px, uint32_t& w, uint32_t& h);  // vr_gun.cpp: 1 M67, 2 M433
+int VrExtraOwn();        // vr_gun.cpp: the extra mesh's own texture now (0 none)
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base);  // vr_gun.cpp
 bool VrRecording();    // src/game/vr_body.cpp: dev_dumpreload's window
@@ -3154,8 +3160,40 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     VkPipeline pipe = EnsurePipeline(k, sh.vs, sh.ps);
     if (!pipe) return;
 
+    // the M249's right side, its left mirrored (vr_gun.cpp): the draw's vertices and indices swapped for ours below,
+    // after the posing (which reads the game's)
+    const uint8_t* mirror_v = nullptr;
+    const void* mirror_i = nullptr;
+    uint32_t mirror_vbytes = 0, mirror_icount = 0;
+    const bool mirror = stereo_ && s.transforms[4][0] == 2.0f && s.transforms[4][4] == 1.0f &&
+                        !IsArms(a.index_count) && a.buffer_count == 1 && a.index_count &&
+                        ::game::VrMirror(a.buffers[0].src, a.buffers[0].stride, a.buffers[0].bytes, a.index_src,
+                                         a.index16, a.index_count, a.base_vertex, a.strip, mirror_v, mirror_vbytes, mirror_i,
+                                         mirror_icount);
+    // dev_dumpgun: each gun draw's texture (stage 0) saved once, decoded to BGRA (with its mesh, vr_gun.cpp)
+    static const bool dump_guns = std::filesystem::exists(app::ExeDir() / "dev_dumpgun");
+    if (dump_guns && stereo_ && s.transforms[4][0] == 2.0f && s.transforms[4][4] == 1.0f && !IsArms(a.index_count)) {
+        // (by the gun as well: the guns' textures load at one address in turn)
+        static std::set<std::pair<uint32_t, uint32_t>> saved;
+        TextureDesc d;
+        if (s.textures[0] && Describe(s.textures[0], d) && !d.cube && d.depth == 1 &&
+            saved.insert({d.data, a.index_count}).second) {
+            std::vector<uint8_t> px;
+            uint32_t pitch = 0;
+            DecodeLevel(d, 0, 0, static_cast<const uint8_t*>(kernel::HostPtr(d.data)), nullptr, px, pitch);
+            const FormatInfo& fi = Format(d.format);
+            if (fi.compressed) {
+                std::vector<uint8_t> texels;
+                DecodeDxt(fi.host, px, pitch, d.width, d.height, 1, texels);
+                px.swap(texels);
+                pitch = d.width * 4;
+            }
+            if (px.size() >= size_t(pitch) * d.height) ::game::VrDumpGunTexture(d.data, px.data(), pitch, d.width, d.height);
+        }
+    }
     // everything uploaded before the rendering: a full ring flushes
     VkDeviceSize need = 2 * kUboRange + 1024;
+    if (mirror) need += mirror_vbytes + VkDeviceSize(mirror_icount) * 4;
     for (uint32_t i = 0; i < a.buffer_count; i++) need += a.buffers[i].bytes + 16;
     need += VkDeviceSize(a.index_count) * 4 + 16;
     if (need < kUploadSize / 4 && CurrentFrame().used + need > kUploadSize) Submit(true, false);
@@ -3231,7 +3269,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         // and a stock the viewmodel lacks (vr_gun.cpp), with its posed bones
         if (!IsArms(a.index_count) && a.buffer_count == 1 &&
             ::game::VrStock(a.buffers[0].src, a.buffers[0].stride, a.buffers[0].bytes, a.index_src, a.index16,
-                            a.index_count, a.base_vertex, stock_v, stock_vbytes, stock_i, stock_icount))
+                            a.index_count, a.base_vertex, a.strip, stock_v, stock_vbytes, stock_i, stock_icount))
             stock_on = true;
         if (!IsArms(a.index_count) &&
             ::game::VrHandMag(s.transforms[4][2], s.transforms[4][3], &s.transforms[4][5],
@@ -3245,6 +3283,10 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         vc = Constants(s.vsc.data(), sizeof(s.vsc));
     }
     Alloc dc = Constants(&c, sizeof(c));
+    if (mirror) {
+        a.buffers[0].src = mirror_v, a.buffers[0].bytes = mirror_vbytes;
+        a.index_src = mirror_i, a.index_count = mirror_icount;
+    }
     VkBuffer vbufs[16];
     VkDeviceSize voffs[16];
     for (uint32_t i = 0; i < a.buffer_count; i++) {
@@ -3268,21 +3310,24 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     // stock alone; till it's ready the stock isn't drawn (its uvs are for its own texture). None for this gun (a
     // shotgun's shell): drawn with the gun's
     VkDescriptorSet stock_set = VK_NULL_HANDLE;
-    // phase 6: the M67's texture, made once (the hand's grenade, and every grenade the world draws)
-    static Image m67;
-    auto m67_ready = [&] {
-        static bool tried = false;
-        if (!tried) {
-            tried = true;
+    // our models' own textures (vr_gun.cpp), each made once: 1 the M67 (the hand's grenade, every grenade the world
+    // draws), 2 the M433 (the grenade launcher's round)
+    static Image own_tex[3];
+    auto own_ready = [&](int id) {
+        static bool tried[3] = {};
+        if (!tried[id]) {
+            tried[id] = true;
             std::vector<uint8_t> px;
             uint32_t w = 0, h = 0;
-            if (::game::VrGrenadeTexture(px, w, h)) {
+            if (::game::VrOwnTexture(id, px, w, h)) {
                 EndRender();
-                if (!PixelImage(m67, px, w * 4, w, h)) m67 = {};
+                if (!PixelImage(own_tex[id], px, w * 4, w, h)) own_tex[id] = {};
             }
         }
-        return m67.view != VK_NULL_HANDLE;
+        return own_tex[id].view != VK_NULL_HANDLE;
     };
+    Image& m67 = own_tex[1];
+    auto m67_ready = [&] { return own_ready(1); };
     // the game's grenade in the world (found by a throw, dev_drawdiff: stride 24, 220 vertices, 479 indices: its
     // vertices position, packed normal, uv as the guns' less their bone words): the M67 drawn instead, with its texture
     VkDescriptorSet m67_set = VK_NULL_HANDLE;
@@ -3297,12 +3342,12 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         views[0] = m67.view;
         m67_set = Set(views, samplers);
     }
-    if (stock_on && ::game::VrGrenadeInHand()) {
-        // phase 6: the hand grenade (the extra mesh while one's held): its own texture
-        if (m67_ready()) {
+    if (int own = stock_on ? ::game::VrExtraOwn() : 0) {
+        // the extra mesh with a texture of its own (the hand grenade, the grenade launcher's round)
+        if (own_ready(own)) {
             VkImageView views[4];
             for (int i = 0; i < 4; i++) views[i] = stages.view[i];
-            views[0] = m67.view;
+            views[0] = own_tex[own].view;
             stock_set = Set(views, samplers);
         } else {
             stock_on = false;
@@ -3505,6 +3550,12 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         std::memcpy(pc, eye_m, 64);
         vkCmdPushConstants(Cb(), layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), pc);
         if (stock_set) BindSet(stock_set, vc.off, dc.off);
+        {
+            static std::set<uint32_t> told;  // once a mesh: drawn, with its own texture or the gun's
+            if (told.insert(stock_icount).second)
+                LOGR("vulkan: extra mesh drawn, %u indices, %s texture, strip %d", stock_icount,
+                     stock_set ? "its own" : "the gun's", a.strip);
+        }
         // the stock is a triangle list, the gun's pipeline may draw strips (the M16's does): a list read as a strip
         // joins each triangle to the next, a sliver from the stock's last part to its first. As a strip, each
         // triangle alone between repeated indices (a a b c c: the joins have no area). Both windings still: a
@@ -3516,8 +3567,11 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         if (a.strip) {
             auto& strip = strips[{stock_i, stock_icount}];
             if (strip.empty())
+                // (six a triangle, so each starts at an odd place: all flipped alike, and a triangle and its
+                // reverse face opposite ways wherever they sit; five put every other one on the other parity)
                 for (uint32_t i = 0; i + 2 < stock_icount; i += 3)
-                    strip.insert(strip.end(), {stock_i[i], stock_i[i], stock_i[i + 1], stock_i[i + 2], stock_i[i + 2]});
+                    strip.insert(strip.end(), {stock_i[i], stock_i[i], stock_i[i + 1], stock_i[i + 2], stock_i[i + 2],
+                                               stock_i[i + 2]});
             ind = strip.data(), icount = uint32_t(strip.size());
         }
         Alloc ix = Upload(icount * 2, 4);
@@ -3552,6 +3606,14 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         Alloc vc3 = Constants(drop_mag.data(), sizeof(drop_mag));
         BindSet(set, vc3.off, dc.off);
         emit(eye_m, nullptr);
+        // our own magazine (the M249 Para's box) dropped with the rest
+        if (stock_draw_count && ::game::VrStockShell()) {
+            VkDeviceSize voff = stock_vb.off;
+            if (stock_set) BindSet(stock_set, vc3.off, dc.off);
+            vkCmdBindVertexBuffers(Cb(), 0, 1, &stock_vb.buf, &voff);
+            vkCmdBindIndexBuffer(Cb(), stock_ib.buf, stock_ib.off, VK_INDEX_TYPE_UINT16);
+            vkCmdDrawIndexed(Cb(), stock_draw_count, 1, 0, 0, 0);
+        }
     }
 }
 

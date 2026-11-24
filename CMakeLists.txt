@@ -99,7 +99,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(VR_STOCKS ${CMAKE_CURRENT_BINARY_DIR}/game/vr_stocks.h)
 add_custom_command(OUTPUT ${VR_STOCKS}
                    COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/stocks.py --out ${VR_STOCKS}
-                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/stocks.py
+                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/stocks.py ${CMAKE_CURRENT_SOURCE_DIR}/tools/m249stock.py
                    COMMENT "Generating the vr stocks' meshes")
 # TOTEST.md built in: the in-game test checklist (vr_totest.cpp) reads it
 set(VR_TOTEST ${CMAKE_CURRENT_BINARY_DIR}/game/vr_totest_md.h)

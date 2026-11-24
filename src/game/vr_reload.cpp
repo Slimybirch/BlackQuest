@@ -96,6 +96,8 @@ struct GunParts {
     float hold = 0.03f;
     // how far its top goes into the gun past the well's mouth (0: all but its base, a pistol's grip)
     float depth = 0;
+    // how near the line up the well the held top must come to slide home (0: kSeatReach)
+    float seat_reach = 0;
     // the rack zone runs from the rack point this far along this (mesh) direction, an invisible extension of a knob
     // (the user's: a knob is too small to close a fist on), taken within rack_reach of it (0: kRackReach); a slide
     // taken palm over is the point alone
@@ -181,7 +183,9 @@ const GunParts kMac10 = {.mag = 111, .slide = 117, .travel = 0.06f, .mid = {0, -
 // walther 2000: magazine 81 (a short box behind the grip), the handle 84
 const GunParts kWa2000 = {.mag = 81, .slide = 84, .travel = 0.07f, .mid = {0, -0.002f, 0.092f}, .up = {0, 1, 0},
                           .top = 0.026f, .bottom = -0.045f, .rack_bone = 84, .rack = {0.025f, 0.045f, 0.120f},
-                          .hold = 0.02f, .depth = 0.03f, .rack_out = {1, 0, 0}, .rack_len = kKnobLen,
+                          // (user: it slides home once its top reaches the well's bottom: the mouth 2.6 cm under the
+                          // seated top, the line on 2.4 cm past it, 3 cm round it)
+                          .hold = 0.02f, .depth = 0.05f, .seat_reach = 0.03f, .rack_out = {1, 0, 0}, .rack_len = kKnobLen,
                           .rack_reach = 0.06f, .bolt = true};  // the user's hand 5-6 cm off it (play log 2026-11-23)
 // m249: the box 99 at the side under the feed (its belt, bones 102-111, stays in the gun), the handle 114
 const GunParts kM249 = {.mag = 99, .slide = 114, .travel = 0.07f, .mid = {0.025f, 0.035f, 0.128f}, .up = {0, 1, 0},
@@ -204,7 +208,9 @@ constexpr int64_t kCycleWait = 700;
 const GunParts kSpas = {.mag = 114, .slide = 111, .travel = 0.08f, .mid = {0, -0.054f, 0.153f}, .up = {0, 0, 1},
                         .top = 0.024f, .bottom = -0.024f, .rack_bone = 111, .rack = {0, 0.010f, 0.250f},
                         .hold = 0.05f, .depth = 0.05f, .rack_out = {0, 0, 1}, .rack_len = 0.17f,
-                        .rack_reach = kPumpReach, .bolt = true, .shells = true};
+                        .rack_reach = kPumpReach, .bolt = true, .shells = true, .root = 108};
+// (its root: the game parks its shell bone outside its own reload, so the port's place is the root's: user, the
+// entrance was 10-13 cm under the receiver)
 // remington 870: shell 120, pump 117 (z 0.229..0.434); its loading gate (111) and ejection cover (114) stay put
 const GunParts kRemington = {.mag = 120, .slide = 117, .travel = 0.08f, .mid = {0.001f, -0.018f, 0.148f},
                              .up = {0, 0, 1}, .top = 0.029f, .bottom = -0.029f, .rack_bone = 117,
@@ -226,8 +232,9 @@ const GunParts kRpg = {.mag = 111, .travel = 0, .mid = {0, 0.056f, 0.23f}, .up =
 // the grenade launcher: the shotgun's skeleton (its .db): root 105, the tube Shotgun_Pumpgrip 111 (z 0.074..0.550),
 // the grenade Shotgun_Shell 114 (z 0.109..0.199, its tip forward). The tube slides forward to open, the grenade
 // goes into its back tip first (mesh +z)
-const GunParts kGrl = {.mag = 114, .slide = 111, .travel = -kTubeStroke, .mid = {0, 0.018f, 0.154f},
-                       .up = {0, 0, 1}, .top = 0.045f, .bottom = -0.045f, .hold = 0.02f, .depth = 0.05f,
+// (its round is our M433, 12.2 cm, on bone 3 (vr_gun.cpp): the tube opens 13 cm for it)
+const GunParts kGrl = {.mag = 3, .slide = 111, .travel = -0.13f, .mid = {0, 0.018f, 0.170f},
+                       .up = {0, 0, 1}, .top = 0.061f, .bottom = -0.061f, .hold = 0.02f, .depth = 0.05f,
                        .shells = true, .launcher = true, .take = kTakeWaist, .root = 105};
 // the M16's M203 (BNS), while it's empty or being loaded (the gun's pseudo code "B203"; the rifle otherwise): its
 // barrel G_Slide 93 (z 0.200..0.572 round y 0.0055, r 0.035) slides forward to open; the grenade is ours (its
@@ -253,7 +260,8 @@ constexpr float kRackPull = 0.06f;    // metres back the hand pulls for a full r
 
 // the chest: a column under the headset, its top this far below the head's middle, its bottom, its radius, and
 // its middle this far ahead of the head's middle
-constexpr float kChestTop = 0.15f, kChestBottom = 0.50f, kChestRadius = 0.09f, kChestAhead = 0.04f;
+// (user, 2026-11-24: wider, and deeper toward the chest, its front edge where it was: 13 cm ahead)
+constexpr float kChestTop = 0.15f, kChestBottom = 0.50f, kChestRadius = 0.13f, kChestAhead = 0.0f;
 // pulling the magazine in the gun out: the palm within this far of its body (a line along its axis, from its
 // middle this far down to this far up) - about its half thickness plus 2 cm
 constexpr float kPullReach = 0.035f, kPullDown = 0.08f, kPullUp = 0.02f;
@@ -685,6 +693,11 @@ int VrLauncherRoot() {
     return g_parts.launcher ? g_parts.root : -1;
 }
 bool VrLauncherLoaded() { return g_launch_loaded.load(std::memory_order_relaxed); }
+// the held gun's root bone where its parts give one (its round's or shell's place is the root's), -1 none
+int VrPartRoot() {
+    std::lock_guard lock(g_lock);
+    return g_parts.root;
+}
 // a hint floating over the off hand (vr_totest.cpp draws it), empty none; game thread writes, render thread reads
 std::mutex g_tip_lock;
 std::string g_tip;
@@ -1166,9 +1179,14 @@ void VrReloadTick() {
             TestEvent("cyl_latch");
             LOGR("vr reload: %s cylinder latch let go", code.c_str());
         }
-        if (g_cyl_latch && !g_cyl_open && (gun_pitch < kCylDown || roll < kCylRoll || dev_open)) {
+        // (a big fast roll can pass -180 degrees and wrap before it's seen past kCylRoll: a fast counter-clockwise
+        // flick swings it out too, user: small and big motions both)
+        static auto opened_at = tnow;
+        if (g_cyl_latch && !g_cyl_open &&
+            (gun_pitch < kCylDown || roll < kCylRoll || roll_rate < -kCylFlick || dev_open)) {
             // out it swings: its rounds wait (none fire with it out)
             g_cyl_open = true, g_cyl_latch = false;
+            opened_at = tnow;
             g_pending = uint16_t(g_pending + clip);
             clip = 0;
             PlaySound(code, kUnload);
@@ -1211,14 +1229,16 @@ void VrReloadTick() {
                 g_cyl_spin = sp + (std::round(sp / step) * step - sp) * std::min(dt * 10, 1.0f);
             }
             bool push = state == 0 && grab_edge && dist < kCylReach;
-            if (push || roll_rate > kCylFlick || dev_shut) {
+            // (the flick that shuts it not the hand coming back from the roll that swung it out: 0.6 s on)
+            bool flick = roll_rate > kCylFlick && std::chrono::duration<float>(tnow - opened_at).count() > 0.6f;
+            if (push || flick || dev_shut) {
                 g_cyl_open = false;
                 clip = uint16_t(clip + g_pending), g_pending = 0;
                 g_cyl_rate = 0;
                 PlaySound(code, kRelease);
                 xr::Pulse(1, 0.6f, 0.05f);
                 xr::Pulse(0, 0.3f, 0.03f);
-                TestEvent(push ? "cyl_shut_push" : "cyl_shut_flick");
+                TestEvent(push ? "cyl_shut_push" : "cyl_shut_flick");  // (dev_shut counted as a flick)
                 LOGR("vr reload: %s cylinder shut (%s), clip %u", code.c_str(), push ? "pushed" : "flicked", clip);
                 grab_edge = false;
             }
@@ -1352,7 +1372,8 @@ void VrReloadTick() {
         }
         if (dev_phase >= (tube ? 4 : 2) && dev_phase < (tube ? 6 : 4)) dist = 0;  // dev_shells: at the port
         if (rev_dev_seat) dist = 0;  // dev_revolver: at the cylinder
-        if (!g_seating && known && dist < (g_parts.shells ? kShellReach : kSeatReach)) {
+        if (!g_seating && known &&
+            dist < (g_parts.shells ? kShellReach : g_parts.seat_reach > 0 ? g_parts.seat_reach : kSeatReach)) {
             g_seating = true;
             g_seat_from = std::min(below, 0.1f);
             g_seat_at = now;

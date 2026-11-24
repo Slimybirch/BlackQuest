@@ -1579,3 +1579,144 @@ WA2000's bolt should be worked by hand after every shot, the game's animation go
   taken as the guns' 36 less their bone words (position, packed normal, uv: not yet checked by eye). vulkan.cpp
   draws our M67 for that draw instead (vr_gun.cpp VrM67World: MakeM67's vertices cut to 24 bytes; a strip's indices
   as the stock's), with the M67's texture (made once, shared with the hand's).
+- **The throw's sound** (user: as it leaves the hand, only then): the only grenade sound on the disc is
+  /sound/pcm/GrdPin.dav, a RIFF WAVE (16-bit mono PCM, 48 kHz, 0.49 s); /chars/guns/GrdPin.wdo/.wdd are a tiny
+  bank of the same name and /sound/banks/Anim.awd names no throw. vr_grenade.cpp reads it once (weapons.cpp
+  DiscFile) and plays it as the grenade's made (mixer.cpp CuePcm, PCM resampled to the output).
+
+## 2026-11-24: fixes from the user's checklist and notes
+
+- Grenade throw (vr_grenade.cpp): the hand's world velocity is sampled each poll while one's held; the throw takes the
+  fastest of the last 100 ms (at the release the arm has slowed: the throws all went short), x 1.5. The gun is back in
+  the hand as soon as it leaves (no second grenade could be thrown with it).
+- Chest zone (vr_reload.cpp): radius 0.13, its middle under the head (kChestAhead 0), deeper toward the chest.
+- Fore-grips: the Walther's 6 cm nearer the trigger, the grenade launcher's 8 cm farther out.
+- SPAS: its shell bone is parked by the game outside its reload (the port read 10-13 cm low): the port is placed from
+  the root (108, `.root`).
+- Launcher rounds and the hand grenade: fingers wrapped round ({0.65, 0.6, 0.6, 0.6, 0.55}), the pinch only for shells.
+- Grenade launcher: its round is our M433 (MakeM203Grenade on bone 3, back at z 0.109 y 0.018, own texture id 2);
+  the game's own round (bone 114) is collapsed; the tube opens 13 cm.
+- Magnum: a fast counter-clockwise flick swings the cylinder out too (a big roll wraps past -180 and was never
+  seen as rolled); the flick that shuts it waits 0.6 s after it opened (the log showed "out" then "shut (flicked)"
+  within 0.05-0.1 s: the hand coming back from the roll). The game's animations turn the cylinder (120) and crane
+  (117) bones (user: its off hand spinning the cylinder still showed): both are now posed from the gun's root (111)
+  plus our swing and spin, never their own bones. (Assumes the cylinder's rest is the root's, as the launchers'
+  parts are: needs the user's eyes.)
+- Magnum, every game animation off (user: one "took over" at times, maybe when brought up: the off hand spinning
+  the cylinder): it joins WorkedGun (root 111, part 120), so once settled (1.5 s out, or 3 s) its root is held at
+  rest in every draw (no rock, no draw or check animation moving the gun); its arms are snapshotted relative to the
+  gun hand (rig hand bone) once settled and drawn from that snapshot always (log "vr arms: MGN arms held as
+  settled"); the controllers then move the hands as before. Its first 1.5-3 s out (the draw) still show the game's.
+- M249 remodelled (user, replacing the mirror below: the whole gun again from their photos, an M249 Para, the
+  bipod off, the box green, the para stock out): tools/m249para.py (imported by tools/stocks.py, built into
+  vr_stocks.h as kM249Para*: 3664 triangles, atlas 2048x1024 at 800 px/m), each triangle with a material and a bone
+  (90 the gun, 99 the box and its belt, 114 the charging handle). Fitted to the game's mesh, dumped with
+  dev_dumpgun (dumps/gun_HVY_8345.bin: one strip, 4546 triangles; bones 90 gun, 93 top cover, 96 a small part on
+  the left, 99 box, 102-111 belt rounds, 114 feed/handle) and dev_dumptex (its texture 512x256): bore y 0.093,
+  muzzle z 0.675, receiver back z -0.145, grip z -0.10..0.01 down to y -0.097. The photos' side view is 1.03 mm a
+  px against that receiver (its muzzle lands at 0.68 too). The charging handle is on the right as on the real gun
+  (kM249 .rack x -0.043 y 0.073 z 0.118, rack_out -x); the box x -0.018..0.060 y -0.082..0.048 z 0.100..0.196
+  (kM249 .mid/.top/.bottom).
+- Drawn as the gun's extra mesh (StockOf, MakeParts: a bone per triangle); its texture baked from the game's
+  (BakeStock with kParaLook: per material a patch of the game's texture or a paint; the receiver's flat
+  248,120..296,152, the grip 240,175..280,210, the handguard's grooves 60,130..230,186; the green, brass and dark
+  painted). The game's alpha on its guns is their shine (dull metal 15-30, its brass round 200): paint at 255 drew
+  white, so each look has the game's alpha. dev_m249own: every material painted (no texel of the game's), to
+  compare. Once the bake's taken (g_baked) VrMirror gives the game's draw one empty triangle in every pass; ours
+  is drawn in the hand and drop passes too (VrStockShell). Seen on the headset (test hands, both sides, both
+  textures): the game's M249 gone, ours in the hands, the bake ~0.9 s.
+- (superseded) M249's right side (user: never drawn, the flat game's view never showed it): vr_gun.cpp VrMirror, called by
+  vulkan.cpp's gun draw before its upload, swaps the draw's vertices and indices for copies with every triangle
+  wholly on the left (mesh +x, past x0 + 3 mm) added mirrored to x0 - (x - x0), both windings, the normal's x
+  turned. The gun is one triangle strip of 8345 indices (so the mirrored triangles join it by degenerates); x0 is
+  the middle of its front 3 cm (the muzzle): 0.0001 (x -0.0121..0.0122), front z 0.675; 2745 triangles mirrored
+  (log "vr gun: HVY mirror of the draw of 8345 indices (a strip)"). Only draws reaching z 0.3 (the barrel) are
+  mirrored. Seen on the headset (test hands pointing right): the receiver's right side textured as the left.
+- dev_fakehands_side: "r" in the file points the test gun hand right (the gun's right side seen); empty, left.
+- The headset's adb port is now 36153.
+
+## 2026-11-24: the guns' right sides (report: what the game has, for modelling the M249's)
+
+How: one headset run with dev_dumpgun (vr_gun.cpp VrMirror and vulkan.cpp: each gun draw's mesh and its stage-0
+texture, BGRA, saved once a gun and draw; the guns' textures load at one address in turn, so keyed by the draw too),
+dev_give through 17 guns; read offline (scratchpad guns_an*.py: faces by where they sit, |n.x| > 0.6, centroid
+x < -4 mm the right half, > 4 mm the left; their uvs in 8-texel cells). The Para remodel was scrapped (user) and the
+game's M249 is back; tools/m249para.py is no longer built.
+
+- No gun's texture has a right-side section. Every gun's right side is drawn from the same texels as its left (its
+  uvs mirrored): right cells shared with the left 95-100% (AK1 97, ASR 97, BNS 97, GRL 96, HVY 96, M16 95, MP1 99,
+  P90 94, PST 94, RPG 100, SHG 100, SM3 98, SMG 100, SNR 95). The few right-only texels: GK1 25%, RM1 20%,
+  MGN 14% (small parts: the slide's and receiver's other markings, the ejection side).
+- Every gun but two is modelled on both sides (right side area against the left: AK1 94%, ASR 84, BNS 98, GK1 96,
+  GRL 98, M16 99, MGN 96, MP1 101, P90 105, PST 98, RM1 95, RPG 85, SHG 100, SM3 92, SMG 93). The M249 has 42% and
+  the WA2000 (SNR) 21%: the flat game's camera never saw them.
+- The M249's right half has: the top cover, a strip of the receiver under it, the barrel and gas tube, the front
+  sight, the pistol grip, a sliver of the box. Missing: the receiver's whole side wall (z -0.145..0.205,
+  y 0.03..0.106), the handguard's side (z 0.20..0.43, y 0.033..0.115), the trigger guard's far side, the box's right
+  face. Its texture (512 x 256, texels): the cover's top and the rail's slot 120..490 x 0..70; the receiver's
+  side (ribs, the four dark slots at 225..300 x 78..98) 0..490 x 72..112; the handguard's grooved side
+  55..235 x 113..190; the receiver's back end and a screw 0..120 x 0..70; the sling swivel 0..60 x 180..245; the
+  bolt knob 55..90 x 195..235; a round 135..245 x 190..205 and its base 150..180 x 215..235; the grip
+  225..295 x 165..250; the box's sides 300..385 x 117..250 and 400..500 x 95..250. Alpha is shine (dull metal
+  15-30, the round 200).
+- Options for the M249's right side:
+  A. The game's own way: our right-side panels (modelled from the user's photos: the receiver wall with its plates
+     and rivets, the charging handle's slot, the handguard's side with its grooves and vent holes, the trigger
+     guard, the box's face) with uvs onto the left's texels where the same surface is (receiver side, handguard,
+     box), so it matches the left exactly, as every other gun does. No new texture; drawn with the gun.
+  B. As A, plus a section of our own added to the texture (the bake: the game's 512 x 256 and a strip under it,
+     filled from the game's plain receiver texels) for what's only on the right (the charging handle's slot, the
+     ejection port), so the left's own details (its slots, the feed's rounds) aren't repeated there.
+  C. The mirror (built and shown earlier): the left copied across; quickest, but repeats the left's details.
+- The WA2000 is missing the same way and can take the same treatment.
+- The M249's para stock (user, on the game's own M249, after the report): tools/m249stock.py replaces the old fixed
+  stock (kM249Stock*, 688 triangles): the buffer's housing (r 1.9 cm, y 0.036) under the receiver's back plate
+  (z -0.144), two bars (r 7.5 mm) one over the other at y 0.090 and 0.030 back to the butt at z -0.385, the butt an
+  upright oval 4.4 x 13.6 cm, 2.6 cm deep, bevelled at its front, its back dished 1 cm (for the shoulder's crease).
+  Its parts' looks by material (kParaLook through StockSrc.mat: the bars dark steel, the housing and sockets metal,
+  the butt the grip's polymer). Seen on the headset from both sides (bake 1024 x 256, 60 ms).
+- The M249's right side, options A and B built (user: both, shown, then they choose): tools/m249stock.py's
+  right_side() in the stock's mesh: the receiver's wall (x -0.020, z -0.140..0.200, y 0.030..0.092, 1 cm cells),
+  the side plates (z -0.135..-0.062 and 0.122..0.196, y 0.035..0.060), the ejection port's cover (z 0.040..0.112,
+  y 0.032..0.046), the charging handle's slot (y 0.068..0.078) between two rails, eight rivets, the handguard's side
+  (x -0.024, z 0.205..0.435, y 0.035..0.105). vr_gun.cpp M249RightSide (once, from the game's draw in VrStock):
+  each panel triangle takes the left side face under its middle's (z, y), nearest the mirrored wall (1425 left
+  faces), and that face's uv map onto its corners, into the game's own texture baked under the stock's rows
+  (BakeStock: the atlas 1024 x 768, the stock's v squeezed into its 512 rows). A: all 998 panel triangles so;
+  B (dev_right_b): the handguard's (material 7, 322) so, the receiver's (materials 10+look) their own baked cells
+  (kParaLook: metal, the slot dark). Seen on the headset from the right, both: A the left's paint, B plainer metal
+  with the plates standing out. A is the default till the user picks.
+- User: A, but the right's upper receiver band (under the top cover) was the game's own plain strip, set in from
+  our wall, against the left's slots and channel there: our panel now covers it too, set in as the left's is
+  (x -0.0165, y 0.092..0.112, z -0.140..0.200) with a ledge (y 0.092) out to the wall; 1202 panel triangles on the
+  left's texels. Seen on the headset from the right: the four slots and the channel there.
+- The WA2000's right side (user: A, as the M249's): its gaps follow the wooden stock's outline (the thumbhole, the
+  cheek's triangle), so flat panels won't do: vr_gun.cpp WaRightSide copies every left side face of bone 75 that
+  has no right face across from it (none under its (z, y) within 5 mm of its mirrored x) to the right, x and its
+  normal's x turned, its own uvs: 873 of 1214 left faces (376 right faces already there). Drawn as the gun's extra
+  mesh with the gun's own texture (no stock bake for it). It first drew see-through: the extra mesh's strip (a
+  list drawn in a strip pipeline) put each triangle in five indices, so alternate triangles fell on the other
+  parity, and a triangle and its reverse next to it ended up facing the same way; now six indices each (every
+  triangle on an odd start, its reverse facing the other way). The M249's and M16's stocks only worked by their
+  halves' counts. Seen on the headset from the right: the stock, fore-end and receiver solid.
+
+## 2026-11-24: the Walther (WA2000): its rock, its magazine, its off hand
+
+- The rock after a shot, found with dev_rocklog (vr_gun.cpp: for 1.5 s after a shot, each gun draw: the game's root
+  against the held rest, the kick, the gun's pose in the camera, the camera's and head's angles): the game rocks the
+  WA2000's root 0.74 (rotation terms) off its rest for a second; its view kick is only 0.5 degrees; the camera and
+  head never moved; the gun's pose in the camera swung up to 25 degrees. The pose maps the hand through the gun's
+  frame, which is the game's muzzle locator each frame (VrGunFrame), and the muzzle rocks with the gun. Holding the
+  root (WorkedGun) held the bones but not that frame. Now: a worked gun's frame is held once it's settled (and 1.5 s
+  from a shot; log "frame held at rest"), and every bone gets the root's correction (not the root alone: the
+  magazine, handle and the rest are bones the game rocks too). Logged after: the pose identical frame to frame
+  through the rock. (The shotguns, the Remington and the magnum are worked guns too: theirs held the same way.)
+- Our own kick on the Walther: no tip up, its push back at most 2 cm (g_kick_no_turn).
+- Its off hand: the fore-grips were moved the wrong way earlier today (kGrips' fore is back from the muzzle): the
+  Walther's now 0.26 (was 0.20 before, 0.14 by mistake), 6 cm nearer the trigger; SN5 0.25; the grenade launcher's
+  0.04 (was 0.12), 8 cm farther out. Seen (test hands): the off hand on the wooden fore-end, under it.
+- Its magazine (user: slide home once its top reaches the well's bottom): the well's mouth measured 2.6 cm under the
+  seated top (the body's underside y -0.002 against the top's 0.024); the line the held top is caught on now runs
+  to 5 cm under the seat (2.4 cm past the mouth) and 3 cm round it (GunParts.seat_reach), was 3 cm and 2 cm. Held
+  in the off hand (dev_eject, dev_maghand) it's upright, its top past the thumb; the measured magazine (368
+  vertices) is 8.8 cm deep and 7 cm tall, its insert straight up.
