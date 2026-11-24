@@ -333,7 +333,12 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       - anything loaded later in a mission (mid-level streaming, if any; the run idled at each mission's start)
       - films and render targets are skipped on purpose (rewritten each frame)
       - to fill them: the user plays with DUMP TEXTURES on; new hashes append to the same index
-- [ ] the replacement loader (KTX2/ASTC by hash, async, mips, the memory budget), only with TEXTURES on HD PACK
+- [x] (built 2026-11-24, not run) the replacement loader: textures_hd/<hash>.ktx2, a loader thread, its own mips,
+      1 GB budget (least recently bound out), 8 MB of uploads a frame, only with TEXTURES on HD PACK
+- [x] loader run on the headset (2026-11-24): the tinted test pack (150 of mission 1's) replaced the gloves and
+      foliage, no errors; ASTC LDR supported on the Quest 3
+- [ ] the HD mips only filter when the game's texture had mips (the game's sampler state): check distant HD walls
+- [ ] the loader's KTX2 has no supercompression (zstd): the converter writes plain ASTC
 - [ ] the pack converter (PC): match the PS2 pack's images to the Xbox dumps, review sheet, ASTC KTX2, size cap
 - [ ] coverage report per level
 

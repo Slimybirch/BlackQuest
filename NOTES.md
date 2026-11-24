@@ -1839,3 +1839,15 @@ brighter and bigger)
   DXT3, 51 DXT5, 204 P8, 8 LIN_A8R8G8B8, 4 A8B8G8R8; 675 drawn, 292 found by the scan, 177 the first run's. The
   scan sees 600-1000 headers a mission (many shared between missions, or already drawn). Samples decode right.
   Gaps in TODO (Phase 8).
+
+## 2026-11-24: Phase 8, the HD pack's replacement loader
+
+- vulkan.cpp namespace hd + VulkanBackend::HdFor. With TEXTURES on HD PACK (vr_hd_textures; dev_hdtex for tests),
+  textures_hd/ in the app's folder is listed once (<16 hex>.ktx2, the dump's TextureHash). UploadTexture keeps
+  Tex.hash for 2D non-linear textures (linear ones are sampled by texel, unnormalised: not replaced). BindGuestTexture
+  asks HdFor: resident, its view is bound with its format and mip count (the sampler's minLod clamp follows);
+  otherwise the file is read on a loader thread (KTX2: header, level index; no supercompression, no cubes, layers or
+  depth) and up to 4 wait for the render thread, which uploads up to 8 MB a frame. Budget 1 GB: the least recently
+  bound image not bound in the last two frames goes (and can be read again). A format the GPU doesn't sample is
+  logged and skipped; ASTC LDR is now enabled at device creation (logged: "vulkan: BC .., ASTC LDR ..").
+- The converter must write UNORM (not sRGB) formats: the game's shaders work on gamma-space texels.

@@ -17,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <set>
@@ -594,6 +595,7 @@ struct Tex {
     uint64_t frame = 0;
     uint64_t palette = 0;
     uint32_t uploads = 0;  // its contents uploaded this many times (phase 8's dump skips the ones that keep changing)
+    uint64_t hash = 0;     // TextureHash of its last upload, with TEXTURES on HD PACK (the pack's key)
 };
 
 struct PsoKey {
@@ -1488,6 +1490,17 @@ private:
     VkQueue queue_ = VK_NULL_HANDLE;
     std::vector<const char*> dev_exts_;
     bool bc_ = false;
+    // phase 8, the HD pack's images by hash: resident ones, the bytes they hold, this frame's uploads
+    struct HdImage {
+        Image img;
+        uint64_t used = 0;
+        size_t bytes = 0;
+    };
+    std::unordered_map<uint64_t, HdImage> hd_;
+    size_t hd_bytes_ = 0;
+    uint64_t hd_frame_ = 0;
+    size_t hd_frame_bytes_ = 0;
+    const Image* HdFor(uint64_t hash);
     VkFormat depth_fmt_ = VK_FORMAT_D24_UNORM_S8_UINT;
     bool depth_linear_ = false;
     bool r32f_linear_ = false;
@@ -1738,8 +1751,10 @@ bool VulkanBackend::CreateDevice() {
     feats_.samplerAnisotropy = f2.features.samplerAnisotropy;
     feats_.fillModeNonSolid = f2.features.fillModeNonSolid;
     feats_.textureCompressionBC = f2.features.textureCompressionBC;
+    feats_.textureCompressionASTC_LDR = f2.features.textureCompressionASTC_LDR;  // (the HD pack's, phase 8)
     feats_.shaderClipDistance = f2.features.shaderClipDistance;  // the gun list's arms split (EyeHlsl)
     bc_ = feats_.textureCompressionBC;
+    LOGR("vulkan: BC %d, ASTC LDR %d", int(bc_), int(feats_.textureCompressionASTC_LDR));
     VkPhysicalDeviceFeatures2 on{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, chain()};
     on.features = feats_;
     dr.dynamicRendering = VK_TRUE;
@@ -3238,6 +3253,174 @@ void StartTextureScan() {
     });
 }
 
+// Phase 8, the HD pack's loader (VR SETTINGS, TEXTURES: HD PACK). textures_hd/<16 hex>.ktx2 in the app's folder,
+// named by the TextureHash of the texture it replaces (the dump's key). KTX2 without supercompression, any format the
+// GPU samples (the converter writes ASTC; UNORM, as the game's shaders expect gamma-space texels), its own mips. The
+// folder is listed once; a file is read on a loader thread the first time its texture is bound, then uploaded on the
+// render thread (at most kHdFrameBytes a frame) and bound in its place from then on. Past kHdBudget the least
+// recently bound go (and can load again); a texture without a file, or a linear, cube or volume one, stays the game's
+namespace hd {
+// TEXTURES on HD PACK (dev_hdtex turns it on for tests)
+bool On() {
+    static const bool dev = std::filesystem::exists(app::ExeDir() / "dev_hdtex");
+    return dev || game::Opt().vr_hd_textures;
+}
+constexpr size_t kBudget = size_t(1024) << 20;
+constexpr size_t kFrameBytes = size_t(8) << 20;
+constexpr size_t kReadyMax = 4;  // read and waiting for the render thread (the loader waits past this)
+
+struct Data {
+    uint64_t hash = 0;
+    VkFormat fmt = VK_FORMAT_UNDEFINED;
+    uint32_t w = 0, h = 0;
+    std::vector<std::vector<uint8_t>> levels;  // level 0 first
+    size_t bytes = 0;
+};
+std::mutex g_lock;
+std::condition_variable g_cv;
+std::deque<uint64_t> g_want;
+std::deque<Data> g_ready;
+std::set<uint64_t> g_avail, g_asked;
+
+void List() {
+    static std::once_flag listed;
+    std::call_once(listed, [] {
+        std::error_code ec;
+        for (const auto& e : std::filesystem::directory_iterator(app::ExeDir() / "textures_hd", ec)) {
+            std::string stem = e.path().stem().string();
+            if (e.path().extension() != ".ktx2" || stem.size() != 16) continue;
+            g_avail.insert(std::strtoull(stem.c_str(), nullptr, 16));
+        }
+        LOGR("hd textures: %zu in textures_hd", g_avail.size());  // (the device's ASTC: logged at start)
+    });
+}
+
+// KTX2: the 80-byte header (vkFormat at 12, width 20, height 24, depth 28, layers 32, faces 36, levels 40,
+// supercompression 44), then per level an offset, a length and an uncompressed length, 64-bit each
+bool Read(uint64_t hash, Data& out) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "%016llx.ktx2", (unsigned long long)hash);
+    std::ifstream f(app::ExeDir() / "textures_hd" / name, std::ios::binary);
+    std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    static const uint8_t kId[12] = {0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, '\r', '\n', 0x1A, '\n'};
+    if (b.size() < 80 || std::memcmp(b.data(), kId, 12)) return false;
+    auto u32 = [&](size_t o) { uint32_t v; std::memcpy(&v, &b[o], 4); return v; };
+    auto u64 = [&](size_t o) { uint64_t v; std::memcpy(&v, &b[o], 8); return v; };
+    uint32_t levels = std::max(u32(40), 1u);
+    if (u32(28) > 1 || u32(32) > 1 || u32(36) != 1 || u32(44) != 0 || levels > 16 || b.size() < 80 + levels * 24)
+        return false;
+    out.hash = hash;
+    out.fmt = VkFormat(u32(12));
+    out.w = u32(20), out.h = u32(24);
+    if (!out.w || !out.h || out.w > 4096 || out.h > 4096) return false;
+    for (uint32_t l = 0; l < levels; l++) {
+        uint64_t off = u64(80 + l * 24), len = u64(88 + l * 24);
+        if (!len || off + len > b.size()) return false;
+        out.levels.emplace_back(b.begin() + off, b.begin() + off + len);
+        out.bytes += len;
+    }
+    return true;
+}
+
+// the first time a hash is wanted: read on the loader's thread
+void Request(uint64_t hash) {
+    static std::once_flag started;
+    std::call_once(started, [] {
+        std::thread([] {
+            for (;;) {
+                uint64_t hash;
+                {
+                    std::unique_lock lock(g_lock);
+                    g_cv.wait(lock, [] { return !g_want.empty() && g_ready.size() < kReadyMax; });
+                    hash = g_want.front();
+                    g_want.pop_front();
+                }
+                Data d;
+                if (!Read(hash, d)) {
+                    LOGR("hd textures: %016llx.ktx2 unreadable (KTX2, no supercompression, 2D)", (unsigned long long)hash);
+                    continue;  // (stays asked: not tried again)
+                }
+                std::lock_guard lock(g_lock);
+                g_ready.push_back(std::move(d));
+            }
+        }).detach();
+    });
+    std::lock_guard lock(g_lock);
+    if (!g_asked.insert(hash).second) return;
+    g_want.push_back(hash);
+    g_cv.notify_one();
+}
+}  // namespace hd
+
+const Image* VulkanBackend::HdFor(uint64_t hash) {
+    if (hd_frame_ != presents_) hd_frame_ = presents_, hd_frame_bytes_ = 0;
+    // what the loader has read, uploaded while this frame's share lasts
+    for (;;) {
+        hd::Data d;
+        {
+            std::lock_guard lock(hd::g_lock);
+            if (hd::g_ready.empty() || hd_frame_bytes_ >= hd::kFrameBytes) break;
+            d = std::move(hd::g_ready.front());
+            hd::g_ready.pop_front();
+            hd::g_cv.notify_one();
+        }
+        hd_frame_bytes_ += d.bytes;
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(pd_, d.fmt, &fp);
+        if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
+            LOGR("hd textures: %016llx's format %d isn't sampled here", (unsigned long long)d.hash, int(d.fmt));
+            continue;
+        }
+        // over the budget: the least recently bound go first (asked again if bound later)
+        while (hd_bytes_ + d.bytes > hd::kBudget && !hd_.empty()) {
+            auto old = hd_.begin();
+            for (auto it = hd_.begin(); it != hd_.end(); ++it)
+                if (it->second.used < old->second.used) old = it;
+            if (old->second.used + 2 >= presents_) break;  // (all in use now: the new one waits)
+            hd_bytes_ -= old->second.bytes;
+            Retire(old->second.img);
+            {
+                std::lock_guard lock(hd::g_lock);
+                hd::g_asked.erase(old->first);
+            }
+            hd_.erase(old);
+        }
+        if (hd_bytes_ + d.bytes > hd::kBudget) {
+            std::lock_guard lock(hd::g_lock);
+            hd::g_asked.erase(d.hash);
+            continue;
+        }
+        HdImage& e = hd_[d.hash];
+        uint32_t levels = uint32_t(d.levels.size());
+        if (!CreateImage(e.img, d.fmt, d.w, d.h, 1, 1, levels, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         VK_IMAGE_VIEW_TYPE_2D)) {
+            hd_.erase(d.hash);
+            continue;
+        }
+        Transition(e.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        for (uint32_t l = 0; l < levels; l++) {
+            const auto& px = d.levels[l];
+            Alloc a = Upload(px.size(), 16);
+            if (!a.cpu) continue;
+            std::memcpy(a.cpu, px.data(), px.size());
+            VkBufferImageCopy c{a.off, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1}, {0, 0, 0},
+                                {std::max(d.w >> l, 1u), std::max(d.h >> l, 1u), 1}};
+            vkCmdCopyBufferToImage(Cb(), a.buf, e.img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        }
+        Transition(e.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        e.bytes = d.bytes;
+        e.used = presents_;
+        hd_bytes_ += d.bytes;
+    }
+    auto it = hd_.find(hash);
+    if (it != hd_.end()) {
+        it->second.used = presents_;
+        return &it->second.img;
+    }
+    if (hd::g_avail.count(hash) && hd_bytes_ < hd::kBudget) hd::Request(hash);
+    return nullptr;
+}
+
 void VulkanBackend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, const uint8_t* p,
                                   const uint32_t* colours) {
     tx.uploads++;
@@ -3246,6 +3429,11 @@ void VulkanBackend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInf
         d.height >= 4) {
         StartTextureScan();  // (the load-time dump, from the first upload with the setting on)
         DumpOnce(d, fi, p, colours, TextureHash(d, p, tx.palette), 'd');
+    }
+    tx.hash = 0;
+    if (hd::On() && !d.cube && d.depth == 1 && !d.linear) {
+        hd::List();
+        if (!hd::g_avail.empty()) tx.hash = TextureHash(d, p, tx.palette);
     }
     Transition(tx.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     uint32_t faces = d.cube ? 6 : 1;
@@ -3302,6 +3490,13 @@ VkImageView VulkanBackend::BindGuestTexture(const State& s, int stage, const Tex
     }
     Transition(t.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (fi.depth) info.shadow = ShadowDepthKind(d.format);
+    if (t.hash && hd::On()) {
+        if (const Image* hd = HdFor(t.hash)) {
+            stages.fmt[stage] = hd->fmt;
+            stages.levels[stage] = hd->levels;
+            return hd->view;
+        }
+    }
     stages.fmt[stage] = t.fmt;
     stages.levels[stage] = t.levels;
     return t.img.view;

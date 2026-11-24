@@ -121,3 +121,4 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 
 ## Phase 8: HD textures
 - [ ] DUMP TEXTURES on: a level runs smoothly while textures_dump fills (confirm)
+- [ ] HD textures: with a pack in textures_hd and TEXTURES on HD PACK, walls look sharper, no stutter or missing textures (confirm)
