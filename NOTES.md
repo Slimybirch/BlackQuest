@@ -1769,3 +1769,24 @@ brighter and bigger)
   memory card message. In a dev pause it came 0.3 s after the game paused; the dev START's pause lets go by itself
   2.6 s on (the page clears and the logic runs again), so the pause menu and the panel beside it are for the
   user's hands. Not tested: the pointer on the panel, the gunstock (no controllers).
+
+## 2026-11-24: the VR settings page in sections; the HD textures' choice
+
+- The panel's VR page (menu.cpp kCheatRows, rows step by id whatever page holds them) in sections: COMFORT (TURNING;
+  SMOOTH TURN SPEED, vr_turn_speed 50-200%: under 100 the right stick's push scaled down, over it the game's full
+  turn and the body turned on, about 90 degrees a second at full push per 100%), HANDS (OFF-HAND GRIP, RELOAD),
+  HEIGHT (VIEW HEIGHT, vr_view_height -20..+20 cm: added in VrViewLift, which the view and the hands both take),
+  GUNSTOCK, GRAPHICS (RENDER RESOLUTION, DRAW DISTANCE: the recomp's own; TEXTURES, vr_hd_textures, ORIGINAL or HD
+  PACK: user, the choice of the HD pack or the authentic look, stored now and used when Phase 8 loads the pack),
+  TESTING (TEST CHECKLIST), then the cheats.
+- More on the page (user: the rest of it): COMFORT gets VIGNETTE WHILE MOVING (vr_vignette OFF/LOW/MEDIUM/HIGH:
+  vr_body.cpp eases an amount from the left stick's push and, turning smoothly, the right's, times 0.35/0.55/0.75;
+  vulkan.cpp's final pass (kFilterHlsl Frame, post.w) darkens an eye's frame from 45% of the way out to its rim) and
+  SEATED MODE (vr_seated: the view and hands raised 0.45 m, VrViewLift; no real crouch). HEIGHT gets STAND STRAIGHT
+  AND PRESS (the head's height now is standing, real crouch's g.top, instead of the highest it was ever lifted;
+  reads DONE after: the head's height is from where the session began, not the floor). GRAPHICS gets REFRESH RATE
+  (vr_refresh: the headset's, 72, 80, 90, 120: xr.cpp enables XR_FB_display_refresh_rate when the runtime has it
+  and asks for the nearest offered rate when the setting changes). Left-handed play (the gun and both arms
+  mirrored, not just the controllers swapped) and foveation (the renderer drawing with a fragment density map)
+  are bigger and left in TODO. dev_panelfront: the panel over the menu itself, for screenshots. Seen on the
+  headset: the page in its sections.

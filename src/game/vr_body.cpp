@@ -97,7 +97,19 @@ bool VrLookAngles(float& yaw, float& pitch) {
     return true;
 }
 
-float VrViewLift() { return g_lift.load(std::memory_order_relaxed); }
+// (and the player's own view height, VR SETTINGS: both the view and the hands with it; seated, the view raised to
+// standing: the standing height (calibrated, or the highest seen) less a sitting head's, 0.45 m at least)
+std::atomic<float> g_standing{0};  // 1 once the standing height's been calibrated (the menu's DONE)
+std::atomic<bool> g_calibrate{false};
+std::atomic<float> g_vignette{0};  // 0..1, the edges' darkening now
+constexpr float kSeatedRaise = 0.45f;
+float VrViewLift() {
+    float seated = Opt().vr_seated ? kSeatedRaise : 0;
+    return g_lift.load(std::memory_order_relaxed) + seated + (float(Opt().vr_view_height) - 20) * 0.01f;
+}
+void VrCalibrateHeight() { g_calibrate.store(true); }
+float VrStandingHeight() { return g_standing.load(std::memory_order_relaxed); }
+float VrVignette() { return g_vignette.load(std::memory_order_relaxed); }
 
 // The user's touch scheme in play: the right stick up/down is the d-pad's (firing mode / health pack), the right grip
 // is X (pick up, use), the right grip closed with the hand reached back over the right shoulder switches weapon (the
@@ -292,7 +304,30 @@ void VrPad(input::Pad& pad) {
                 g.flicked = false;
             }
             pad.rx = 0;
+        } else if (Opt().vr_turn_speed != 100) {
+            // the smooth turn's speed (VR SETTINGS): slower, the stick's push scaled down; faster, the game's full
+            // turn and the body turned on by the rest (about 90 degrees a second at full push per 100%)
+            float k = float(Opt().vr_turn_speed) / 100, x = float(pad.rx) / 32767;
+            static int64_t last = NowMs();
+            int64_t now = NowMs();
+            float dt = std::min(float(now - last) / 1000, 0.1f);
+            last = now;
+            if (k < 1) pad.rx = int16_t(std::clamp(x * k, -1.0f, 1.0f) * 32767);
+            else g.body -= x * (k - 1) * 90.0f * dt;  // yaw grows turning left
         }
+    }
+    {
+        // the comfort vignette: how much the sticks move or (smooth) turn the player, eased
+        float want = 0;
+        if (Opt().vr_vignette && NowMs() - g.play_ms < 250) {
+            float mx = float(pad.lx) / 32767, my = float(pad.ly) / 32767, tx = float(pad.rx) / 32767;
+            float move = std::min(1.0f, std::sqrt(mx * mx + my * my));
+            float turn = Opt().vr_snap_turn ? 0.0f : std::fabs(tx);
+            constexpr float kStrength[] = {0, 0.35f, 0.55f, 0.75f};
+            want = std::min(1.0f, std::max(move, turn)) * kStrength[std::min(Opt().vr_vignette, 3u)];
+        }
+        float v = g_vignette.load(std::memory_order_relaxed);
+        g_vignette.store(v + (want - v) * (want > v ? 0.25f : 0.1f), std::memory_order_relaxed);
     }
     if (NowMs() - g.play_ms < 250) VrControls(pad);
     {
@@ -314,11 +349,16 @@ void VrPad(input::Pad& pad) {
         return;
     }
     int64_t now = NowMs();
+    if (g_calibrate.exchange(false)) {
+        g.top = head;  // stood straight: this is standing (not the highest the head was ever lifted)
+        g_standing.store(1, std::memory_order_relaxed);
+        LOGR("vr body: standing height calibrated, %.2f m", head);
+    }
     g.top = std::max(g.top, head);
     g.stand = std::max(g.stand, stance);
     bool game_down = stance < g.stand - kStanceSlack;
     bool was = g.real;
-    g.real = head < g.top - (g.real ? kStandDrop : kCrouchDrop);
+    g.real = !Opt().vr_seated && head < g.top - (g.real ? kStandDrop : kCrouchDrop);
     if (g.real && !was && !game_down) {
         g.ours = true;
         g.retry_at = 0;

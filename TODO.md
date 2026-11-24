@@ -311,6 +311,13 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] (built) the pause menu fixed in space; the menu after quitting in front of the player; the hud 17% bigger and
       brighter (gain 1.35, saturation +25%)
 - [x] (built) the VR settings panel beside the pause and main menus, no combo; gunstock support and its options
-- [ ] Android's dialogs on the virtual screen, mission 1 headset-on; the settings window's pages (comfort, hands,
-      height, graphics) as planned under "VR controls"
+- [x] (built) the VR page in sections: comfort (turn speed), hands, height (view height), gunstock, graphics
+      (render resolution, draw distance, TEXTURES: original or the HD pack, for Phase 8), testing
+- [ ] Phase 8: load the HD pack only when TEXTURES is HD PACK (vr_hd_textures)
+- [ ] Android's dialogs on the virtual screen; "PRESS ANYWHERE" on the title (the touch port's); mission 1 headset-on;
+      on the page now: vignette, seated mode, height calibration, refresh rate
+- [ ] left-handed play: the gun in the left hand, the arms and grips mirrored, the shoulder switch, sticks and melee
+- [ ] foveation (XR_FB_foveation: the eyes' render passes with a fragment density map)
+- [ ] co-op (user, 2026-11-24): the player gets a body, the same model as the AI on the player's side (the friendly
+      soldiers); now only the first-person arms are drawn, no body (the game has none for the player in first person)
 - [ ] two-handed holds for the Uzi and the Mac-10 (user, 2026-11-24: if there's one already, it doesn't work)

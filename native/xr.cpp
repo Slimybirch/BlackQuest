@@ -24,6 +24,7 @@
 #include <mutex>
 #include <thread>
 
+#include "common/options.h"
 #include "app/app.h"
 #include "common/menu.h"
 #include "core/input.h"
@@ -55,6 +56,7 @@ uint32_t g_screen_images = 0;  // the quad screen's, after both eyes' in g_image
 // the settings panel's swapchain (user: beside the pause menu and the title's menus, no button combo): its images
 // last in g_images, from g_panel_first
 XrSwapchain g_panel = XR_NULL_HANDLE;
+bool g_refresh_ext = false;  // XR_FB_display_refresh_rate enabled
 size_t g_panel_first = SIZE_MAX;
 VkExtent2D g_eye_extent{};
 // the views the frame being drawn is drawn with (located a frame ahead: draws run before the present that waits
@@ -430,13 +432,24 @@ bool Init() {
     XrInstanceCreateInfoAndroidKHR ai{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
     ai.applicationVM = vm;
     ai.applicationActivity = keep;
-    const char* exts[] = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME};
+    // (and the display's refresh rate, when the runtime offers it: VR SETTINGS)
+    const char* exts[3] = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME};
+    uint32_t ext_count = 2;
+    {
+        uint32_t n = 0;
+        xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr);
+        std::vector<XrExtensionProperties> props(n, {XR_TYPE_EXTENSION_PROPERTIES});
+        xrEnumerateInstanceExtensionProperties(nullptr, n, &n, props.data());
+        for (const auto& p : props)
+            if (!std::strcmp(p.extensionName, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
+                exts[ext_count++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME, g_refresh_ext = true;
+    }
     XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO, &ai};
     std::strcpy(ci.applicationInfo.applicationName, "BlackQuest");
     ci.applicationInfo.applicationVersion = 1;
     std::strcpy(ci.applicationInfo.engineName, "XboxXBE-Recomp");
     ci.applicationInfo.apiVersion = XR_API_VERSION_1_0;
-    ci.enabledExtensionCount = 2;
+    ci.enabledExtensionCount = ext_count;
     ci.enabledExtensionNames = exts;
     XrResult r = xrCreateInstance(&ci, &g_instance);
     if (XR_FAILED(r)) {
@@ -763,6 +776,8 @@ bool RenderEye(int eye, EyeView& out) {
     return true;
 }
 
+void ApplyRefreshRate();  // (below)
+
 bool BeginFrame() {
     g_frame_begun = false;
     g_session_lock.lock();
@@ -817,7 +832,34 @@ bool BeginFrame() {
         }
     }
     ReadControls();
+    ApplyRefreshRate();
     return fs.shouldRender;
+}
+
+// the refresh rate VR SETTINGS asks for (0 the headset's own), when it changes and the runtime offers it: the
+// nearest it has. Frame thread
+void ApplyRefreshRate() {
+    static uint32_t applied = ~0u;
+    uint32_t want = game::Opt().vr_refresh;
+    if (!g_refresh_ext || want == applied || !g_session) return;
+    applied = want;
+    if (!want) return;  // (the headset's own: left as it is)
+    PFN_xrEnumerateDisplayRefreshRatesFB enumerate = nullptr;
+    PFN_xrRequestDisplayRefreshRateFB request = nullptr;
+    xrGetInstanceProcAddr(g_instance, "xrEnumerateDisplayRefreshRatesFB", reinterpret_cast<PFN_xrVoidFunction*>(&enumerate));
+    xrGetInstanceProcAddr(g_instance, "xrRequestDisplayRefreshRateFB", reinterpret_cast<PFN_xrVoidFunction*>(&request));
+    if (!enumerate || !request) return;
+    uint32_t n = 0;
+    enumerate(g_session, 0, &n, nullptr);
+    std::vector<float> rates(n);
+    enumerate(g_session, n, &n, rates.data());
+    float best = 0;
+    for (float r : rates)
+        if (!best || std::fabs(r - float(want)) < std::fabs(best - float(want))) best = r;
+    if (best > 0) {
+        XrResult r = request(g_session, best);
+        LOGR("xr: refresh rate %.0f Hz asked (%s; offered %u)", best, XR_SUCCEEDED(r) ? "ok" : ResultName(r), n);
+    }
 }
 
 XrSwapchain Chain(int eye) {
@@ -850,7 +892,9 @@ XrPosef PanelBeside(const XrPosef& at, float half, float panel_w) {
     float l = std::sqrt(rx * rx + rz * rz);
     if (l < 1e-3f) rx = 1, rz = 0, l = 1;
     rx /= l, rz /= l;
-    float d = half + 0.08f + panel_w * 0.5f;
+    // (dev_panelfront: over the menu itself, for screenshots from a headset that can't turn)
+    static const bool front = std::filesystem::exists(app::ExeDir() / "dev_panelfront");
+    float d = front ? 0.0f : half + 0.08f + panel_w * 0.5f;
     XrPosef p;
     p.position = {at.position.x + rx * d, at.position.y, at.position.z + rz * d};
     float hx = 0.5f * (g_render_views[0].pose.position.x + g_render_views[1].pose.position.x);

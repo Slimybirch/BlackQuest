@@ -31,7 +31,14 @@ struct Options {
     bool vr_gunstock = false;
     uint32_t vr_gun_angle = 45;     // vr: the gun's pitch on the controller, degrees + 45 (0..90: -45 down..+45 up)
     uint32_t vr_stock_height = 10;  // vr: the off controller over the barrel's line on a stock, cm + 10 (-10..+10)
-    uint32_t vr_snap_turn = 0;  // vr: degrees a flick of the right stick turns the body; 0 turns smoothly (user)
+    uint32_t vr_snap_turn = 0;
+    uint32_t vr_turn_speed = 100;   // vr: the smooth turn's speed, percent of the game's (50..200)
+    uint32_t vr_view_height = 20;   // vr: the view (and hands) raised by this many cm less 20 (-20..+20)
+    // vr: the HD texture pack (Phase 8) or the game's own textures (user: the choice, for an authentic look)
+    bool vr_hd_textures = false;
+    uint32_t vr_vignette = 0;   // vr: the view's edges darkened while moving or turning: 0 off, 1 low, 2 medium, 3 high
+    bool vr_seated = false;     // vr: played sitting: the view at standing height, no real crouch
+    uint32_t vr_refresh = 0;    // vr: the display's refresh rate in Hz (0 the headset's own)  // vr: degrees a flick of the right stick turns the body; 0 turns smoothly (user)
     // the render resolution follows the frame rate (native/dynamic_resolution.cpp): down when it falls under the
     // target, up again once it holds the target this many seconds; within min and max, percent of the screen's
     bool dynamic_resolution = false;

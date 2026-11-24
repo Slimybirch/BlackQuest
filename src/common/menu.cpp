@@ -39,6 +39,8 @@ void SetInvert(bool x, bool y);
 }  // namespace gyro
 namespace game {
 void VrTotestUi();  // src/game/vr_totest.cpp: the test checklist's card
+void VrCalibrateHeight();     // src/game/vr_body.cpp: the head's height now is standing
+float VrStandingHeight();     // src/game/vr_body.cpp: 1 once the standing height's calibrated, else 0
 }  // namespace game
 
 // native/touch.cpp: the touch controls' layout
@@ -255,7 +257,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest, kVrGunstock, kVrGunAngle,
-             kVrStockHeight };
+             kVrStockHeight, kVrTurnSpeed, kVrViewHeight, kVrHdTextures, kVrVignette, kVrSeated,
+             kVrCalibrate, kVrRefresh };
 
 using rows::Kind;
 using rows::Row;
@@ -323,16 +326,31 @@ constexpr Row kGeneralRows[] = {
 
 
 // a page of its own, apart from the recomp's settings
+// in the headset the VR settings come first, in sections, then the cheats (user: comfort, hands, height, gunstock,
+// graphics with the HD textures' choice)
 constexpr Row kCheatRows[] = {
-    {Kind::Heading, -1, "VR"},
+    {Kind::Heading, -1, "COMFORT"},
     {Kind::Value, kVrTurn, "TURNING"},
+    {Kind::Value, kVrTurnSpeed, "SMOOTH TURN SPEED"},
+    {Kind::Value, kVrVignette, "VIGNETTE WHILE MOVING"},
+    {Kind::Value, kVrSeated, "SEATED MODE"},
+    {Kind::Heading, -1, "HANDS"},
     {Kind::Value, kVrGrip, "OFF-HAND GRIP"},
     {Kind::Value, kVrReload, "RELOAD"},
-    {Kind::Value, kVrTotest, "TEST CHECKLIST"},
+    {Kind::Heading, -1, "HEIGHT"},
+    {Kind::Value, kVrCalibrate, "STAND STRAIGHT AND PRESS"},
+    {Kind::Value, kVrViewHeight, "VIEW HEIGHT"},
     {Kind::Heading, -1, "GUNSTOCK"},
     {Kind::Value, kVrGunstock, "PHYSICAL GUNSTOCK"},
     {Kind::Value, kVrGunAngle, "GUN ANGLE"},
     {Kind::Value, kVrStockHeight, "OFF-HAND HEIGHT"},
+    {Kind::Heading, -1, "GRAPHICS"},
+    {Kind::Value, kVrRefresh, "REFRESH RATE"},
+    {Kind::Value, kRenderResolution, "RENDER RESOLUTION"},
+    {Kind::Value, kDrawDistance, "DRAW DISTANCE"},
+    {Kind::Value, kVrHdTextures, "TEXTURES"},
+    {Kind::Heading, -1, "TESTING"},
+    {Kind::Value, kVrTotest, "TEST CHECKLIST"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -551,6 +569,53 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             // blackquest: the hand-test checklist's card on the left wrist (TOTEST.md)
             if (step) o.vr_totest = !o.vr_totest;
             std::snprintf(text, sizeof(text), o.vr_totest ? "ON" : "OFF");
+            return true;
+        case kVrTurnSpeed:
+            // blackquest: the smooth turn's speed (the right stick's push scaled), 50% to 200%
+            if (step) o.vr_turn_speed = uint32_t(StepRange(int(o.vr_turn_speed), 50, 200, 10, step));
+            std::snprintf(text, sizeof(text), "%u%%", o.vr_turn_speed);
+            return true;
+        case kVrViewHeight: {
+            // blackquest: the view and the hands raised or lowered against the headset's own height
+            if (step) o.vr_view_height = uint32_t(StepRange(int(o.vr_view_height), 0, 40, 1, step));
+            int cm = int(o.vr_view_height) - 20;
+            std::snprintf(text, sizeof(text), cm ? "%+d CM" : "0 CM", cm);
+            return true;
+        }
+        case kVrVignette: {
+            // blackquest: the view's edges darkened while the stick moves or turns the player (comfort)
+            constexpr const char* kNames[] = {"OFF", "LOW", "MEDIUM", "HIGH"};
+            if (step) o.vr_vignette = (o.vr_vignette + 4 + uint32_t(step)) % 4;
+            std::snprintf(text, sizeof(text), "%s", kNames[std::min(o.vr_vignette, 3u)]);
+            return true;
+        }
+        case kVrSeated:
+            // blackquest: sitting: the view raised to standing height, no real crouch
+            if (step) o.vr_seated = !o.vr_seated;
+            std::snprintf(text, sizeof(text), o.vr_seated ? "ON" : "OFF");
+            return true;
+        case kVrCalibrate: {
+            // blackquest: standing straight, a press takes the head's height now as standing (real crouch's)
+            // (the head's height is from where the session began, not the floor: no metres to show)
+            if (step) ::game::VrCalibrateHeight();
+            std::snprintf(text, sizeof(text), ::game::VrStandingHeight() > 0 ? "DONE" : "PRESS");
+            return true;
+        }
+        case kVrRefresh: {
+            // blackquest: the headset's refresh rate (the ones it offers; xr.cpp asks for it)
+            constexpr uint32_t kRates[] = {0, 72, 80, 90, 120};
+            size_t at = 0;
+            for (size_t i = 0; i < std::size(kRates); i++)
+                if (kRates[i] == o.vr_refresh) at = i;
+            if (step) o.vr_refresh = kRates[(at + std::size(kRates) + size_t(step)) % std::size(kRates)];
+            if (o.vr_refresh) std::snprintf(text, sizeof(text), "%u HZ", o.vr_refresh);
+            else std::snprintf(text, sizeof(text), "HEADSET'S");
+            return true;
+        }
+        case kVrHdTextures:
+            // blackquest: the HD texture pack (when it comes, Phase 8) or the game's own, as it shipped
+            if (step) o.vr_hd_textures = !o.vr_hd_textures;
+            std::snprintf(text, sizeof(text), o.vr_hd_textures ? "HD PACK" : "ORIGINAL");
             return true;
         case kVrGunstock:
             // blackquest: a physical stock holds both controllers: the barrel aims at the off hand, no grip

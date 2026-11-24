@@ -58,6 +58,7 @@ bool VrMirror(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* i
               uint32_t& icount);  // vr_gun.cpp
 void VrDumpGunTexture(uint32_t key, const uint8_t* px, uint32_t pitch, uint32_t w, uint32_t h);  // vr_gun.cpp
 bool VrMenuOverPlay();  // vr_body.cpp: the game paused over play (its pause menu)
+float VrVignette();     // vr_body.cpp: the comfort vignette's darkening now, 0..1
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
 void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
 int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
@@ -174,9 +175,15 @@ float3 Fxaa(float2 uv) {
 
 // the frame at a point with what the graphics settings add before a filter
 // post.z: a dev lift of the shadows (dev_bright), to see models in a dark scene
+// post.w: the comfort vignette (an eye's frame: its edges darkened, by this much at the rim)
 float3 Frame(float2 uv) {
     float3 c = Tone(post.y > 0 ? Fxaa(uv) : Fetch(uv));
-    return post.z > 0 ? pow(c, 1 / post.z) : c;
+    c = post.z > 0 ? pow(c, 1 / post.z) : c;
+    if (post.w > 0) {
+        float2 v = (uv - uvrect.xy) / uvrect.zw * 2 - 1;
+        c *= 1 - post.w * smoothstep(0.45, 1.05, length(v));
+    }
+    return c;
 }
 
 float4 psplain(O i) : SV_Target { return float4(Frame(i.uv), 1); }
@@ -3956,12 +3963,14 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         float g = 0;
         return f >> g && g > 0 ? g : 2.0f;
     }();
-    bool post = game::Opt().hdr || fxaa || bright > 0;
+    float vignette = eye_image ? ::game::VrVignette() : 0.0f;
+    bool post = game::Opt().hdr || fxaa || bright > 0 || vignette > 0.01f;
     // opts.z: the taps a side over each screen pixel, 2 averaging SSAA's samples
     float c[24] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
     c[20] = game::Opt().hdr ? 1.0f : 0.0f;
     c[21] = fxaa ? 1.0f : 0.0f;
     c[22] = bright;
+    c[23] = vignette > 0.01f ? vignette : 0.0f;
     if (t) {
         // a texel of the frame, seconds that wrap before a float loses them, the colour look (4 vibrant on)
         using clock = std::chrono::steady_clock;
