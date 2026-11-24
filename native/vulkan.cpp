@@ -1,5 +1,8 @@
 // The title's Direct3D 8 calls drawn with Vulkan 1.1, dynamic rendering and a timeline semaphore. The SDK's
 // translated shaders are HLSL, which glslang turns into SPIR-V (vk_shader.cpp).
+#include <deque>
+#include <condition_variable>
+#include <zlib.h>
 #include <vulkan/vulkan.h>
 
 #include <SDL3/SDL.h>
@@ -589,6 +592,7 @@ struct Tex {
     uint64_t sig = 0;
     uint64_t frame = 0;
     uint64_t palette = 0;
+    uint32_t uploads = 0;  // its contents uploaded this many times (phase 8's dump skips the ones that keep changing)
 };
 
 struct PsoKey {
@@ -3046,8 +3050,117 @@ bool VulkanBackend::CreateTexture(Tex& tx, const TextureDesc& d, const FormatInf
     return true;
 }
 
+// Phase 8: the texture dump (VR SETTINGS, DUMP TEXTURES). Each 2D texture the game uploads, keyed by a hash of its
+// level 0 as the game holds it (the Xbox's swizzled or DXT bytes: the same on every run and every device) with its
+// format, size and palette, decoded to RGBA and written once as textures_dump/<hash>.png, with a line in
+// textures_dump/index.csv (hash, format, width, height, levels). A writer thread does the PNGs; one rewritten more
+// than twice (a film's frames, a texture drawn into) isn't dumped
+uint64_t TextureHash(const TextureDesc& d, const uint8_t* p, uint64_t palette) {
+    uint64_t seed = uint64_t(d.format) << 40 ^ uint64_t(d.width) << 20 ^ d.height;
+    return gpu::Hash(p, LevelSize(d, 0), seed) ^ palette;
+}
+
+struct DumpJob {
+    uint64_t hash;
+    uint32_t w, h, format, levels;
+    std::vector<uint8_t> bgra;
+};
+std::mutex g_dump_lock;
+std::condition_variable g_dump_cv;
+std::deque<DumpJob> g_dump_jobs;
+std::set<uint64_t> g_dumped;
+
+void WritePng(const std::filesystem::path& path, const uint8_t* bgra, uint32_t w, uint32_t h) {
+    std::vector<uint8_t> raw(size_t(w * 4 + 1) * h);
+    for (uint32_t y = 0; y < h; y++) {
+        uint8_t* r = &raw[size_t(w * 4 + 1) * y];
+        r[0] = 0;
+        for (uint32_t x = 0; x < w; x++) {
+            const uint8_t* s = bgra + (size_t(y) * w + x) * 4;
+            r[1 + x * 4] = s[2], r[2 + x * 4] = s[1], r[3 + x * 4] = s[0], r[4 + x * 4] = s[3];
+        }
+    }
+    uLongf zn = compressBound(uLong(raw.size()));
+    std::vector<uint8_t> z(zn);
+    if (compress2(z.data(), &zn, raw.data(), uLong(raw.size()), 1) != Z_OK) return;
+    std::ofstream f(path, std::ios::binary);
+    auto be = [&](uint32_t v) {
+        uint8_t b[4] = {uint8_t(v >> 24), uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)};
+        f.write(reinterpret_cast<const char*>(b), 4);
+    };
+    auto chunk = [&](const char* tag, const uint8_t* data, uint32_t n) {
+        be(n);
+        uLong crc = crc32(0, reinterpret_cast<const Bytef*>(tag), 4);
+        f.write(tag, 4);
+        if (n) f.write(reinterpret_cast<const char*>(data), n), crc = crc32(crc, data, n);
+        be(uint32_t(crc));
+    };
+    f.write("\x89PNG\r\n\x1a\n", 8);
+    uint8_t ihdr[13] = {uint8_t(w >> 24), uint8_t(w >> 16), uint8_t(w >> 8), uint8_t(w),
+                        uint8_t(h >> 24), uint8_t(h >> 16), uint8_t(h >> 8), uint8_t(h), 8, 6, 0, 0, 0};
+    chunk("IHDR", ihdr, 13);
+    chunk("IDAT", z.data(), uint32_t(zn));
+    chunk("IEND", nullptr, 0);
+}
+
+void DumpTexture(DumpJob job) {
+    static std::once_flag started;
+    std::call_once(started, [] {
+        std::thread([] {
+            const auto dir = app::ExeDir() / "textures_dump";
+            std::filesystem::create_directories(dir);
+            for (;;) {
+                DumpJob j;
+                {
+                    std::unique_lock lock(g_dump_lock);
+                    g_dump_cv.wait(lock, [] { return !g_dump_jobs.empty(); });
+                    j = std::move(g_dump_jobs.front());
+                    g_dump_jobs.pop_front();
+                }
+                char name[32];
+                std::snprintf(name, sizeof(name), "%016llx", (unsigned long long)j.hash);
+                WritePng(dir / (std::string(name) + ".png"), j.bgra.data(), j.w, j.h);
+                std::ofstream idx(dir / "index.csv", std::ios::app);
+                idx << name << ',' << Format(j.format).name << ',' << j.w << ',' << j.h << ',' << j.levels << '\n';
+            }
+        }).detach();
+    });
+    std::lock_guard lock(g_dump_lock);
+    if (g_dump_jobs.size() >= 64) {
+        g_dumped.erase(job.hash);  // (the writer's behind: this one again at its next upload)
+        return;
+    }
+    g_dump_jobs.push_back(std::move(job));
+    g_dump_cv.notify_one();
+}
+
 void VulkanBackend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, const uint8_t* p,
                                   const uint32_t* colours) {
+    tx.uploads++;
+    static const bool dev_dump = std::filesystem::exists(app::ExeDir() / "dev_texdump");  // (the setting, for tests)
+    if ((game::Opt().vr_dump_textures || dev_dump) && !d.cube && d.depth == 1 && !fi.depth && tx.uploads <= 2 && d.width >= 4 &&
+        d.height >= 4) {
+        uint64_t hash = TextureHash(d, p, tx.palette);
+        bool fresh;
+        {
+            std::lock_guard lock(g_dump_lock);
+            fresh = g_dumped.insert(hash).second;
+        }
+        if (fresh) {
+            std::vector<uint8_t> lv, rgba;
+            uint32_t pitch = 0;
+            DecodeLevel(d, 0, 0, p, colours, lv, pitch);
+            if (fi.compressed) {
+                DecodeDxt(fi.host, lv, pitch, d.width, d.height, 1, rgba);
+            } else if (fi.host != Host::R32F && pitch >= d.width * 4) {
+                rgba.resize(size_t(d.width) * d.height * 4);
+                for (uint32_t y = 0; y < d.height && size_t(y + 1) * pitch <= lv.size(); y++)
+                    std::memcpy(&rgba[size_t(y) * d.width * 4], &lv[size_t(y) * pitch], d.width * 4);
+            }
+            if (rgba.size() >= size_t(d.width) * d.height * 4)
+                DumpTexture({hash, d.width, d.height, d.format, d.levels, std::move(rgba)});
+        }
+    }
     Transition(tx.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     uint32_t faces = d.cube ? 6 : 1;
     std::vector<uint8_t> px, decoded;

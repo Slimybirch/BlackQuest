@@ -1805,3 +1805,18 @@ brighter and bigger)
   (Android/data/<package>/files/assets, no access needed). The update notice, which can come once the game's in
   VR (where an Android dialog isn't seen), goes to the settings panel's top line instead (nativeUpdateNotice,
   ui.cpp, menu.cpp DrawPanel), as does CHECK FOR UPDATES' answer.
+
+## 2026-11-24: Phase 8 begins: the texture dump
+
+- VR SETTINGS, TESTING, DUMP TEXTURES (vr_dump_textures; dev_texdump turns it on for tests): vulkan.cpp
+  UploadTexture keys each 2D texture by TextureHash: gpu::Hash of level 0's bytes as the game holds them (the
+  Xbox's swizzled or DXT data, so the same every run and device), seeded with its format, width and height, xored
+  with its palette's hash. The first upload of a hash decodes level 0 (DecodeLevel, then DecodeDxt for the DXT
+  formats; R32F and depth skipped) and queues it to a writer thread: textures_dump/<16 hex>.png (RGBA, zlib level
+  1; zlib now linked) and a line in textures_dump/index.csv (hash, the format's name, width, height, levels), in the
+  app's folder. Skipped: cubes, volumes, under 4 px, and any texture whose contents were uploaded more than twice
+  (Tex.uploads: a film's frames, a texture drawn into). The queue holds 64; past that a texture's left for its next
+  upload. This key is what the converter maps the HD pack to and the loader will look up.
+- Run on the headset (dev_texdump, the first level, ~50 s from launch): 177 textures, 4.8 MB (97 DXT1, 41 DXT3,
+  12 DXT5, 22 P8, 5 LIN_A8R8G8B8 640x480: the front end's), frames as usual. A sheet of 20 pulled to the scratchpad
+  (never git): every format decoded right (walls, wood, signs, the button glyphs, effects, a soldier's).

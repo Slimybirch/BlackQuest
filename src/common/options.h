@@ -36,6 +36,8 @@ struct Options {
     uint32_t vr_view_height = 20;   // vr: the view (and hands) raised by this many cm less 20 (-20..+20)
     // vr: the HD texture pack (Phase 8) or the game's own textures (user: the choice, for an authentic look)
     bool vr_hd_textures = false;
+    // phase 8: each texture the game uploads saved once, by its hash, as a PNG (textures_dump/ in the app's folder)
+    bool vr_dump_textures = false;
     uint32_t vr_vignette = 0;   // vr: the view's edges darkened while moving or turning: 0 off, 1 low, 2 medium, 3 high
     bool vr_seated = false;     // vr: played sitting: the view at standing height, no real crouch
     uint32_t vr_refresh = 0;    // vr: the display's refresh rate in Hz (0 the headset's own)  // vr: degrees a flick of the right stick turns the body; 0 turns smoothly (user)

@@ -322,3 +322,10 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] co-op (user, 2026-11-24): the player gets a body, the same model as the AI on the player's side (the friendly
       soldiers); now only the first-person arms are drawn, no body (the game has none for the player in first person)
 - [ ] two-handed holds for the Uzi and the Mac-10 (user, 2026-11-24: if there's one already, it doesn't work)
+
+## Phase 8 (HD textures)
+- [x] the texture dump: DUMP TEXTURES, textures_dump/<hash>.png and index.csv (tested: 177 from level 1's start)
+- [ ] a dump of every level (the user plays each with DUMP TEXTURES on), pulled to the PC (never into git)
+- [ ] the replacement loader (KTX2/ASTC by hash, async, mips, the memory budget), only with TEXTURES on HD PACK
+- [ ] the pack converter (PC): match the PS2 pack's images to the Xbox dumps, review sheet, ASTC KTX2, size cap
+- [ ] coverage report per level

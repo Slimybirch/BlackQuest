@@ -119,6 +119,7 @@ const app::GameInfo app::kGame = {
                 {"vr_turn_speed", nullptr, &game::Opt().vr_turn_speed},
                 {"vr_view_height", nullptr, &game::Opt().vr_view_height},
                 {"vr_hd_textures", &game::Opt().vr_hd_textures, nullptr},
+                {"vr_dump_textures", &game::Opt().vr_dump_textures, nullptr},
                 {"vr_vignette", nullptr, &game::Opt().vr_vignette},
                 {"vr_seated", &game::Opt().vr_seated, nullptr},
                 {"vr_refresh", nullptr, &game::Opt().vr_refresh},

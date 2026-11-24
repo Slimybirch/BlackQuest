@@ -260,7 +260,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest, kVrGunstock, kVrGunAngle,
              kVrStockHeight, kVrTurnSpeed, kVrViewHeight, kVrHdTextures, kVrVignette, kVrSeated,
-             kVrCalibrate, kVrRefresh };
+             kVrCalibrate, kVrRefresh, kVrDumpTextures };
 
 using rows::Kind;
 using rows::Row;
@@ -353,6 +353,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kVrHdTextures, "TEXTURES"},
     {Kind::Heading, -1, "TESTING"},
     {Kind::Value, kVrTotest, "TEST CHECKLIST"},
+    {Kind::Value, kVrDumpTextures, "DUMP TEXTURES"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -614,6 +615,12 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "HEADSET'S");
             return true;
         }
+        case kVrDumpTextures:
+            // blackquest (phase 8): every texture the game uploads saved once as a PNG under its hash, for the HD
+            // pack's matching (textures_dump/ in the app's folder)
+            if (step) o.vr_dump_textures = !o.vr_dump_textures;
+            std::snprintf(text, sizeof(text), o.vr_dump_textures ? "ON" : "OFF");
+            return true;
         case kVrHdTextures:
             // blackquest: the HD texture pack (when it comes, Phase 8) or the game's own, as it shipped
             if (step) o.vr_hd_textures = !o.vr_hd_textures;

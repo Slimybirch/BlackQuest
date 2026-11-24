@@ -118,3 +118,6 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] Refresh rate: 90 and 120 Hz take effect (confirm)
 - [ ] The title says PRESS A, and A starts (confirm)
 - [ ] Mission 1 start to finish in the headset: boot, menus, the mission, pause, quit (confirm)
+
+## Phase 8: HD textures
+- [ ] DUMP TEXTURES on: a level runs smoothly while textures_dump fills (confirm)
