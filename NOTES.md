@@ -37,7 +37,7 @@ source (MIT, our base), **me** = checked here.
   Stock US SHA-1 (for `kImageSha1`): `c5bfed25449c8212d7a976f15246e87ead57713f`.
 - Effect today: none for a build from this ISO. CMake hashes whatever xbe is in `assets/` into `kImageSha1`, and
   the app on the headset hashes the xbe from the same ISO, so they match. But an APK built from a stock xbe would
-  reject this ISO, and vice versa. TODO (Phase 9 Builder, and `game_files.cpp`): normalise those two cert fields
+  reject this ISO, and vice versa. TODO (Phase 10 Builder, and `game_files.cpp`): normalise those two cert fields
   before hashing, accept only if the section digests also check out.
 
 ### Baseline on the Quest 3 (2026-11-18)
@@ -63,7 +63,7 @@ source (MIT, our base), **me** = checked here.
   PAL→US xbe patch, built from the game's bytes. `src/common/europe.patch` deleted and gitignored; `CMakeLists.txt`
   takes it from `ref/black-android` or downloads it from raw.githubusercontent at black-android `8e9c6fc7…` and
   checks SHA-256 `3cb0f57b…c390`, into the CMake build dir. Fallback: empty patch = US disc only, with a warning.
-  README tells builders this. The Builder (Phase 9) will do the same fetch.
+  README tells builders this. The Builder (Phase 10) will do the same fetch.
 
 ### Package rename (user ok 2026-11-18)
 
@@ -108,7 +108,7 @@ SLUS-21376**.
 - Installed (user ok, 2026-11-18) into `toolchain/` (gitignored), portable, nothing system-wide:
   `toolchain/jdk17` = Temurin 17.0.21+9 (Adoptium API zip); `toolchain/android-sdk` = cmdline-tools
   `commandlinetools-win-13114758` + platforms;android-34, build-tools;34.0.0, platform-tools, ndk;28.2.13676358,
-  cmake;3.31.6 (SDK licences accepted). `build.bat` prefers these when present. This is also the layout the Phase 9
+  cmake;3.31.6 (SDK licences accepted). `build.bat` prefers these when present. This is also the layout the Phase 10
   Builder can download to.
 - Baseline `build.bat` run started 2026-11-18; log in `out/build-baseline.log`.
 - **Build fixes for VS Build Tools 2026** (2026-11-18, found by running the recompiler build by hand; `build.bat`
@@ -152,7 +152,7 @@ SLUS-21376**.
   quaternion +0x760 / position +0x770, built back into +0x7E0..+0x810 (bp). FOV in degrees at camera +0x750
   (horizontal, near 1.2, aspect +0x74) (bp). ba hooks the FOV at 0x1BB2D6 (`FieldOfView`) and zoom at 0x1BB2BA.
   → Phase 3 head pose: likely inject after FUN_001DFD90 / at FUN_002007D0 so body yaw drives movement and the head
-  pose only the rendered view. Co-op's spectate also writes these rows (player +0xD0) — Phase 11 overlap.
+  pose only the rendered view. Co-op's spectate also writes these rows (player +0xD0) — Phase 9 overlap.
 - Gun is placed from the view matrix (0x14DE0 at 0x1E6150), pulled out of walls by line test FUN_001DAFF0 (bp).
 
 **Viewmodel (gun + arms)**
@@ -188,7 +188,7 @@ SLUS-21376**.
 - Count: char +0x286 (uint16) (ba `cheats.cpp`).
 - Character animation event FUN_001E8830 (64-bit hash, then pointer to the character); the throw event takes a
   grenade at 0x1E8934 (ba). **Spawn (position/velocity/fuse) not yet found** — Phase 6: follow from 0x1E8934.
-- Grenades are host-synced world objects in co-op (Phase 11).
+- Grenades are host-synced world objects in co-op (Phase 9).
 
 **Screen-space passes** (bp, mission 2 frame of reference: ~520 scene draws)
 1. scene (stereo), 2. depth downsample (640x480 Z24S8 read as A8R8G8B8) into 160x120/80x60, 3. blur ping-pong
@@ -1820,3 +1820,22 @@ brighter and bigger)
 - Run on the headset (dev_texdump, the first level, ~50 s from launch): 177 textures, 4.8 MB (97 DXT1, 41 DXT3,
   12 DXT5, 22 P8, 5 LIN_A8R8G8B8 640x480: the front end's), frames as usual. A sheet of 20 pulled to the scratchpad
   (never git): every format decoded right (walls, wood, signs, the button glyphs, effects, a soldier's).
+
+## 2026-11-24: Phase 8, the load-time dump and a dump of every mission
+
+- The game builds its D3D texture headers itself (no CreateTexture in config/game.toml's symbols to hook), so the
+  load-time dump scans guest memory every 8 s (vulkan.cpp ScanTextures, started with the dump's first upload):
+  user space and system space page by page where committed, the contiguous range above the kernel's megabyte.
+  A header: Common's type 0x40000 with a reference count, Lock 0, Data physical and 128-aligned, a 2D non-cube
+  format of a known kind (not P8: its palette is SetPalette's, only known when drawn), sizes to 2048. One seen in
+  two scans running with the same bytes (not half loaded) goes through the same TextureHash and writer as the
+  draw-time dump; index.csv's 6th column says which found it (d drawn, l loaded). index.csv is read back at start
+  (SeedDumped), so relaunches don't dump a hash again.
+- dev_mission (file holding 0..7): difficulty.cpp's sub_00124CF0 wrapper (the mission start) writes the level id
+  for that mission into [0x2D45F0]+0x2020C (the picked level's byte, read there) from the table at 0x288648
+  (mission -> level id: 0,1,5,3,4,6,7,8), with the missions unlocked as UNLOCK ALL MISSIONS does. dev_autostart's
+  A presses reach it (title, MissionModeSelect, Difficulty). Found by reading the recompiled sub_00124CF0.
+- Run (scratchpad levelrun.sh: each mission launched, 150 s idle, killed): 1144 textures, 36 MB: 658 DXT1, 219
+  DXT3, 51 DXT5, 204 P8, 8 LIN_A8R8G8B8, 4 A8B8G8R8; 675 drawn, 292 found by the scan, 177 the first run's. The
+  scan sees 600-1000 headers a mission (many shared between missions, or already drawn). Samples decode right.
+  Gaps in TODO (Phase 8).

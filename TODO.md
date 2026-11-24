@@ -325,7 +325,24 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 
 ## Phase 8 (HD textures)
 - [x] the texture dump: DUMP TEXTURES, textures_dump/<hash>.png and index.csv (tested: 177 from level 1's start)
-- [ ] a dump of every level (the user plays each with DUMP TEXTURES on), pulled to the PC (never into git)
+- [x] a dump of every level (2026-11-24, automated: dev_mission + the load-time scan, 8 missions, 1144 textures,
+      36 MB, in the scratchpad's texdump_all, never git)
+- [ ] dump gaps (the converter's coverage report will show which matter):
+      - P8 textures not drawn in the first ~2 min of a mission: the scan skips P8 (its palette is only known when
+        drawn), so those come only from the draw-time dump
+      - anything loaded later in a mission (mid-level streaming, if any; the run idled at each mission's start)
+      - films and render targets are skipped on purpose (rewritten each frame)
+      - to fill them: the user plays with DUMP TEXTURES on; new hashes append to the same index
 - [ ] the replacement loader (KTX2/ASTC by hash, async, mips, the memory budget), only with TEXTURES on HD PACK
 - [ ] the pack converter (PC): match the PS2 pack's images to the Xbox dumps, review sheet, ASTC KTX2, size cap
 - [ ] coverage report per level
+
+## Phase 9 (co-op; user, 2026-11-24: moved up from 11)
+- [ ] the player's body: the friendly soldiers' model (see Phase 7's list)
+- [ ] giving ammo to another player (see Phase 6's list); grenades host-synced (NOTES)
+
+## Phase 10 (the launcher / Builder; was 9)
+- [ ] the PC launcher: fetch, build and install over adb; normalise the xbe's cert patch before hashing (Phase 1)
+
+## Phase 11 (release prep; was 10)
+- [ ] signed release build, README and credits (MIT notices kept), the version tag (only with the user's go-ahead)

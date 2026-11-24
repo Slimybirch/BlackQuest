@@ -21,6 +21,7 @@
 #include <mutex>
 #include <set>
 #include <unordered_map>
+#include <thread>
 #include <vector>
 
 #include <dxgiformat.h>
@@ -3064,6 +3065,7 @@ struct DumpJob {
     uint64_t hash;
     uint32_t w, h, format, levels;
     std::vector<uint8_t> bgra;
+    char from;  // 'd' drawn, 'l' found loaded (the scan)
 };
 std::mutex g_dump_lock;
 std::condition_variable g_dump_cv;
@@ -3103,7 +3105,19 @@ void WritePng(const std::filesystem::path& path, const uint8_t* bgra, uint32_t w
     chunk("IEND", nullptr, 0);
 }
 
-void DumpTexture(DumpJob job) {
+// the hashes already in textures_dump/index.csv (an earlier run's, the level-by-level run's relaunches): not again
+void SeedDumped() {
+    static std::once_flag seeded;
+    std::call_once(seeded, [] {
+        std::ifstream idx(app::ExeDir() / "textures_dump" / "index.csv");
+        std::string line;
+        std::lock_guard lock(g_dump_lock);
+        while (std::getline(idx, line))
+            if (line.size() >= 16) g_dumped.insert(std::strtoull(line.substr(0, 16).c_str(), nullptr, 16));
+    });
+}
+
+void DumpTexture(DumpJob job, bool wait = false) {
     static std::once_flag started;
     std::call_once(started, [] {
         std::thread([] {
@@ -3121,17 +3135,107 @@ void DumpTexture(DumpJob job) {
                 std::snprintf(name, sizeof(name), "%016llx", (unsigned long long)j.hash);
                 WritePng(dir / (std::string(name) + ".png"), j.bgra.data(), j.w, j.h);
                 std::ofstream idx(dir / "index.csv", std::ios::app);
-                idx << name << ',' << Format(j.format).name << ',' << j.w << ',' << j.h << ',' << j.levels << '\n';
+                idx << name << ',' << Format(j.format).name << ',' << j.w << ',' << j.h << ',' << j.levels << ','
+                    << j.from << '\n';
             }
         }).detach();
     });
-    std::lock_guard lock(g_dump_lock);
-    if (g_dump_jobs.size() >= 64) {
-        g_dumped.erase(job.hash);  // (the writer's behind: this one again at its next upload)
-        return;
+    for (;;) {
+        {
+            std::lock_guard lock(g_dump_lock);
+            if (g_dump_jobs.size() < 64) {
+                g_dump_jobs.push_back(std::move(job));
+                g_dump_cv.notify_one();
+                return;
+            }
+            if (!wait) {
+                g_dumped.erase(job.hash);  // (the writer's behind: this one again at its next upload)
+                return;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));  // (the scan's thread can wait for the writer)
     }
-    g_dump_jobs.push_back(std::move(job));
-    g_dump_cv.notify_one();
+}
+
+// decoded to RGBA and queued, once per hash; false if already dumped
+bool DumpOnce(const TextureDesc& d, const FormatInfo& fi, const uint8_t* p, const uint32_t* colours, uint64_t hash,
+              char from) {
+    SeedDumped();
+    {
+        std::lock_guard lock(g_dump_lock);
+        if (!g_dumped.insert(hash).second) return false;
+    }
+    std::vector<uint8_t> lv, rgba;
+    uint32_t pitch = 0;
+    DecodeLevel(d, 0, 0, p, colours, lv, pitch);
+    if (fi.compressed) {
+        DecodeDxt(fi.host, lv, pitch, d.width, d.height, 1, rgba);
+    } else if (fi.host != Host::R32F && pitch >= d.width * 4) {
+        rgba.resize(size_t(d.width) * d.height * 4);
+        for (uint32_t y = 0; y < d.height && size_t(y + 1) * pitch <= lv.size(); y++)
+            std::memcpy(&rgba[size_t(y) * d.width * 4], &lv[size_t(y) * pitch], d.width * 4);
+    }
+    if (rgba.size() < size_t(d.width) * d.height * 4) return false;
+    DumpTexture({hash, d.width, d.height, d.format, d.levels, std::move(rgba), from}, from == 'l');
+    return true;
+}
+
+// Phase 8, the load-time dump: the game builds its texture headers itself (no CreateTexture to hook), so every 8 s
+// guest memory is scanned for them (Common's type a texture, a 2D format of a known kind, data in physical memory)
+// and each found in two scans running with the same bytes is dumped: what a level loads, drawn yet or not. A P8
+// texture's palette is only known when drawn (SetPalette), so those stay the draw-time dump's
+bool ScanHeader(uint32_t va, TextureDesc& d) {
+    using namespace kernel;
+    uint32_t common = R32(va);
+    if ((common & 0x70000) != 0x40000 || (common & 0xFFFF) == 0 || (common & 0xFC000000)) return false;
+    uint32_t data = R32(va + 4), lock = R32(va + 8), fmt = R32(va + 12), size = R32(va + 16);
+    if (lock || !data || data >= mem::kPhysicalSize || (data & 0x7F)) return false;
+    if ((fmt & 3) == 0 || (fmt & 3) == 3 || ((fmt >> 4) & 0xF) != 2 || (fmt & 4)) return false;
+    if (!size && (((fmt >> 20) & 0xF) > 11 || ((fmt >> 24) & 0xF) > 11 || (fmt >> 28))) return false;
+    if (!Describe(va, d) || d.cube || d.depth != 1 || d.width < 4 || d.height < 4 || d.width > 2048 || d.height > 2048)
+        return false;
+    const FormatInfo& fi = Format(d.format);
+    if (fi.host == Host::None || fi.depth || d.format == 0x0B) return false;
+    return uint64_t(data) + TotalSize(d) <= mem::kPhysicalSize;
+}
+
+void ScanTextures(std::unordered_map<uint32_t, uint64_t>& seen) {
+    std::unordered_map<uint32_t, uint64_t> now;
+    int found = 0, dumped = 0;
+    auto range = [&](uint32_t lo, uint32_t hi, bool check) {
+        for (uint32_t page = lo; page < hi; page += mem::kPage) {
+            if (check && !mem::IsCommitted(page)) continue;
+            for (uint32_t va = page; va < page + mem::kPage - 20; va += 4) {
+                TextureDesc d;
+                if (!ScanHeader(va, d)) continue;
+                const auto* p = static_cast<const uint8_t*>(kernel::HostPtr(d.data));
+                uint64_t hash = TextureHash(d, p, 0);
+                found++;
+                now[va] = hash;
+                auto it = seen.find(va);
+                if (it != seen.end() && it->second == hash && DumpOnce(d, Format(d.format), p, nullptr, hash, 'l'))
+                    dumped++;
+            }
+        }
+    };
+    range(mem::kUserLow, mem::kUserHigh, true);
+    range(mem::kContiguousBase + mem::kKernelDataSize, mem::kContiguousBase + mem::kPhysicalSize, false);
+    range(mem::kSystemBase, mem::kSystemBase + mem::kSystemSize, true);
+    seen.swap(now);
+    if (dumped) LOGR("texture dump: scan found %d texture headers, %d new dumped", found, dumped);
+}
+
+void StartTextureScan() {
+    static std::once_flag started;
+    std::call_once(started, [] {
+        std::thread([] {
+            std::unordered_map<uint32_t, uint64_t> seen;
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(8));
+                ScanTextures(seen);
+            }
+        }).detach();
+    });
 }
 
 void VulkanBackend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, const uint8_t* p,
@@ -3140,26 +3244,8 @@ void VulkanBackend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInf
     static const bool dev_dump = std::filesystem::exists(app::ExeDir() / "dev_texdump");  // (the setting, for tests)
     if ((game::Opt().vr_dump_textures || dev_dump) && !d.cube && d.depth == 1 && !fi.depth && tx.uploads <= 2 && d.width >= 4 &&
         d.height >= 4) {
-        uint64_t hash = TextureHash(d, p, tx.palette);
-        bool fresh;
-        {
-            std::lock_guard lock(g_dump_lock);
-            fresh = g_dumped.insert(hash).second;
-        }
-        if (fresh) {
-            std::vector<uint8_t> lv, rgba;
-            uint32_t pitch = 0;
-            DecodeLevel(d, 0, 0, p, colours, lv, pitch);
-            if (fi.compressed) {
-                DecodeDxt(fi.host, lv, pitch, d.width, d.height, 1, rgba);
-            } else if (fi.host != Host::R32F && pitch >= d.width * 4) {
-                rgba.resize(size_t(d.width) * d.height * 4);
-                for (uint32_t y = 0; y < d.height && size_t(y + 1) * pitch <= lv.size(); y++)
-                    std::memcpy(&rgba[size_t(y) * d.width * 4], &lv[size_t(y) * pitch], d.width * 4);
-            }
-            if (rgba.size() >= size_t(d.width) * d.height * 4)
-                DumpTexture({hash, d.width, d.height, d.format, d.levels, std::move(rgba)});
-        }
+        StartTextureScan();  // (the load-time dump, from the first upload with the setting on)
+        DumpOnce(d, fi, p, colours, TextureHash(d, p, tx.palette), 'd');
     }
     Transition(tx.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     uint32_t faces = d.cube ? 6 : 1;

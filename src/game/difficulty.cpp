@@ -4,9 +4,13 @@
 // has the difficulty select offer it. A mission stays open while its cheat is on: loading one reads the table in many
 // places, and a mission closed again under them hung the load. Turned off, the cheat closes what it opened; a save
 // written while it was on keeps them open.
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
+#include "app/app.h"
 #include "common/options.h"
+#include "core/log.h"
 #include "xdk/hle.h"
 
 using namespace kernel;
@@ -26,6 +30,18 @@ constexpr uint32_t kDifficultySelection = 0x2EC560;
 
 uint32_t Open(uint32_t difficulty, uint32_t mission) {
     return kMissionOpen + difficulty * kDifficultySize + mission * kMissionSize;
+}
+
+// dev_mission (phase 8's level-by-level texture dump): the mission the file names, 0 to 7, is started instead of
+// the one picked, with the missions unlocked as the cheat does; -1 without the file
+int DevMission() {
+    static const int m = [] {
+        std::ifstream f(app::ExeDir() / "dev_mission");
+        int n = -1;
+        if (!(f >> n) || n < 0 || n >= int(kMissions)) return -1;
+        return n;
+    }();
+    return m;
 }
 
 // the missions each cheat opened, closed again when it goes off
@@ -49,11 +65,12 @@ void Close(std::vector<uint32_t>& opened) {
 void Unlock() {
     const game::Options& o = game::Opt();
     if (!o.unlock_black_ops) Close(g_black_ops);
-    if (!o.unlock_levels) Close(g_levels);
+    const bool levels = o.unlock_levels || DevMission() >= 0;
+    if (!levels) Close(g_levels);
     for (uint32_t m = 0; m < kMissions; m++) {
         bool any = false;
         for (uint32_t d = 0; d < kBlackOps; d++) {
-            if (o.unlock_levels) Set(Open(d, m), g_levels);
+            if (levels) Set(Open(d, m), g_levels);
             any |= G<uint8_t>(Open(d, m)) == 1;
         }
         if (o.unlock_black_ops && any) Set(Open(kBlackOps, m), g_black_ops);
@@ -109,5 +126,12 @@ X86_FUNC(sub_00124F30) {
 X86_EXTERN_FUNC(__imp__sub_00124CF0);
 X86_FUNC(sub_00124CF0) {
     Unlock();
+    // the picked level's id at [0x2D45F0]+0x2020C; 0x288648 maps the 8 missions to level ids (both read here)
+    if (int m = DevMission(); m >= 0) {
+        if (uint32_t front = R32(0x2D45F0)) {
+            G<uint8_t>(front + 0x2020C) = G<uint8_t>(0x288648 + uint32_t(m));
+            LOGR("dev_mission: mission %d (level %d)", m, int(G<int8_t>(0x288648 + uint32_t(m))));
+        }
+    }
     __imp__sub_00124CF0(ctx, base);
 }

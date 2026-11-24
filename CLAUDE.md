@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repo is **BlackQuest**, a Meta Quest 3 VR port built on black-android (everything below this section is the
 base port's guide, still accurate unless noted). The plan, phases and hard rules are in `BlackQuest_prompt.md`
-(the user's, gitignored). Start each session with this file, `TODO.md` and the latest `NOTES.md` entries.
+(the user's, gitignored); the user renumbered the later phases on 2026-11-24: 9 co-op, 10 the launcher/Builder,
+11 release prep (the prompt file's older numbers differ). Start each session with this file, `TODO.md` and the latest `NOTES.md` entries.
 
 - **Never commit, push, tag or change repo settings without the user's explicit go-ahead in chat**, each time.
   Before proposing a commit: `git diff --cached --stat`, and check nothing staged is over ~1 MB or matches the
