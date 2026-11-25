@@ -2108,3 +2108,38 @@ brighter and bigger)
   GPU level 4 at 640 MHz (the CPU briefly 8): the GPU is already at its top clock in play. Frames 295-305 per 5 s
   against 290-300 before, within noise. Reverted: no gain, and boost costs heat and battery. What's left is the
   work itself: render_percent (67, the user's setting) and the post effects' passes.
+
+## 2026-11-25: the reticle at what the barrel hits
+- The game's line test 0x1DAFF0 (the one that keeps the gun out of walls): eax &from, ecx &to; stack: the world
+  (*0x2D45D4), flags (1 as 0xB7489 passes it: the level's geometry), an entity passed through, 0, &result; al set
+  on a hit, the point at result+0 (0xB74D2 reads its y at +4). Checked with dev_raydown: straight down from the gun
+  it hits the floor 1.6 m under it (-4.60 -0.33 52.83 from -4.6 1.3 52.8).
+- vr_gun.cpp VrReticleTick (game thread, WeaponsTick): the barrel's line (the gun frame, 6 cm up, 60 m out) mapped
+  to the world (new VrLocalToWorld, VrWorldToLocal backwards), the line test, the hit's distance kept; VrReticle
+  puts the ring there instead of 20 m, so both eyes converge on the surface. Headset (test hands): pointing up
+  through the ruins' roof it misses (60 m); turned left (dev_fakehands_side) it hits a wall at 4.0 m. Characters
+  aren't in flags 1: on an enemy the ring sits on what's behind (the other caller, 0xE05A4, passes 3).
+- The look changed to the game's crosshair dot (user): 0xD9480 is wrapped (hud.cpp): its rect's +0x10 holds the
+  colour as floats r g b (0 at +0x1C); it draws twice a frame, 0.39 and 0.5 grey over nothing (the glow and the
+  dot), the brighter kept and scaled to full brightness (grey to white, black stays black). With RETICLE on the
+  game's own draw is skipped there (HudItem no longer skips the item) and the filter draws a dot with a soft glow
+  in that colour at the barrel's hit point. Headset (test hands): white dot with its glow on the wall at the
+  barrel. Not seen yet: the colours over targets; the game picks them from its own aim, which may be the head's
+  view rather than the barrel's (the user's check).
+
+## 2026-11-25: the gun out of walls; haptics by gun
+- Walls (user: the gun pushed through them): vr_gun.cpp VrWallTick each tick (WeaponsTick) casts the game's line test
+  (0x1DAFF0, flags 1) from 30 cm behind the grip to 3 cm past the muzzle (kGrips' back); a hit short of the end
+  pulls the gun back along its barrel by what's left (g_wall_pull, eased in fast and out slowly), applied to the gun
+  hand's grip in HandInCamera, so drawing, the muzzle, shots, the reticle and the scope all follow. A faint tick on
+  touching. HANDS > GUN AT WALLS (vr_wall_pull: PULLED BACK / THROUGH). Run with the test hands: no crash, nothing
+  near enough to touch; the user's check.
+- Firing (user: each gun its own, bigger more): ShotFeel by weapon code (strength, length): uzi/mac-10 0.30-0.32
+  for 22-25 ms, mp5/p90 ~0.35, pistols 0.4, rifles 0.5-0.62, M249 0.66, magnum 0.85, WA2000 0.9, shotguns 0.95
+  for 100-110 ms; a little more as the game's kick builds; the off hand on the gun 75%. Launchers through the
+  player's projectile wraps (coop_world.cpp: a grenade made on side 3, the M203's and the GRL's: 0.85 for 120 ms;
+  a rocket made on side 3, not a co-op replay: 1.0 for 200 ms, both hands). Seen in the all-weapons run: "grenade
+  made: side 3" and "rocket made: side 3" from the player.
+- Touch (user: reload steps and pickups felt): faint ticks (0.12, 15 ms) as the off hand reaches the slide or the
+  magazine, 0.22 on the fore-end, 0.2 leaving a pump open, 0.35 on the magazine release; the existing reload
+  buzzes kept. Pickups: 0x1BED90 (vr_silencer.cpp's wrap) touches both hands (0.3, 18 ms). Hits left out (user).

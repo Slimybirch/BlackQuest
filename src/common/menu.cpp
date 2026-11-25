@@ -267,7 +267,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest, kVrGunstock, kVrGunAngle,
              kVrStockHeight, kVrTurnSpeed, kVrViewHeight, kVrHdTextures, kVrVignette, kVrSeated,
-             kVrCalibrate, kVrRefresh, kVrDumpTextures, kVrReticle, kVrGiveSilencer };
+             kVrCalibrate, kVrRefresh, kVrDumpTextures, kVrReticle, kVrWallPull, kVrGiveSilencer };
 
 using rows::Kind;
 using rows::Row;
@@ -347,6 +347,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kVrGrip, "OFF-HAND GRIP"},
     {Kind::Value, kVrReload, "RELOAD"},
     {Kind::Value, kVrReticle, "RETICLE"},
+    {Kind::Value, kVrWallPull, "GUN AT WALLS"},
     {Kind::Heading, -1, "HEIGHT"},
     {Kind::Value, kVrCalibrate, "STAND STRAIGHT AND PRESS"},
     {Kind::Value, kVrViewHeight, "VIEW HEIGHT"},
@@ -636,6 +637,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             // blackquest: a reticle where the barrel points (the game's head-fixed crosshair hidden), or none
             if (step) o.vr_reticle = !o.vr_reticle;
             std::snprintf(text, sizeof(text), o.vr_reticle ? "ON THE BARREL" : "OFF");
+            return true;
+        case kVrWallPull:
+            // blackquest (user): the gun pulled back from a wall it would go into, or through it as the game has it
+            if (step) o.vr_wall_pull = !o.vr_wall_pull;
+            std::snprintf(text, sizeof(text), o.vr_wall_pull ? "PULLED BACK" : "THROUGH");
             return true;
         case kVrDumpTextures:
             // blackquest (phase 8): every texture the game uploads saved once as a PNG under its hash, for the HD

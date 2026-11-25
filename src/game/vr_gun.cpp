@@ -130,6 +130,8 @@ static_assert(sizeof(Frame) == 11 * 4);
 
 std::mutex g_lock;
 Frame g_frame{};      // the latest, for the game thread's mapping
+// metres the gun is pulled back along its barrel from a wall ahead (VrWallTick), the gun hand's grip
+std::atomic<float> g_wall_pull{0};
 std::atomic<float> g_kick{0};  // degrees, the game's latest (game thread), read by the render thread too
 std::atomic<bool> g_kick_no_turn{false};  // the held gun's kick only pushes back, no tip up (the walther)
 std::atomic<int64_t> g_shot_ms{0};  // steady ms of the player's last shot (the held frame, dev_rocklog)
@@ -363,6 +365,12 @@ bool HandInCamera(float yaw, float pitch, int hand, float* AC, float* hc, bool k
         }
         const float back = turn ? deg * kKickBack : std::min(deg * kKickBack, 0.02f);  // (the walther: 2 cm at most)
         for (int i = 0; i < 3; i++) hp[i] += A[i * 3 + 2] * back;
+    }
+    if (hand == 1) {
+        // out of a wall ahead (VrWallTick): the whole gun back along its barrel, the shot from where it's drawn
+        float pull = g_wall_pull.load(std::memory_order_relaxed);
+        if (pull > 0.001f)
+            for (int i = 0; i < 3; i++) hp[i] += A[i * 3 + 2] * pull;
     }
     if (kick && hand == 1) {
         // the gun's frame in the room as posed (the scope's place, below)
@@ -1348,6 +1356,26 @@ bool VrWorldToLocal(const float* w, float* local) {
     float U[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
     for (int i = 0; i < 3; i++) local[i] = U[i * 3] * c[0] + U[i * 3 + 1] * c[1] + U[i * 3 + 2] * c[2];
     local[1] -= xr::kEyeRaise + VrViewLift();
+    return true;
+}
+
+// a point in local space in the game's world (VrWorldToLocal backwards: local -> C -> world); any thread
+bool VrLocalToWorld(const float* local, float* w) {
+    float yaw, pitch;
+    CamSnap cam;
+    {
+        std::lock_guard lock(g_cam_lock);
+        cam = g_cam;
+    }
+    if (!cam.ok || !VrLookAngles(yaw, pitch)) return false;
+    Aff c2w = CamToWorld(cam);
+    float l[3] = {local[0], local[1] + xr::kEyeRaise + VrViewLift(), local[2]}, c[3];
+    float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+    float U[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
+    for (int j = 0; j < 3; j++) c[j] = U[0 * 3 + j] * l[0] + U[1 * 3 + j] * l[1] + U[2 * 3 + j] * l[2];
+    for (int i = 0; i < 3; i++)
+        w[i] = c2w.m[i * 4 + 0] * c[0] + c2w.m[i * 4 + 1] * c[1] + c2w.m[i * 4 + 2] * c[2];
+    w[0] += c2w.m[3], w[1] += c2w.m[7], w[2] += c2w.m[11];
     return true;
 }
 
@@ -2993,6 +3021,44 @@ void VrToggleGunFingers() { g_gun_fingers_open.store(!g_gun_fingers_open.load())
 // the left hand holds the gun (any thread)
 bool VrLeftOnGun() { return g_left_on.load(std::memory_order_relaxed); }
 
+// a shot's buzz by gun: the light quick ones short and soft, the heavy ones long and hard (user: firing per weapon)
+struct Feel {
+    float amp, secs;
+};
+Feel ShotFeel(const std::string& code) {
+    static const std::map<std::string, Feel> kFeel = {
+        {"PST", {0.42f, 0.035f}}, {"PS5", {0.42f, 0.035f}},  // pistols
+        {"GK1", {0.4f, 0.03f}},   {"GK5", {0.4f, 0.03f}},    // glock: lighter, quicker
+        {"MGN", {0.85f, 0.08f}},  {"MG5", {0.85f, 0.08f}},   // the magnum: a slam
+        {"SMG", {0.32f, 0.025f}}, {"SM5", {0.32f, 0.025f}},  // uzi: fast, a light rattle
+        {"SM3", {0.3f, 0.022f}},  {"MC5", {0.3f, 0.022f}},   // mac-10: faster still
+        {"MP1", {0.36f, 0.03f}},  {"MP5", {0.36f, 0.03f}},   // mp5
+        {"P90", {0.34f, 0.028f}}, {"P95", {0.34f, 0.028f}},  // p90
+        {"AK1", {0.62f, 0.05f}},  {"AK5", {0.62f, 0.05f}},   // ak-47: the heavier rifle round
+        {"M16", {0.52f, 0.042f}}, {"M45", {0.52f, 0.042f}},  // m16
+        {"BNS", {0.52f, 0.042f}},                            // m16 with the m203
+        {"ASR", {0.5f, 0.04f}},   {"AS5", {0.5f, 0.04f}},    // g36
+        {"HVY", {0.66f, 0.05f}},  {"HV5", {0.66f, 0.05f}},   // m249: heavy, sustained
+        {"SNR", {0.9f, 0.09f}},   {"SN5", {0.9f, 0.09f}},    // wa2000
+        {"SHG", {0.95f, 0.1f}},   {"SH5", {0.95f, 0.1f}},    // spas-12
+        {"RM1", {0.95f, 0.11f}},  {"RM5", {0.95f, 0.11f}},   // remington 870
+    };
+    auto it = kFeel.find(code);
+    return it == kFeel.end() ? Feel{0.5f, 0.05f} : it->second;
+}
+
+// game thread: a launcher's shot (coop_world.cpp's wraps of the player's rocket and launched grenade): a big shove,
+// the rpg's the biggest, through both hands when the off hand's on it (user: bigger guns more)
+void VrLauncherKick(bool rocket) {
+    float amp = rocket ? 1.0f : 0.85f, secs = rocket ? 0.2f : 0.12f;
+    xr::Pulse(1, amp, secs);
+    if (VrLeftOnGun() || rocket) xr::Pulse(0, amp * 0.8f, secs);
+    TestEvent(rocket ? "rocket_kick" : "grenade_kick");
+}
+
+// a light touch on a hand (reloading's steps, pickups: user, a sensation of touch); any thread
+void VrTouch(int hand, float amp) { xr::Pulse(hand, amp, 0.018f); }
+
 // game thread: the game's shot direction (from the camera along its view, spread added) turned from the head's view
 // to the gun hand's: the drawn barrel is the hand's forward, so the shot follows it at any range. Mapping it with K
 // instead carried the viewmodel's toe-in, a constant angle off the barrel that grew into a miss with distance
@@ -3029,11 +3095,12 @@ void VrFireShot(X86Context& ctx, uint8_t* base) {
             std::memcpy(HostPtr(buf), o, sizeof(o));
             ctx.ecx = buf;
             W32(ctx.esp + 8, buf + 16);
-            // the kick in the hands: a buzz on each shot, stronger the more the gun kicks (both hands on a two
-            // handed gun with the left hand on it)
-            float amp = std::min(0.45f + std::fabs(g_kick.load()) * 0.08f, 1.0f);
-            xr::Pulse(1, amp, 0.06f);
-            if (VrLeftOnGun()) xr::Pulse(0, amp * 0.7f, 0.06f);
+            // the kick in the hands, by gun (user: each its own, bigger guns more): its strength and length, a
+            // little more as the game's kick builds in sustained fire; the off hand on the gun feels most of it
+            Feel f = ShotFeel(weapons::HeldCode());
+            float amp = std::min(f.amp + std::fabs(g_kick.load()) * 0.02f, 1.0f);
+            xr::Pulse(1, amp, f.secs);
+            if (VrLeftOnGun()) xr::Pulse(0, amp * 0.75f, f.secs);
             g_shot_ms.store(SteadyMs());
             static int shots = 0;
             if (shots++ % 50 == 0) LOGR("vr gun: shot from the hand, direction %.2f %.2f %.2f", o[4], o[5], o[6]);
@@ -3119,8 +3186,130 @@ bool VrGunLocal(float* A, float* muzzle) {
     return true;
 }
 
-// the barrel's reticle (user): a point 20 m down the barrel from the gun, in each eye; off with no gun in the hand,
-// a melee swing on, or RETICLE off
+// the reticle's distance down the barrel: what the game's own ray hits there (VrReticleTick), kReticleFar if nothing
+constexpr float kReticleFar = 60.0f, kReticleUp = 0.06f;
+std::atomic<float> g_ret_range{20.0f};
+
+// game thread, each tick: the barrel's line (from the gun, kReticleFar out) through the game's line test, the one
+// that keeps the gun out of walls (0x1DAFF0: eax &from, ecx &to; the world *0x2D45D4, flags, an entity it passes
+// through, 0, &result; al set on a hit, the point first in the result, as 0xB7489 reads it). The reticle then sits
+// on the wall or floor the shot would hit, at its depth in both eyes (user: the reticle at what the barrel hits)
+void VrReticleTick(X86Context& ctx) {
+    if (!Opt().vr_reticle) return;
+    float A[9], p[3];
+    {
+        std::lock_guard lock(g_scope_lock);
+        if (NowMs() - g_scope_ms > 250) return;
+        std::memcpy(A, g_scope_a, sizeof(A));
+        std::memcpy(p, g_scope_p, sizeof(p));
+    }
+    uint32_t world = R32(0x2D45D4);
+    if (!world) return;
+    float a[3], b[3], wa[3], wb[3];
+    for (int i = 0; i < 3; i++) a[i] = p[i] + A[i * 3 + 1] * kReticleUp, b[i] = a[i] - A[i * 3 + 2] * kReticleFar;
+    if (!VrLocalToWorld(a, wa) || !VrLocalToWorld(b, wb)) return;
+    static const uint32_t buf = mem::AllocSystem(256, 16);
+    float* h = static_cast<float*>(HostPtr(buf));
+    std::memset(h, 0, 256);
+    std::memcpy(h, wa, 12);
+    std::memcpy(h + 4, wb, 12);
+    uint32_t eax = ctx.eax, ecx = ctx.ecx;
+    ctx.eax = buf, ctx.ecx = buf + 16;
+    uint32_t hit = CallGuest(ctx, 0x1DAFF0, {world, 1, 0, 0, buf + 32}) & 0xFF;
+    ctx.eax = eax, ctx.ecx = ecx;
+    float range = kReticleFar;
+    if (hit) {
+        float lp[3];
+        if (VrWorldToLocal(h + 8, lp)) {
+            float d[3] = {lp[0] - a[0], lp[1] - a[1], lp[2] - a[2]};
+            range = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        }
+    }
+    g_ret_range.store(std::clamp(range, 0.3f, kReticleFar), std::memory_order_relaxed);
+    static const bool down = std::filesystem::exists(app::ExeDir() / "dev_raydown");
+    if (down && NowMs() % 4000 < 40) {
+        // dev_raydown: the same ray straight down 5 m from the gun (the floor must hit), the line test checked
+        std::memset(h, 0, 256);
+        std::memcpy(h, wa, 12);
+        std::memcpy(h + 4, wa, 12);
+        h[5] -= 5;
+        ctx.eax = buf, ctx.ecx = buf + 16;
+        uint32_t dh = CallGuest(ctx, 0x1DAFF0, {world, 1, 0, 0, buf + 32}) & 0xFF;
+        ctx.eax = eax, ctx.ecx = ecx;
+        LOGR("vr reticle: down ray %s, result %.2f %.2f %.2f %.2f %.2f %.2f", dh ? "hits" : "misses", h[8], h[9], h[10],
+             h[11], h[12], h[13]);
+    }
+    static int logged = 0;
+    if (logged < 6 && NowMs() % 4000 < 40) {
+        logged++;
+        LOGR("vr reticle: the ray %s at %.1f m (from %.1f %.1f %.1f, result %.1f %.1f %.1f)", hit ? "hits" : "misses",
+             range, wa[0], wa[1], wa[2], h[8], h[9], h[10]);
+    }
+}
+
+// game thread, each tick: how far the gun goes into a wall (user: it pushed through them). The game's line test from
+// 30 cm behind the grip (by the chest, outside the wall) to 3 cm past the muzzle; where it hits short of that end,
+// the gun is pulled back by what's left, eased so it slides rather than jumps; nothing hit, it eases back out
+void VrWallTick(X86Context& ctx) {
+    float pull = g_wall_pull.load(std::memory_order_relaxed);
+    float A[9], p[3];
+    bool posed = false;
+    {
+        std::lock_guard lock(g_scope_lock);
+        posed = NowMs() - g_scope_ms <= 250;
+        std::memcpy(A, g_scope_a, sizeof(A));
+        std::memcpy(p, g_scope_p, sizeof(p));
+    }
+    uint32_t world = R32(0x2D45D4);
+    if (!Opt().vr_wall_pull || !posed || !world || VrMeleeHidden()) {
+        g_wall_pull.store(pull * 0.8f < 0.002f ? 0.0f : pull * 0.8f, std::memory_order_relaxed);
+        return;
+    }
+    auto it = kGrips.find(weapons::HeldCode());
+    const Grip& g = it == kGrips.end() ? kDefaultGrip : it->second;
+    constexpr float kBehind = 0.3f, kPast = 0.03f;
+    float s[3], e[3], ws[3], we[3];
+    for (int i = 0; i < 3; i++) {
+        float raw = p[i] - A[i * 3 + 2] * pull;  // the grip as the hand holds it, before this pull
+        s[i] = raw + A[i * 3 + 2] * kBehind;
+        e[i] = raw - A[i * 3 + 2] * (g.back + kPast);
+    }
+    if (!VrLocalToWorld(s, ws) || !VrLocalToWorld(e, we)) return;
+    static const uint32_t buf = mem::AllocSystem(256, 16);
+    float* h = static_cast<float*>(HostPtr(buf));
+    std::memset(h, 0, 256);
+    std::memcpy(h, ws, 12);
+    std::memcpy(h + 4, we, 12);
+    uint32_t eax = ctx.eax, ecx = ctx.ecx;
+    ctx.eax = buf, ctx.ecx = buf + 16;
+    bool hit = CallGuest(ctx, 0x1DAFF0, {world, 1, 0, 0, buf + 32}) & 0xFF;
+    ctx.eax = eax, ctx.ecx = ecx;
+    float want = 0;
+    if (hit) {
+        float lp[3];
+        if (VrWorldToLocal(h + 8, lp)) {
+            float d[3] = {lp[0] - s[0], lp[1] - s[1], lp[2] - s[2]};
+            float at = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            want = std::clamp(kBehind + g.back + kPast - at, 0.0f, g.back + kPast);
+        }
+    }
+    // in quickly (no frame through the wall), out slowly
+    float next = want > pull ? pull + (want - pull) * 0.6f : pull + (want - pull) * 0.25f;
+    if (next < 0.002f) next = 0;
+    g_wall_pull.store(next, std::memory_order_relaxed);
+    static bool was = false;
+    if ((next > 0.02f) != was) {
+        was = next > 0.02f;
+        if (was) {
+            xr::Pulse(1, 0.2f, 0.02f);  // the gun touching the wall
+            TestEvent("wall_pull");
+        }
+        LOGR("vr gun: %s a wall (%.2f m back)", was ? "pulled back from" : "clear of", next);
+    }
+}
+
+// the barrel's reticle (user): where the barrel's line meets the world (VrReticleTick), in each eye; off with no gun
+// in the hand, a melee swing on, or RETICLE off
 bool VrReticle(int eye, float* ret) {
     if (!Opt().vr_reticle || VrMeleeHidden()) return false;
     float A[9], p[3];
@@ -3132,7 +3321,8 @@ bool VrReticle(int eye, float* ret) {
     }
     xr::EyeView ev;
     if (!xr::RenderEye(eye, ev)) return false;
-    constexpr float kRange = 20.0f, kUp = 0.06f, kRadius = 0.0095f;  // metres; tan of its radius (about half a degree)
+    const float kRange = g_ret_range.load(std::memory_order_relaxed), kUp = kReticleUp;
+    constexpr float kRadius = 0.0095f;  // tan of its radius (about half a degree)
     float pt[3];
     for (int i = 0; i < 3; i++) pt[i] = p[i] + A[i * 3 + 1] * kUp - A[i * 3 + 2] * kRange;
     const float* q = ev.quat;
@@ -3142,7 +3332,7 @@ bool VrReticle(int eye, float* ret) {
                   2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)};
     float d[3] = {pt[0] - ev.pos[0], pt[1] - ev.pos[1], pt[2] - ev.pos[2]}, c[3];
     for (int i = 0; i < 3; i++) c[i] = R[0 * 3 + i] * d[0] + R[1 * 3 + i] * d[1] + R[2 * 3 + i] * d[2];
-    if (c[2] > -0.5f) return false;
+    if (c[2] > -0.2f) return false;
     float tx = c[0] / -c[2], ty = c[1] / -c[2];
     float l = ev.tan[0], r = ev.tan[1], u = ev.tan[2], dn = ev.tan[3];
     ret[0] = (tx - l) / (r - l);

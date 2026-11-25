@@ -127,6 +127,7 @@ const app::GameInfo app::kGame = {
                 {"vr_hd_textures", &game::Opt().vr_hd_textures, nullptr},
                 {"vr_dump_textures", &game::Opt().vr_dump_textures, nullptr},
                 {"vr_reticle", &game::Opt().vr_reticle, nullptr},
+                {"vr_wall_pull", &game::Opt().vr_wall_pull, nullptr},
                 {"coop", nullptr, &game::Opt().coop},
                 {"coop_port", nullptr, &game::Opt().coop_port},
                 {"coop_max_players", nullptr, &game::Opt().coop_max_players},

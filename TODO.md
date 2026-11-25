@@ -171,8 +171,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       (option, ~15 cm radius). Then a rack/chamber step only when the gun was emptied (Black's empty reload).
       The game's reload runs when the mag goes in, with its animation hidden; the reload button stays as an option
 - [ ] two-handed aiming: see Phase 4
-- [ ] haptics: firing (by weapon), hits taken, reload steps, pickups; a strength slider
-- [ ] gun against walls: the muzzle pulled back or the gun lowered when it would go into a wall (option)
+- [x] haptics: firing by weapon (ShotFeel), the launchers, reload touches, pickups; hits left out (user); a strength slider still open
+- [x] gun against walls: pulled back along the barrel (the game's line test), HANDS > GUN AT WALLS: PULLED BACK / THROUGH; user to try
 - [ ] grenades from a belt (Phase 6): grab one from the chest/hip with the off hand, pull, throw
 - [ ] grenades, the user's design (2026-11-21): an empty weapon slot to switch to (no gun in the hand); there the
       off hand's trigger at the chest (where the magazines are) takes a grenade, throw it and let go of the
@@ -440,5 +440,5 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] the game's crosshair: HUD item callback 0xD9480 (hud.cpp kCrosshair), hidden with RETICLE on (headset shot)
 - [ ] check it hid nothing else (hit markers, the grenade warning?) in a real fight
 - [ ] the reticle sat a few degrees left of the pistol's barrel line in a test-hands shot: check with real hands
-- [ ] later: the reticle at what the barrel actually hits (a ray against the scene's depth), not at 20 m
+- [x] the reticle at what the barrel hits: the game's own line test (0x1DAFF0) down the barrel each tick (headset: 4.0 m on a wall, misses through the roof at 60 m)
 

@@ -68,6 +68,7 @@ bool VrScopeWanted();                    // vr_gun.cpp: a scoped gun held up nea
 bool VrScopeEye(xr::EyeView& ev);        // vr_gun.cpp: the scope's view (its camera at the eyepiece, down the barrel)
 bool VrScopeLens(int eye, float* lens);  // vr_gun.cpp: where its glass is in an eye's image (the filter's lens, lens2)
 bool VrReticle(int eye, float* ret);     // vr_gun.cpp: where the barrel points in an eye's image (the filter's ret)
+bool VrDotColour(float* rgb);            // hud.cpp: the game's crosshair colour now (what it's over)
 bool VrSilencerPose(float* rear, float* front, float* radius);  // vr_silencer.cpp: our silencer, local space
 int VrSilencerIcon();  // vr_silencer.cpp: -1 hidden, 0 dark (none in the inventory), 1 bright (one carried)
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
@@ -208,16 +209,14 @@ float3 Overlay(float2 uv, float3 c) {
             c = v;
         }
     }
-    // ret: where the barrel points in this eye (xy its point in the frame's 0..1, zw its radius there): a ring and a
-    // dot, light with a dark edge, readable on bright and dark alike
+    // ret: where the barrel points in this eye (xy its point in the frame's 0..1, zw its radius there): the game's
+    // crosshair dot in the game's colour for what it's over (iconst.yzw), a soft glow round it as the game's has
     if (ret.z > 0) {
         float2 f = (uv - uvrect.xy) / uvrect.zw;
         float r = length((f - ret.xy) / ret.zw);
-        float ring = smoothstep(0.62, 0.72, r) * (1 - smoothstep(0.9, 1.0, r));
-        float dot_ = 1 - smoothstep(0.14, 0.2, r);
-        float edge = smoothstep(0.5, 0.62, r) * (1 - smoothstep(0.72, 0.8, r)) + smoothstep(0.9, 1.0, r) * (1 - smoothstep(1.0, 1.12, r));
-        c = lerp(c, c * 0.25, saturate(edge) * 0.8);
-        c = lerp(c, float3(0.55, 1.0, 0.6), saturate(max(ring, dot_)) * 0.9);
+        float dot_ = 1 - smoothstep(0.38, 0.48, r);
+        float glow = (1 - smoothstep(0.48, 1.0, r)) * 0.35;
+        c = lerp(c, iconst.yzw, saturate(dot_ + glow * (1 - dot_)));
     }
     // silA/silB: our silencer (its back end and front in the eye's space, x right y up, -z ahead; silA.w its radius,
     // silB.w on), ray cast against its tube and collar with the eye's tangents (tans: left, right, up, down);
@@ -4615,7 +4614,13 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     if (silenced) std::memcpy(c + 36, sil, 12 * sizeof(float));
     if (iconed) std::memcpy(c + 48, icon, sizeof(icon));
     if (scoped) std::memcpy(c + 24, lens, sizeof(lens));
-    if (aimed) std::memcpy(c + 32, ret, sizeof(ret));
+    if (aimed) {
+        std::memcpy(c + 32, ret, sizeof(ret));
+        // the game's crosshair colour (hud.cpp), its green if it hasn't drawn lately
+        float rgb[3] = {0.35f, 0.9f, 0.4f};
+        ::game::VrDotColour(rgb);
+        c[53] = rgb[0], c[54] = rgb[1], c[55] = rgb[2];
+    }
     c[20] = game::Opt().hdr ? 1.0f : 0.0f;
     c[21] = fxaa ? 1.0f : 0.0f;
     c[22] = bright;

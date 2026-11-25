@@ -28,6 +28,7 @@
 namespace game {
 bool VrGunLocal(float* A, float* muzzle);  // vr_gun.cpp: the gun's axes and its muzzle in local space, as drawn
 bool HudShown();  // hud.cpp: the player's hud is up (in play)
+void VrTouch(int hand, float amp);  // vr_gun.cpp: a light touch
 bool VrWorldToLocal(const float* w, float* local);  // vr_gun.cpp
 bool VrPlayerWorld(float* eye, float* fwd, float* floor_y);  // vr_gun.cpp
 void TestEvent(const std::string& name);   // vr_totest.cpp
@@ -407,6 +408,12 @@ X86_FUNC(sub_001BED90) {
     uint32_t pickup = ctx.esi;
     uint32_t kind = pickup ? kernel::R32(pickup + 0x140) : 0;
     __imp__sub_001BED90(ctx, base);
+    // a touch in both hands for anything picked up (user: pickups felt)
+    if (pickup) {
+        game::VrTouch(0, 0.3f);
+        game::VrTouch(1, 0.3f);
+        game::TestEvent("pickup_felt");
+    }
     if (kind != 4) return;
     game::g_carried = true;
     game::g_block_until = std::chrono::duration_cast<std::chrono::milliseconds>(

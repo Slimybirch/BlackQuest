@@ -1120,6 +1120,8 @@ void DevGive(X86Context& ctx) {
 
 // game thread, each menu and HUD tick (hooks.cpp MenuTick)
 namespace game { void VrSilencerTick(); }  // vr_silencer.cpp
+namespace game { void VrReticleTick(X86Context& ctx); }  // vr_gun.cpp: the reticle's ray
+namespace game { void VrWallTick(X86Context& ctx); }  // vr_gun.cpp: the gun out of walls
 // dev_invreq N: once 25 s into a level, the inventory's request (+0x38) set to N, then the request, its busy word
 // (+0xB4) and the held gun's suppressor flag logged as they change for 6 s (finding the suppressor's attach)
 void DevInvReq() {
@@ -1194,6 +1196,8 @@ void WeaponsTick(X86Context& ctx) {
     }
     DevInvReq();
     game::VrSilencerTick();
+    game::VrWallTick(ctx);
+    game::VrReticleTick(ctx);
     DevGive(ctx);
     if (int type = g_give.exchange(-1); type >= 0) DoGive(ctx, type);
     if (g_fill.exchange(false)) DoFill();

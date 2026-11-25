@@ -30,6 +30,7 @@
 #include "game/layout.h"
 #include "game/weapons.h"
 #include "xdk/hle.h"
+#include "xr.h"
 
 using namespace kernel;
 using layout::kWorld;
@@ -1646,6 +1647,8 @@ X86_FUNC(sub_001DDA70) {
     __imp__sub_001DDA70(ctx, base);
 }
 
+namespace game { void VrLauncherKick(bool rocket); }  // vr_gun.cpp: the launcher's buzz
+
 // A grenade made, edi the maker; &matrix, &velocity, side (ret 0xC): the player's (side 3) go to the partner
 X86_EXTERN_FUNC(__imp__sub_001DCE60);
 X86_FUNC(sub_001DCE60) {
@@ -1653,6 +1656,7 @@ X86_FUNC(sub_001DCE60) {
     bool mine = R32(ctx.esp + 0xC) == kPlayerSide && SendsProjectiles();
     uint32_t matrix = R32(ctx.esp + 4), vel = R32(ctx.esp + 8);
     if (mine) SendProjectile(0, kPlayerSide, matrix, vel, 0, 0);
+    if (R32(ctx.esp + 0xC) == kPlayerSide && xr::Active()) game::VrLauncherKick(false);  // (the m203's and the grl's)
     __imp__sub_001DCE60(ctx, base);
 }
 
@@ -1673,6 +1677,7 @@ X86_FUNC(sub_001E35F0) {
     PROBE("rocket made: side %u from %08X", ctx.edi, R32(ctx.esp));
     bool mine = ctx.edi == kPlayerSide && SendsProjectiles();
     if (mine) SendProjectile(1, kPlayerSide, R32(ctx.esp + 4), R32(ctx.esp + 8), R32(ctx.esp + 0xC), R32(ctx.esp + 0x10));
+    if (ctx.edi == kPlayerSide && !g_rocket_replay && xr::Active()) game::VrLauncherKick(true);
     __imp__sub_001E35F0(ctx, base);
 }
 

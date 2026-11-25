@@ -286,7 +286,7 @@ bool HudItem(X86Context& ctx, uint8_t*) {
             in >> std::hex >> v;
             return v;
         }();
-        if ((cb == kCrosshair && game::Opt().vr_reticle) || (hide && cb == hide)) return false;
+        if (hide && cb == hide) return false;
     }
     uint32_t frame = R32(ctx.ebx + kItemFrame);
     float anchor = kCentre;
@@ -298,3 +298,56 @@ bool HudItem(X86Context& ctx, uint8_t*) {
     if (g_anchor != kOff) g_anchor = anchor;
     return true;
 }
+
+namespace game {
+// the game's crosshair colour as last drawn (the dot's: black over things that burn, red enemies, blue objectives,
+// green friends, user): floats r g b at its rect's +0x10, drawn twice a frame (0.39 and 0.5 grey over nothing),
+// the brighter of the two kept, 8 bits each. Read by the barrel's reticle (vulkan.cpp), any thread
+std::atomic<uint32_t> g_dot_colour{0};
+std::atomic<int64_t> g_dot_ms{0};
+float g_dot_lum = 0;
+bool VrDotColour(float* rgb) {
+    if (NowMs() - g_dot_ms.load(std::memory_order_relaxed) > 250) return false;
+    uint32_t c = g_dot_colour.load(std::memory_order_relaxed);
+    rgb[0] = ((c >> 16) & 0xFF) / 255.0f, rgb[1] = ((c >> 8) & 0xFF) / 255.0f, rgb[2] = (c & 0xFF) / 255.0f;
+    // as bright as the colour goes (the game's glow lifts its dim grey to white), black kept black
+    float m = std::max({rgb[0], rgb[1], rgb[2]});
+    if (m > 0.02f)
+        for (int i = 0; i < 3; i++) rgb[i] /= m;
+    return true;
+}
+}  // namespace game
+
+// The crosshair's draw callback (0xD9480: its rect, x y w h, then its colour at +0x10, handed to the quad draw
+// 0xD6C00; the item second; plain ret). In vr its colour is kept for the barrel's reticle, which draws the dot in
+// its place (RETICLE on); off, the game draws its own
+X86_EXTERN_FUNC(__imp__sub_000D9480);
+X86_FUNC(sub_000D9480) {
+    uint32_t rect = R32(ctx.esp + 4);
+    if (rect) {
+        float r = std::clamp(G<float>(rect + 0x10), 0.0f, 1.0f), g = std::clamp(G<float>(rect + 0x14), 0.0f, 1.0f),
+              b = std::clamp(G<float>(rect + 0x18), 0.0f, 1.0f), lum = std::max({r, g, b});
+        int64_t now = NowMs();
+        if (now - game::g_dot_ms.load(std::memory_order_relaxed) > 8 || lum >= game::g_dot_lum) {
+            game::g_dot_colour.store(uint32_t(r * 255) << 16 | uint32_t(g * 255) << 8 | uint32_t(b * 255),
+                                     std::memory_order_relaxed);
+            game::g_dot_lum = lum;
+            game::g_dot_ms.store(now, std::memory_order_relaxed);
+        }
+        uint32_t c = R32(rect + 0x10);
+        static uint32_t last = 1;
+        static int logged = 0;
+        if (c != last && logged < 24 && R32(rect + 0x10) != 0x3EC6C6C7) {
+            last = c;
+            logged++;
+            LOGR("hud: the crosshair's colour %08X (then %08X %08X %08X)", c, R32(rect + 0x14), R32(rect + 0x18),
+                 R32(rect + 0x1C));
+        }
+    }
+    if (xr::Active() && game::Opt().vr_reticle) {
+        ctx.esp += 4;  // (its ret: the caller takes its arguments back)
+        return;
+    }
+    __imp__sub_000D9480(ctx, base);
+}
+

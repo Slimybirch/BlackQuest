@@ -1037,6 +1037,13 @@ void VrReloadTick() {
             near_mag = d2 < kPullReach * kPullReach;
         }
     }
+    {
+        // the off hand reaching the slide or the magazine: a faint tick, as fingers finding it (user: touch)
+        static bool rack_was = false, mag_was = false;
+        if (near_rack && !rack_was) xr::Pulse(0, 0.12f, 0.015f);
+        if (near_mag && !mag_was) xr::Pulse(0, 0.12f, 0.015f);
+        rack_was = near_rack, mag_was = near_mag;
+    }
     if (!g_racking && near_rack && grip_edge) {
         g_racking = true;
         g_rack_from = along;
@@ -1059,6 +1066,7 @@ void VrReloadTick() {
     bool on_fore = VrLeftOnGun() || dev_lefton;
     static bool fore_was = false;
     if (VrLeftOnGun() && !fore_was) {
+        xr::Pulse(0, 0.22f, 0.02f);  // the hand on the fore-end (user: touch)
         TestEvent("fore_grip:" + code);
         if (g_parts.shells) TestEvent("fore_grip_shotgun");
     }
@@ -1085,6 +1093,7 @@ void VrReloadTick() {
         pump_mode = false;
         if (pump_counted && g_parts.shells) {
             pump_open = true;  // let go of it back: it stays open
+            xr::Pulse(0, 0.2f, 0.02f);
             TestEvent("pump_left_open");
         } else {
             g_slide = 0;  // not worked back: forward it goes, nothing done
@@ -1294,6 +1303,7 @@ void VrReloadTick() {
         }
     }
     if (state == 0 && a_edge) {
+        xr::Pulse(1, 0.35f, 0.03f);  // the release button giving, the magazine dropping free
         samples = 24, next = 0;
         // eject: the rounds left go back to the reserve (none lost with the magazine, nor any waiting for a rack in
         // it), the clip is empty
