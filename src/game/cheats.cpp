@@ -80,7 +80,8 @@ X86_FUNC(sub_001E5FA0) {
 // A soldier takes a bullet (ecx the victim, the sixth of seven arguments its attacker, ret 0x1C): the
 // characters' class, the player's has its own
 X86_EXTERN_FUNC(__imp__sub_001E74B0);
-X86_FUNC(sub_001E74B0) {
+// (co-op: coop_npcs.cpp wraps 0x1E74B0 and calls this in the game's place)
+void CheatTakeDamage(X86Context& ctx, uint8_t* base) {
     Doomed doomed = Doom(ctx.ecx, R32(ctx.esp + 0x18));
     __imp__sub_001E74B0(ctx, base);
     Spare(doomed);

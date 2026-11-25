@@ -1,6 +1,9 @@
 // 2D is drawn 640x480 and shown as wide as the output. The game narrows its Flash menus itself; what its own 2D
 // layer draws gets x' = x * narrow + anchor * spare width: HUD parts by their component's anchor, the rest 4:3 in
 // the middle.
+#include <set>
+#include <fstream>
+#include <filesystem>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -8,6 +11,8 @@
 #include <mutex>
 #include <vector>
 
+#include "core/log.h"
+#include "xr.h"
 #include "app/app.h"
 #include "common/aspect.h"
 #include "common/options.h"
@@ -32,6 +37,9 @@ constexpr uint32_t kFromHud = 0x13C02F;
 constexpr uint32_t kFromFlash = 0x121E82;
 constexpr uint32_t kFromHost = 0xFFFFFFF0;
 constexpr uint32_t kTitleFade = 0xD71A0;  // draw callback of the level title card's full screen rectangle
+// the crosshair's draw callback: of the items at the centre (dev_huditems), the one whose hiding took the dot away
+// (dev_hidecb, headset shot 2026-11-24); its frame is the full 4:3 one (1.333)
+constexpr uint32_t kCrosshair = 0xD9480;
 constexpr float kOff = -1;
 constexpr float kCentre = 0.5f;
 
@@ -260,6 +268,26 @@ bool HudShown() { return NowMs() - g_hud_ms.load(std::memory_order_relaxed) < 25
 bool HudItem(X86Context& ctx, uint8_t*) {
     if (g_hud && R32(ctx.ebx + kItemCallback) != kTitleFade) g_hud_ms.store(NowMs(), std::memory_order_relaxed);
     if (g_hud && game::g_hide_hud && R32(ctx.ebx + kItemCallback) != kTitleFade) return false;
+    if (g_hud && xr::Active()) {
+        uint32_t cb = R32(ctx.ebx + kItemCallback);
+        // dev_huditems: each item's draw callback once, with its frame's first floats (finding the crosshair's)
+        static const bool list = std::filesystem::exists(app::ExeDir() / "dev_huditems");
+        static std::set<uint32_t> seen;
+        if (list && seen.insert(cb).second) {
+            uint32_t f = R32(ctx.ebx + kItemFrame);
+            LOGR("hud item: callback 0x%X frame %.3f %.3f %.3f %.3f", cb, f ? G<float>(f) : 0, f ? G<float>(f + 4) : 0,
+                 f ? G<float>(f + 8) : 0, f ? G<float>(f + 12) : 0);
+        }
+        // the game's crosshair: the barrel's reticle in its place (vr_gun.cpp VrReticle). dev_hidecb: a callback
+        // (hex) hidden, for finding it
+        static const uint32_t hide = [] {
+            std::ifstream in(app::ExeDir() / "dev_hidecb");
+            uint32_t v = 0;
+            in >> std::hex >> v;
+            return v;
+        }();
+        if ((cb == kCrosshair && game::Opt().vr_reticle) || (hide && cb == hide)) return false;
+    }
     uint32_t frame = R32(ctx.ebx + kItemFrame);
     float anchor = kCentre;
     for (uint32_t c = g_hud ? R32(g_hud + kHudComponents) : 0; c; c = R32(c + kComponentNext)) {

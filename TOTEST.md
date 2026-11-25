@@ -123,3 +123,6 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] DUMP TEXTURES on: a level runs smoothly while textures_dump fills (confirm)
 - [ ] HD textures: with a pack in textures_hd and TEXTURES on HD PACK, walls look sharper, no stutter or missing textures (confirm)
 - [ ] WA2000 scope: bring it to your eye; the zoomed view and reticle on the eyepiece, level, no stutter (confirm)
+- [ ] CO-OP tab: HOST shows your internet address and port, COPY ADDRESS pastes into Messenger (confirm)
+- [ ] co-op over the internet: a partner joins by the pasted address; both see each other (confirm)
+- [ ] the barrel reticle: a green ring where the barrel points, steady in both eyes (confirm)

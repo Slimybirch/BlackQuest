@@ -348,6 +348,19 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] coverage report per level
 
 ## Phase 9 (co-op; user, 2026-11-24: moved up from 11)
+- [x] (built 2026-11-24, not run) black-seamless-coop (MIT) ported: src/game/coop*.cpp, BSD sockets (coop_net.cpp),
+      its two shared wrappers chained with ours (0x1DB7B0: co-op, VrFireShot, the game; 0x1E74B0: co-op,
+      CheatTakeDamage, the game); no EOS in the build (room codes later)
+- [x] (built) the panel's CO-OP tab (vr_coop.cpp): HOST shows the internet address (api.ipify.org) and port, COPY
+      ADDRESS to the clipboard; JOIN: PASTE / TYPE IT (number pad) / CONNECT, FIND GAMES ON THIS WI-FI; the
+      players' names (HOST, YOU); YOUR NAME on a letter pad; PORT
+- [ ] headset run: hosting at the title, the tab, the address found and copied (needs the user's go-ahead)
+- [ ] the first internet test (the user hosts, port 45410 UDP forwarded to the headset)
+- [ ] VR on the wire: the partner sees our head and the gun hand's aim, not the game's camera (the mod sends the
+      game's player state: check how a VR player looks to the other; the arms/gun in the hand are ours alone)
+- [ ] the names over teammates in 3D (the mod draws them on the 2D overlay: wrong in the headset) and its status
+      line; the go-to-teammate (F8 / L3+R3 in the mod) on a VR control; the down player's spectate in VR
+- [ ] room codes (EOS): see NOTES "room codes"; then a ROOM CODE row (create, join by code on the letter pad)
 - [ ] the player's body: the friendly soldiers' model (see Phase 7's list)
 - [ ] giving ammo to another player (see Phase 6's list); grenades host-synced (NOTES)
 
@@ -365,4 +378,12 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] needs from the code: the enemy spawn (the game's actor/spawn function and its spawn points or nav data),
       the pickup spawn, the player's death and respawn (checkpoint reload: avoid it, respawn in place), the
       mission's scripted events and objectives turned off, a wave and lives count on the HUD
+
+## Barrel reticle (user, 2026-11-24)
+- [x] (built, not run) a ring and dot 20 m down the barrel in each eye (the filter's Overlay, vr_gun.cpp VrReticle);
+      HANDS > RETICLE: ON THE BARREL / OFF
+- [x] the game's crosshair: HUD item callback 0xD9480 (hud.cpp kCrosshair), hidden with RETICLE on (headset shot)
+- [ ] check it hid nothing else (hit markers, the grenade warning?) in a real fight
+- [ ] the reticle sat a few degrees left of the pistol's barrel line in a test-hands shot: check with real hands
+- [ ] later: the reticle at what the barrel actually hits (a ray against the scene's depth), not at 20 m
 

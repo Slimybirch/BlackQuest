@@ -38,6 +38,13 @@ struct Options {
     bool vr_hd_textures = false;
     // phase 8: each texture the game uploads saved once, by its hash, as a PNG (textures_dump/ in the app's folder)
     bool vr_dump_textures = false;
+    // co-op (black-seamless-coop, MIT; phase 9): 0 off, 1 host, 2 join the host at coop_host; the host's UDP port
+    bool vr_reticle = true;  // vr: a reticle where the barrel points, the game's crosshair hidden (user)
+    uint32_t coop = 0;
+    uint32_t coop_port = 45410;
+    std::string coop_nickname = "Player";
+    std::string coop_host;  // the last host joined (ip:port), the JOIN row's
+    uint32_t coop_max_players = 4;  // the host's cap, 2 to 8
     uint32_t vr_vignette = 0;   // vr: the view's edges darkened while moving or turning: 0 off, 1 low, 2 medium, 3 high
     bool vr_seated = false;     // vr: played sitting: the view at standing height, no real crouch
     uint32_t vr_refresh = 0;    // vr: the display's refresh rate in Hz (0 the headset's own)  // vr: degrees a flick of the right stick turns the body; 0 turns smoothly (user)

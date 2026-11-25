@@ -9,6 +9,7 @@
 #include "common/menu.h"
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
+#include "game/coop.h"
 
 namespace game {
 
@@ -43,6 +44,8 @@ void Load(const void* table) {
     o.touch_sensitivity = float(t["touch_sensitivity"].value_or(double(o.mouse_sensitivity)));
     o.left_sensitivity = float(t["left_stick_sensitivity"].value_or(double(o.left_sensitivity)));
     o.right_sensitivity = float(t["right_stick_sensitivity"].value_or(double(o.right_sensitivity)));
+    o.coop_nickname = coop::CleanNickname(t["coop_nickname"].value_or(o.coop_nickname));
+    o.coop_host = t["coop_host"].value_or(o.coop_host);
     std::string language = t["language"].value_or(o.language);
     bool known = std::find(std::begin(kLanguages), std::end(kLanguages), language) != std::end(kLanguages);
     if (known) o.language = language;
@@ -56,11 +59,14 @@ void Init() {
     BootLanguage();  // latched before the options can change the setting
     input::LoadBindings();
     audio::SetOutputMode(Opt().audio_output);
+    coop::Init();  // the co-op's settings and socket, before boot
 }
 
 void Save(void* table) {
     toml::table& t = *static_cast<toml::table*>(table);
     const Options& o = Opt();
+    t.insert("coop_nickname", o.coop_nickname);
+    t.insert("coop_host", o.coop_host);
     t.insert("mouse_sensitivity", double(o.mouse_sensitivity));
     t.insert("touch_sensitivity", double(o.touch_sensitivity));
     t.insert("left_stick_sensitivity", double(o.left_sensitivity));
@@ -120,6 +126,10 @@ const app::GameInfo app::kGame = {
                 {"vr_view_height", nullptr, &game::Opt().vr_view_height},
                 {"vr_hd_textures", &game::Opt().vr_hd_textures, nullptr},
                 {"vr_dump_textures", &game::Opt().vr_dump_textures, nullptr},
+                {"vr_reticle", &game::Opt().vr_reticle, nullptr},
+                {"coop", nullptr, &game::Opt().coop},
+                {"coop_port", nullptr, &game::Opt().coop_port},
+                {"coop_max_players", nullptr, &game::Opt().coop_max_players},
                 {"vr_vignette", nullptr, &game::Opt().vr_vignette},
                 {"vr_seated", &game::Opt().vr_seated, nullptr},
                 {"vr_refresh", nullptr, &game::Opt().vr_refresh},

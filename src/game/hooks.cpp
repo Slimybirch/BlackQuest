@@ -9,6 +9,8 @@
 #include "app/app.h"
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
+#include "game/coop.h"
+#include "game/coop_shots.h"
 #include "core/input.h"
 #include "core/log.h"
 #include "d3d/stereo.h"
@@ -303,6 +305,7 @@ constexpr uint32_t kShotWeapon = 4;
 void TracerStart(X86Context& ctx, uint8_t*) {
     uint32_t shot = R32(ctx.esi + kBulletShot);
     uint32_t weapon = shot ? R32(shot + kShotWeapon) : 0;
+    if (coop::shots::GhostWeapon(weapon)) return;  // co-op: the partner's bullet, its tracer not on our gun
     if (g_gun == 1 || !weapon || R32(weapon + kWeaponOwner) != Player()) return;
     static uint32_t copy = mem::AllocSystem(16, 16);
     std::memcpy(HostPtr(copy), HostPtr(ctx.eax), 16);
@@ -556,6 +559,7 @@ static void ScaleBodies(uint32_t world, float by) {
 // both follow the real frame time, before the characters write theirs
 static bool g_rest_tick;
 void PhysicsTime(X86Context&, uint8_t*) {
+    coop::MarkSimulated();  // co-op: from here the code runs on to the player update at 0x1F1201
     uint32_t physics = R32(kPhysics);
     uint32_t solver = physics ? R32(physics) : 0;
     uint32_t world = solver ? R32(solver + kSolverWorld) : 0;

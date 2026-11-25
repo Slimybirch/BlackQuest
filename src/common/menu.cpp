@@ -1,4 +1,5 @@
 // the cheats panel, on the touch controls' gear button or F10
+#include <filesystem>
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -69,6 +70,10 @@ void CheckForUpdates();
 bool StartupCheck();  // whether each launch asks GitHub
 void SetStartupCheck(bool on);
 }  // namespace host
+
+namespace game {
+void VrCoopTab(float em);  // vr_coop.cpp: the panel's CO-OP tab (phase 9)
+}
 
 namespace app {
 std::string UpdateNotice();  // native/ui.cpp: an update's notice for the panel (a Quest), "" none
@@ -260,7 +265,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest, kVrGunstock, kVrGunAngle,
              kVrStockHeight, kVrTurnSpeed, kVrViewHeight, kVrHdTextures, kVrVignette, kVrSeated,
-             kVrCalibrate, kVrRefresh, kVrDumpTextures };
+             kVrCalibrate, kVrRefresh, kVrDumpTextures, kVrReticle };
 
 using rows::Kind;
 using rows::Row;
@@ -339,6 +344,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "HANDS"},
     {Kind::Value, kVrGrip, "OFF-HAND GRIP"},
     {Kind::Value, kVrReload, "RELOAD"},
+    {Kind::Value, kVrReticle, "RETICLE"},
     {Kind::Heading, -1, "HEIGHT"},
     {Kind::Value, kVrCalibrate, "STAND STRAIGHT AND PRESS"},
     {Kind::Value, kVrViewHeight, "VIEW HEIGHT"},
@@ -615,6 +621,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "HEADSET'S");
             return true;
         }
+        case kVrReticle:
+            // blackquest: a reticle where the barrel points (the game's head-fixed crosshair hidden), or none
+            if (step) o.vr_reticle = !o.vr_reticle;
+            std::snprintf(text, sizeof(text), o.vr_reticle ? "ON THE BARREL" : "OFF");
+            return true;
         case kVrDumpTextures:
             // blackquest (phase 8): every texture the game uploads saved once as a PNG under its hash, for the HD
             // pack's matching (textures_dump/ in the app's folder)
@@ -1092,6 +1103,19 @@ void DrawPanel() {
         // (a Quest: an update's notice, here since an Android dialog isn't seen in the headset)
         if (std::string notice = UpdateNotice(); !notice.empty())
             ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", notice.c_str());
+        // in the headset: the settings, or the co-op's own tab (phase 9)
+        static int tab = std::filesystem::exists(ExeDir() / "dev_coop_tab") ? 1 : 0;  // (dev: open on CO-OP)
+        if (xr::Active()) {
+            float tw = ImGui::GetContentRegionAvail().x * 0.5f - em * 0.3f;
+            for (int t = 0; t < 2; t++) {
+                if (t) ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, tab == t ? ImVec4(0.45f, 0.36f, 0.12f, 1.0f) : ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+                if (ImGui::Button(t ? "CO-OP" : "SETTINGS", ImVec2(tw, em * 2.0f))) tab = t;
+                ImGui::PopStyleColor();
+            }
+        } else {
+            tab = 0;
+        }
         ImGui::Separator();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         // a scrollbar a thumb can take, not the desktop's thin one
@@ -1101,8 +1125,12 @@ void DrawPanel() {
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
         DragScroll(em);
         g_hovered_box = -1;
-        DrawRows(g_page);
-        if (g_page == kCheatsPage) DrawWeapons();
+        if (tab == 1) {
+            game::VrCoopTab(em);
+        } else {
+            DrawRows(g_page);
+            if (g_page == kCheatsPage) DrawWeapons();
+        }
         ImGui::EndChild();
         ImGui::PopStyleVar(3);
         DrawFooter(em);

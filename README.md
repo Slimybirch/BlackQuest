@@ -5,7 +5,8 @@ each player builds their own APK from their own disc.
 
 Credits: [black-android](https://github.com/ranggacasper/black-android) by Rangga Casper (MIT), the base;
 [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482 (MIT), the recompiler and runtime;
-the reverse-engineering notes of [black-pc](https://github.com/Spark198rus/black-pc) (facts only, no code).
+the co-op of [black-seamless-coop](https://github.com/MuriloDagustin/black-seamless-coop) by Murilo D'agustin
+(MIT, `src/game/COOP_LICENSE`); the reverse-engineering notes of [black-pc](https://github.com/Spark198rus/black-pc) (facts only, no code).
 
 ## Building BlackQuest (Windows)
 
@@ -144,6 +145,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 ## Credits
 - [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482: the static recompiler and the portable runtime (Xbox kernel, XDK libraries and Direct3D 8) this port is built on.
+- [black-seamless-coop](https://github.com/MuriloDagustin/black-seamless-coop) by Murilo D'agustin (MIT): the co-op (`src/game/coop*`, its licence in `src/game/COOP_LICENSE`), ported to the headset.
 - [SDL](https://github.com/libsdl-org/SDL), [glslang](https://github.com/KhronosGroup/glslang), [toml++](https://github.com/marzer/tomlplusplus) and [Dear ImGui](https://github.com/ocornut/imgui).
 - [bagasromadon](https://github.com/bagasromadon): the touch controls' button skin.
 - [xemu](https://github.com/xemu-project/xemu) and [Cxbx-Reloaded](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded), which XboxXBE-Recomp used as references for Xbox hardware and API behavior.

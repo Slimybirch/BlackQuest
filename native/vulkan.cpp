@@ -67,6 +67,7 @@ float VrVignette();     // vr_body.cpp: the comfort vignette's darkening now, 0.
 bool VrScopeWanted();                    // vr_gun.cpp: a scoped gun held up near the eye
 bool VrScopeEye(xr::EyeView& ev);        // vr_gun.cpp: the scope's view (its camera at the eyepiece, down the barrel)
 bool VrScopeLens(int eye, float* lens);  // vr_gun.cpp: where its glass is in an eye's image (the filter's lens, lens2)
+bool VrReticle(int eye, float* ret);     // vr_gun.cpp: where the barrel points in an eye's image (the filter's ret)
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
 void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
 int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
@@ -130,7 +131,7 @@ float4 psmain(O i) : SV_Target {
 // mask's dimming; look.x the corners' shade, look.y the brightness the lines and mask take back. post.x HDR on,
 // post.y FXAA on; both go before the filter, psplain is them alone
 const char* kFilterHlsl = R"(
-cbuffer B : register(b1) { float4 uvrect; float4 opts; float4 crt; float4 look; float4 src; float4 post; float4 lens; float4 lens2; };
+cbuffer B : register(b1) { float4 uvrect; float4 opts; float4 crt; float4 look; float4 src; float4 post; float4 lens; float4 lens2; float4 ret; };
 Texture2D img : register(t0);
 Texture2D lut : register(t1);
 Texture2D scope : register(t2);
@@ -182,16 +183,8 @@ float3 Fxaa(float2 uv) {
     return lb < lo || lb > hi ? a : b;
 }
 
-// the frame at a point with what the graphics settings add before a filter
-// post.z: a dev lift of the shadows (dev_bright), to see models in a dark scene
-// post.w: the comfort vignette (an eye's frame: its edges darkened, by this much at the rim)
-float3 Frame(float2 uv) {
-    float3 c = Tone(post.y > 0 ? Fxaa(uv) : Fetch(uv));
-    c = post.z > 0 ? pow(c, 1 / post.z) : c;
-    if (post.w > 0) {
-        float2 v = (uv - uvrect.xy) / uvrect.zw * 2 - 1;
-        c *= 1 - post.w * smoothstep(0.45, 1.05, length(v));
-    }
+// what the headset draws over an eye's frame: the scope's glass (lens) and the barrel's reticle (ret)
+float3 Overlay(float2 uv, float3 c) {
     // lens: the scope's glass in this eye (xy its centre in the frame's 0..1, zw its radii there); lens2: x how dark
     // (the eye off the scope's axis), zw the cos and sin of the gun's roll against the eye. Its picture (4:3, the
     // middle square used) turned upright, a reticle over it, its rim shaded
@@ -213,7 +206,31 @@ float3 Frame(float2 uv) {
             c = v;
         }
     }
+    // ret: where the barrel points in this eye (xy its point in the frame's 0..1, zw its radius there): a ring and a
+    // dot, light with a dark edge, readable on bright and dark alike
+    if (ret.z > 0) {
+        float2 f = (uv - uvrect.xy) / uvrect.zw;
+        float r = length((f - ret.xy) / ret.zw);
+        float ring = smoothstep(0.62, 0.72, r) * (1 - smoothstep(0.9, 1.0, r));
+        float dot_ = 1 - smoothstep(0.14, 0.2, r);
+        float edge = smoothstep(0.5, 0.62, r) * (1 - smoothstep(0.72, 0.8, r)) + smoothstep(0.9, 1.0, r) * (1 - smoothstep(1.0, 1.12, r));
+        c = lerp(c, c * 0.25, saturate(edge) * 0.8);
+        c = lerp(c, float3(0.55, 1.0, 0.6), saturate(max(ring, dot_)) * 0.9);
+    }
     return c;
+}
+
+// the frame at a point with what the graphics settings add before a filter
+// post.z: a dev lift of the shadows (dev_bright), to see models in a dark scene
+// post.w: the comfort vignette (an eye's frame: its edges darkened, by this much at the rim)
+float3 Frame(float2 uv) {
+    float3 c = Tone(post.y > 0 ? Fxaa(uv) : Fetch(uv));
+    c = post.z > 0 ? pow(c, 1 / post.z) : c;
+    if (post.w > 0) {
+        float2 v = (uv - uvrect.xy) / uvrect.zw * 2 - 1;
+        c *= 1 - post.w * smoothstep(0.45, 1.05, length(v));
+    }
+    return Overlay(uv, c);
 }
 
 float4 psplain(O i) : SV_Target { return float4(Frame(i.uv), 1); }
@@ -242,7 +259,7 @@ float4 pssharpen(O i) : SV_Target {
     float3 w = Fetch(i.uv - float2(src.x, 0)), e = Fetch(i.uv + float2(src.x, 0));
     float3 lo = min(c, min(min(n, s), min(w, e))), hi = max(c, max(max(n, s), max(w, e)));
     float3 amp = sqrt(saturate(min(lo, 1 - hi) / max(hi, 1e-4)));
-    return float4(Tone(saturate(c + (4 * c - n - s - w - e) * amp * 0.35)), 1);
+    return float4(Overlay(i.uv, Tone(saturate(c + (4 * c - n - s - w - e) * amp * 0.35))), 1);
 }
 
 float4 pscolor(O i) : SV_Target {
@@ -4395,10 +4412,14 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     float lens[8] = {};
     bool scoped = eye_image && scope_img_ && scope_frame_ + 2 >= presents_ &&
                   ::game::VrScopeLens(xr::ImageEye(index), lens);
-    bool post = game::Opt().hdr || fxaa || bright > 0 || vignette > 0.01f || scoped;
+    // the barrel's reticle (the game's crosshair hidden: hud.cpp)
+    float ret[4] = {};
+    bool aimed = eye_image && !last_theater_ && ::game::VrReticle(xr::ImageEye(index), ret);
+    bool post = game::Opt().hdr || fxaa || bright > 0 || vignette > 0.01f || scoped || aimed;
     // opts.z: the taps a side over each screen pixel, 2 averaging SSAA's samples
-    float c[32] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
+    float c[36] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
     if (scoped) std::memcpy(c + 24, lens, sizeof(lens));
+    if (aimed) std::memcpy(c + 32, ret, sizeof(ret));
     c[20] = game::Opt().hdr ? 1.0f : 0.0f;
     c[21] = fxaa ? 1.0f : 0.0f;
     c[22] = bright;
@@ -4428,7 +4449,6 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     Alloc cbuf = Constants(c, sizeof(c));
     const char* hlsl = filter || post ? kFilterHlsl : kBlitHlsl;
     const char* entry = crt ? "pscrt" : filter == 3 ? "pssharpen" : filter ? "pscolor" : post ? "psplain" : "psmain";
-    if (scoped) entry = "psplain";  // (the lens is the plain pass's)
     VkPipeline pipe = t ? FullScreenPipeline(hlsl, entry, swap_fmt_, VK_FORMAT_UNDEFINED, false) : VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
     if (pipe) {

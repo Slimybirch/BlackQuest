@@ -2920,7 +2920,8 @@ bool VrGunAim(float* dir) {
 // for the player at 0x1DC0D1, black-seamless-coop's notes): in vr it leaves the muzzle as drawn in the hand, along
 // the hand's aim, the game's spread kept. Other callers (co-op's ghosts) are left alone
 X86_EXTERN_FUNC(__imp__sub_001DB7B0);
-X86_FUNC(sub_001DB7B0) {
+// (co-op: coop_shots.cpp wraps 0x1DB7B0 and calls this in the game's place: co-op, then the hand's aim, then the game)
+void VrFireShot(X86Context& ctx, uint8_t* base) {
     using namespace game;
     uint32_t dir = R32(ctx.esp + 8);
     float m[16];
@@ -3007,6 +3008,39 @@ void QuatOf(const float* m, float* q) {
     }
 }
 }  // namespace
+
+// the barrel's reticle (user): a point 20 m down the barrel from the gun, in each eye; off with no gun in the hand,
+// a melee swing on, or RETICLE off
+bool VrReticle(int eye, float* ret) {
+    if (!Opt().vr_reticle || VrMeleeHidden()) return false;
+    float A[9], p[3];
+    {
+        std::lock_guard lock(g_scope_lock);
+        if (NowMs() - g_scope_ms > 250) return false;
+        std::memcpy(A, g_scope_a, sizeof(A));
+        std::memcpy(p, g_scope_p, sizeof(p));
+    }
+    xr::EyeView ev;
+    if (!xr::RenderEye(eye, ev)) return false;
+    constexpr float kRange = 20.0f, kUp = 0.06f, kRadius = 0.0095f;  // metres; tan of its radius (about half a degree)
+    float pt[3];
+    for (int i = 0; i < 3; i++) pt[i] = p[i] + A[i * 3 + 1] * kUp - A[i * 3 + 2] * kRange;
+    const float* q = ev.quat;
+    float xx = q[0] * q[0], yy = q[1] * q[1], zz = q[2] * q[2];
+    float xy = q[0] * q[1], xz = q[0] * q[2], yz = q[1] * q[2], wx = q[3] * q[0], wy = q[3] * q[1], wz = q[3] * q[2];
+    float R[9] = {1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy), 2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx),
+                  2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)};
+    float d[3] = {pt[0] - ev.pos[0], pt[1] - ev.pos[1], pt[2] - ev.pos[2]}, c[3];
+    for (int i = 0; i < 3; i++) c[i] = R[0 * 3 + i] * d[0] + R[1 * 3 + i] * d[1] + R[2 * 3 + i] * d[2];
+    if (c[2] > -0.5f) return false;
+    float tx = c[0] / -c[2], ty = c[1] / -c[2];
+    float l = ev.tan[0], r = ev.tan[1], u = ev.tan[2], dn = ev.tan[3];
+    ret[0] = (tx - l) / (r - l);
+    ret[1] = (u - ty) / (u - dn);
+    ret[2] = kRadius / (r - l);
+    ret[3] = kRadius / (u - dn);
+    return ret[0] > -0.1f && ret[0] < 1.1f && ret[1] > -0.1f && ret[1] < 1.1f;
+}
 
 void VrScopeHeld(const std::string& code) { g_scoped.store(code == "SNR" || code == "SN5", std::memory_order_relaxed); }
 

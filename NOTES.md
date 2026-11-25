@@ -1871,3 +1871,31 @@ brighter and bigger)
   the eyepiece is grip + up 0.14 + back -0.04 + side -0.025 (metres, the gun's frame), radius 0.022, fitted
   from headset shots with test hands; dev_scope "up back radius [side]" overrides, dev_scope_any draws it off-axis.
 - HLSL trap: `line` is a keyword (a geometry shader's primitive type): a variable named so fails to parse.
+
+## 2026-11-24: Phase 9 begins: co-op (black-seamless-coop ported), the barrel reticle
+
+- The mod (MIT, Murilo D'agustin; licence kept in src/game/COOP_LICENSE, credited in README) is host code over the
+  same kind of recompiled port: it wraps ~50 game functions with X86_FUNC (no game.toml hooks), so its sources
+  drop into src/game. Only two clash with ours and are chained: 0x1DB7B0 (the player's bullet: coop_shots, then
+  vr_gun.cpp VrFireShot, then the game) and 0x1E74B0 (TakeDamage: coop_npcs, then cheats.cpp CheatTakeDamage, then
+  the game). Its Win32 socket file is rewritten for BSD sockets (coop_net.cpp; command-line args from
+  dev_coop_args); its nickname cleaner decodes UTF-8 by hand; the PC port's sprint key isn't here (calls dropped).
+  Its two host hooks added: TracerStart skips a partner's bullet, PhysicsTime marks the simulated frame. Not yet:
+  its overlay (names over teammates, status: 2D, wrong in VR) and LatchCamera (the PC port's AO hook).
+- The protocol: UDP 45410, the host runs the enemies and the mission; joiners follow (even mid-level). Up to 8.
+- CO-OP tab (vr_coop.cpp, the panel's second tab): HOST asks api.ipify.org for the internet address (plain HTTP,
+  only when hosting starts) and shows ip:port with COPY ADDRESS (SDL's clipboard: the Quest's, pasted into its
+  messaging); JOIN takes PASTE, a number pad, or FIND GAMES ON THIS WI-FI (the mod's broadcast search). The name is
+  picked on a letter pad (no text keyboard in VR); coop_host remembers the last address.
+- **Room codes (later)**: the mod's EOS transport (coop_online.cpp, BLACK_WITH_EOS) needs: a free Epic developer
+  account; a product in the Epic Developer Portal with its Product, Sandbox and Deployment IDs and a client
+  (ID and secret) whose policy allows P2P and lobbies; the EOS C SDK for Android (arm64 .so and its Java part,
+  initialised from the activity) in the Gradle and CMake builds; the IDs in a coop-online.toml kept out of git
+  (they end up in the APK; device-ID login is anonymous, no Epic account for players). Then a ROOM CODE row.
+- Barrel reticle: each eye's filter pass draws a ring and dot (Overlay, after the scope's lens) where a point 20 m
+  down the barrel lands in that eye (VrReticle, from the gun frame HandInCamera keeps). HANDS > RETICLE. The game's
+  head-fixed crosshair is the HUD item drawn by 0xD9480 (dev_huditems listed the items: 0xD8D90, 0xD8A10 at 30,22;
+  0xD9110, 0xD84B0 at 610,22; 0x1355B0 at 320,22; 0x135370 at 320,458; 0xD9480, 0xD71A0 (the title fade) and
+  0xD8B80 at 320,240. Hiding 0xD8B80 left the dot; hiding 0xD9480 took it away), hidden in the headset with RETICLE
+  on (hud.cpp kCrosshair). Headset runs 2026-11-24: the CO-OP tab hosting (status, the internet address found,
+  COPY, the list) and the reticle drawn, both seen in shots.
