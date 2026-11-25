@@ -1016,6 +1016,17 @@ int SuppressorHeld(uint32_t& weapon) {
     return R32(weapon + kWeaponSuppressed) ? 1 : 0;
 }
 
+// the game's own attach (or detach) on the gun in hand: its state switch (0x1EF08D) takes +0xD8 = 0x17 to start
+// the attach (busy 0x13, the suppressor flag on half a second in, the sound with it), 0x18 the detach; false while
+// another animation runs. Game thread
+bool RequestSuppressorAnim(bool attach) {
+    Level l;
+    uint32_t w = ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
+    if (!w || R32(w + kWeaponAnim) || R32(l.inventory + kInvBusy)) return false;
+    W32(w + kWeaponAnim, attach ? 0x17 : 0x18);
+    return true;
+}
+
 // on or off on the gun in hand (its sound follows at the next weapon switch, as the panel's)
 void SetSuppressorHeld(bool on) {
     Level l;

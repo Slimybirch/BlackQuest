@@ -133,7 +133,12 @@
 - [ ] the game's attach: mission 2 starts it by itself (busy 0x13 at +0.5 s, the flag at +7.1 s, done +9.5 s):
       find what sets busy there, then start it at the twist (its last part: from ~6 s in?), the pickup spawn and
       "to the inventory instead of applied" after; round 2 (2026-11-25): busy and the weapon's anim id
-      (+0xD8, 0x19 attach) are outputs (written by hand, nothing starts); 17 +0xB4 writers ruled out (NOTES)
+      (+0xD8, 0x19 attach) are outputs (written by hand, nothing starts); 17 +0xB4 writers ruled out (NOTES); round 3: the request is +0xD8 = 0x17
+      (attach) / 0x18 (detach), the gun's state switch (0x1EF08D)
+- [x] (2026-11-25, headset) the twist asks for the game's attach (0x17) and the reverse its detach (0x18): both run,
+      the flag (and the sound) follow; dev_silencer cycle tests both
+- [ ] next of the user's plan: a silencer pickup spawned at the start that goes to the inventory (the icon) instead
+      of on the gun
 - [ ] our silencer has no depth test: check it in the hand (over the fingers?) and at the hip
 - [x] (built 2026-11-24, headset shots with test hands) the WA2000's scope as a lens: a third replay from the
       scope, its picture on the eyepiece with a reticle (NOTES "scopes"). Still: the user's own check that it's

@@ -26,6 +26,7 @@ void TestEvent(const std::string& name);   // vr_totest.cpp
 namespace weapons {
 int SuppressorHeld(uint32_t& weapon);  // -1 the held gun takes none, 0 off, 1 on; weapon: the held one
 void SetSuppressorHeld(bool on);
+bool RequestSuppressorAnim(bool attach);  // the game's own attach (true) or detach animation
 }  // namespace weapons
 
 namespace game {
@@ -38,6 +39,7 @@ std::set<uint32_t> g_owned;       // guns whose silencer the player has (seen on
 float g_roll0 = 0;                // the hand's roll about the barrel where the twist started
 bool g_grip_was = false;
 std::atomic<int> g_shown{0};      // for the renderer and the checklist: the state, as an int
+int64_t g_wait_until = 0;         // the game's own attach or detach runs till then: its flag not read
 
 constexpr float kGripOn = 0.6f, kGripOff = 0.35f;
 constexpr float kLineUp = 0.04f;       // within this of the muzzle it lines up
@@ -106,10 +108,13 @@ void VrSilencerTick() {
         g_weapon = weapon;
         Set(on ? S::kOnGun : g_owned.count(weapon) ? S::kHolster : S::kNone, "a gun came to hand");
     }
+    int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (g_state == S::kNone && on == 1) Set(S::kOnGun, "the gun has one now");
     if (g_state == S::kNone) return;
     {
-        // dev_silencer "hip" or "hand": an owned silencer on the gun taken off once, 8 s after it's seen (tests with
-        // test hands: the holster and the icon, or the model in the hand)
+        // dev_silencer "hip" or "hand": an owned silencer on the gun taken off once, 8 s after it's seen, through the
+        // game's detach (tests with test hands: the holster and the icon, or the model in the hand); "cycle": off to
+        // the hip, then 6 s later on again through the game's attach
         static const std::string want = [] {
             std::ifstream f(app::ExeDir() / "dev_silencer");
             std::string w;
@@ -119,18 +124,28 @@ void VrSilencerTick() {
         static int64_t seen = 0;
         static bool done = false;
         int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        static int64_t off_at = 0;
         if (!want.empty() && !done && g_state == S::kOnGun) {
             if (!seen) seen = now;
-            if (now - seen > 8000) {
+            if (now - seen > 8000 && weapons::RequestSuppressorAnim(false)) {
                 done = true;
-                weapons::SetSuppressorHeld(false);
-                on = 0;
-                Set(want == "hand" ? S::kHand : S::kHolster, "dev_silencer: taken off");
+                off_at = now;
+                g_wait_until = now_ms + 4000;
+                Set(want == "hand" ? S::kHand : S::kHolster, "dev_silencer: taken off (the game's detach)");
             }
         }
+        if (want == "cycle" && done && off_at && now - off_at > 6000 && g_state == S::kHolster &&
+            weapons::RequestSuppressorAnim(true)) {
+            off_at = 0;
+            g_wait_until = now_ms + 4000;
+            Set(S::kOnGun, "dev_silencer cycle: on again (the game's attach)");
+        }
     }
-    if (on == 1 && g_state != S::kOnGun && g_state != S::kUnscrew) Set(S::kOnGun, "put on another way (the game's button)");
-    if (on == 0 && (g_state == S::kOnGun || g_state == S::kUnscrew)) Set(S::kHolster, "taken off another way");
+    // (while the game's own attach or detach runs, the flag lags our state: it isn't read then)
+    if (now_ms >= g_wait_until) {
+        if (on == 1 && g_state != S::kOnGun && g_state != S::kUnscrew) Set(S::kOnGun, "put on another way (the game's button)");
+        if (on == 0 && (g_state == S::kOnGun || g_state == S::kUnscrew)) Set(S::kHolster, "taken off another way");
+    }
 
     xr::Hand hand[2];
     float head[3], A[9], muzzle[3];
@@ -176,7 +191,10 @@ void VrSilencerTick() {
             // clockwise seen from behind: the hand's up turns toward the gun's right
             float twist = Wrap(Roll(h.aim, A) - g_roll0);
             if (twist > kTwist) {
-                weapons::SetSuppressorHeld(true);
+                // the game's own attach: its animation, the flag and the sound (NOTES, 2026-11-25); the flag written
+                // ourselves only if it won't take the request now
+                if (weapons::RequestSuppressorAnim(true)) g_wait_until = now_ms + 4000;
+                else weapons::SetSuppressorHeld(true);
                 g_owned.insert(weapon);
                 Set(S::kOnGun, "twisted on: locked");
                 xr::Pulse(0, 0.9f, 0.08f);
@@ -198,7 +216,8 @@ void VrSilencerTick() {
             }
             float twist = Wrap(Roll(h.aim, A) - g_roll0);
             if (twist < -kTwist) {
-                weapons::SetSuppressorHeld(false);
+                if (weapons::RequestSuppressorAnim(false)) g_wait_until = now_ms + 4000;
+                else weapons::SetSuppressorHeld(false);
                 Set(S::kHand, "twisted off: in the hand");
                 xr::Pulse(0, 0.9f, 0.08f);
                 xr::Pulse(1, 0.5f, 0.05f);

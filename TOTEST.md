@@ -133,4 +133,4 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] HD textures on (VR SETTINGS, TEXTURES: HD PACK): no speckle, and the matched textures look right (the warehouse roof panel) (confirm)
 - [ ] the silencer model: matte black, on a silenced gun's muzzle, in the left hand, on the left hip (confirm)
 - [ ] the silencer icon: white, under the grenade count, only while the silencer is off the gun (confirm)
-
+- [ ] silencer twist on: the game's own attach plays and the gun sounds suppressed after; twist off: the detach, normal sound (confirm)

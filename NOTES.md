@@ -1998,3 +1998,22 @@ brighter and bigger)
   needs the attach's own setup with it.
 - So the attach starts elsewhere: mission 2 starts it at +0.5 s by itself. Next: wrap the functions that write the
   weapon's +0xD8 to 0x19 (or call the weapon's animation player with it), the same way as the probe.
+
+## 2026-11-25: the suppressor attach's start found (round 3)
+
+- The gun's state function (around 0x1EF000, ebp the weapon, edi a pointer to the inventory's busy word +0xB4)
+  switches on its animation field: index = weapon+0xD8 - 1 (`cmp ecx, 0x1D`), a byte table at 0x1F0188 picks one of
+  14 cases at 0x1F0150 (read from the xbe). **0x17 -> 0x1EF331, the attach: 0x1EEF50(ebp), busy = 0x13, busy+0x10 = 1,
+  the field = 0x19. 0x18 -> 0x1EF34E, the detach: the same with 0 and 0x1A.** So the field is a request as well as
+  the state: writing 0x19 (the attach running) did nothing, the request is 0x17 (0x18 to take it off).
+  Other requests there: 0x13 -> 0x1EF234 (sets 0x15), 0x14 -> 0x1EF2CB (sets 0x16), 0x15 -> 0x1EF249, 0x1E -> 0x1EF1DD.
+- The test (dev_weapanim 17 on the pistol in mission 1) didn't run: the headset dropped the app from focus at
+  18 s (its sleep), so the game paused before the write at ~42 s. To run again with the headset on.
+
+- **Confirmed on the headset (2026-11-25):** +0xD8 = 0x17 on the held pistol (dev_weapanim 17): busy 0x13 at once,
+  the suppressor flag on at +0.5 s, busy back to 0 at +2.9 s (the pistol's attach; mission 2's 9 s had more in it).
+  dev_silencer cycle (detach 0x18, then 6 s later attach 0x17, both through weapons::RequestSuppressorAnim): detach
+  busy 0x13 -> flag off at +2.3 s -> idle +2.9 s; attach busy 0x13 -> flag on +0.5 s -> idle +2.9 s. Our model back
+  on the muzzle after. The silencer by hand now asks for the game's attach at the twist (its animation, the flag,
+  the sound) and its detach at the reverse twist; the flag isn't read for 4 s after a request (it lags our state).
+  A gun that gains a suppressor while our state is none goes to "on the gun" (it stayed none before).
