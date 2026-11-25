@@ -12,6 +12,9 @@
 #include <cstdint>
 #include <set>
 #include <string>
+#include <fstream>
+
+#include "app/app.h"
 
 #include "core/log.h"
 #include "xr.h"
@@ -104,6 +107,28 @@ void VrSilencerTick() {
         Set(on ? S::kOnGun : g_owned.count(weapon) ? S::kHolster : S::kNone, "a gun came to hand");
     }
     if (g_state == S::kNone) return;
+    {
+        // dev_silencer "hip" or "hand": an owned silencer on the gun taken off once, 8 s after it's seen (tests with
+        // test hands: the holster and the icon, or the model in the hand)
+        static const std::string want = [] {
+            std::ifstream f(app::ExeDir() / "dev_silencer");
+            std::string w;
+            f >> w;
+            return w;
+        }();
+        static int64_t seen = 0;
+        static bool done = false;
+        int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (!want.empty() && !done && g_state == S::kOnGun) {
+            if (!seen) seen = now;
+            if (now - seen > 8000) {
+                done = true;
+                weapons::SetSuppressorHeld(false);
+                on = 0;
+                Set(want == "hand" ? S::kHand : S::kHolster, "dev_silencer: taken off");
+            }
+        }
+    }
     if (on == 1 && g_state != S::kOnGun && g_state != S::kUnscrew) Set(S::kOnGun, "put on another way (the game's button)");
     if (on == 0 && (g_state == S::kOnGun || g_state == S::kUnscrew)) Set(S::kHolster, "taken off another way");
 
@@ -190,6 +215,49 @@ void VrSilencerTick() {
 bool VrSilencerInHand() {
     int s = g_shown.load(std::memory_order_relaxed);
     return s == int(S::kHand) || s == int(S::kLined);
+}
+
+// render thread: our silencer's model where it is now (local space): its back end (the thread collar's), its front,
+// its radius. Modelled on the user's photo: a matte black tube 16 cm long, 3.2 cm across, a narrower threaded collar
+// at the back, two grooves, a vent hole near the front (the filter pass draws it: native/vulkan.cpp Overlay)
+constexpr float kSilLength = 0.16f, kSilRadius = 0.016f;
+bool VrSilencerPose(float* rear, float* front, float* radius) {
+    S s = S(g_shown.load(std::memory_order_relaxed));
+    if (s == S::kNone) return false;
+    *radius = kSilRadius;
+    float fwd[3], at[3];
+    if (s == S::kHolster) {
+        // on the left hip, upright, the collar up
+        float hy, hp;
+        xr::Hand hand[2];
+        float head[3];
+        if (!xr::HeadAngles(hy, hp) || !xr::Hands(hand[0], hand[1], head)) return false;
+        float right[3] = {std::cos(hy), 0, -std::sin(hy)}, back[3] = {std::sin(hy), 0, std::cos(hy)};
+        for (int i = 0; i < 3; i++) at[i] = head[i] + right[i] * kHipRight + back[i] * kHipBack;
+        at[1] -= kHipDown - kSilLength * 0.5f;
+        fwd[0] = 0, fwd[1] = -1, fwd[2] = 0;
+    } else if (s == S::kHand) {
+        // in the off hand's fist, along where the controller points, the collar 5 cm behind the grip
+        xr::Hand hand[2];
+        float head[3], H[9];
+        if (!xr::Hands(hand[0], hand[1], head) || !hand[0].ok || !hand[0].aim_ok) return false;
+        Axes(hand[0].aim, H);
+        for (int i = 0; i < 3; i++) fwd[i] = -H[i * 3 + 2], at[i] = hand[0].pos[i] - fwd[i] * 0.05f;
+    } else {
+        // lined up, on the gun or being unscrewed: on the muzzle along the barrel (screwed on: the collar inside)
+        float A[9], muzzle[3];
+        if (!VrGunLocal(A, muzzle)) return false;
+        float in = s == S::kLined ? 0.0f : 0.012f;
+        for (int i = 0; i < 3; i++) fwd[i] = -A[i * 3 + 2], at[i] = muzzle[i] - fwd[i] * in;
+    }
+    for (int i = 0; i < 3; i++) rear[i] = at[i], front[i] = at[i] + fwd[i] * kSilLength;
+    return true;
+}
+
+// any thread: the white silencer icon under the ammunition shows while the player carries it off the gun
+bool VrSilencerIcon() {
+    int s = g_shown.load(std::memory_order_relaxed);
+    return s == int(S::kHolster) || s == int(S::kHand) || s == int(S::kLined);
 }
 
 }  // namespace game

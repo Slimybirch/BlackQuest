@@ -130,4 +130,7 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] co-op: a magazine from your chest let go of at your partner's chest goes to them (auto: mag_given) (confirm)
 - [ ] silencer: from the left hip, lined up at the muzzle, one twist on (auto: silencer_on) (confirm)
 - [ ] silencer: grip it on the gun, twist back off; let go: back to the hip (auto: silencer_off) (confirm)
+- [ ] HD textures on (VR SETTINGS, TEXTURES: HD PACK): no speckle, and the matched textures look right (the warehouse roof panel) (confirm)
+- [ ] the silencer model: matte black, on a silenced gun's muzzle, in the left hand, on the left hip (confirm)
+- [ ] the silencer icon: white, under the grenade count, only while the silencer is off the gun (confirm)
 

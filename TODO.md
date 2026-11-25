@@ -119,9 +119,21 @@
       silencer the player has (seen on it, or put on), grip there takes it, within 4 cm of the muzzle along the barrel
       it lines up, one ~60 degree clockwise twist locks it (weapon+0x108 on), grip at the muzzle and the reverse
       twist takes it off into the hand, let go anywhere else: back to the holster
-- [ ] silencer, with the headset: the silencer drawn in the hand (the gun model's own silencer part: a dev_dumpgun
-      of a suppressed gun), the tail of the game's suppressor animation as it locks (what starts it: the inventory's
-      busy 0x13), the sound changing at once (now at the next weapon switch, as the panel's); the hip's place
+- [ ] silencer, with the headset: the dumps show no silencer part in the gun's model (PST plain and suppressed:
+      the same mesh, no other draw), so either our own silencer mesh (drawn on the muzzle and in the off hand), or
+      find how the game attaches its own (the pickup's animation, inventory busy 0x13) and play its tail; the sound
+      at once (now at the next weapon switch); the hip's place
+- [ ] the user's plan (2026-11-24): our own silencer model (a plain matte tube, from their photo: thread collar at
+      the back, two grooves, a vent hole; no markings), a silencer pickup spawned at the start that goes to the
+      inventory instead of on the gun, a white silencer icon under the ammo and grenades while carried, and the
+      game's own suppressor apply called when the twist locks (its animation and sound). Pickup records and the
+      take step found (NOTES "suppressor pickup hunt"); the apply for kind 4 not yet
+- [x] (2026-11-24, headset shots) our silencer model (on the muzzle, the hip, the hand) and the white icon under
+      the grenades while it's carried off the gun
+- [ ] the game's attach: mission 2 starts it by itself (busy 0x13 at +0.5 s, the flag at +7.1 s, done +9.5 s):
+      find what sets busy there, then start it at the twist (its last part: from ~6 s in?), the pickup spawn and
+      "to the inventory instead of applied" after
+- [ ] our silencer has no depth test: check it in the hand (over the fingers?) and at the hip
 - [x] (built 2026-11-24, headset shots with test hands) the WA2000's scope as a lens: a third replay from the
       scope, its picture on the eyepiece with a reticle (NOTES "scopes"). Still: the user's own check that it's
       sharp, aligned and smooth at the eye; the frame rate while scoped; X2/X5 zoom levels (now about 4x)
@@ -398,7 +410,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       success (VS's build tools installed into it and uninstalled), the player's own Java and Android SDK
 - [x] folders adb makes in the app's folder are the shell user's, closed to the app: opened (chmod), else the game
       found no disc after a fresh install
-- [ ] finish the HD run: the headset went offline mid-test; reinstall (the mip fix below), then shots HD on/off
+- [x] HD run (2026-11-24): reinstalled through the Builder, HD on/off shots: no speckle now; the roof panel's match
+      to check by eye
 - [ ] the builder ships prebuilt recompiler tools (no VS needed) and the source in the release zip (Phase 11)
 - [ ] normalise the xbe's cert patch before hashing (Phase 1 note)
 

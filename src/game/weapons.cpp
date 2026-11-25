@@ -1041,25 +1041,33 @@ void DevGive(X86Context& ctx) {
     static int tries = 0;
     static size_t at = 0;
     Level l;
+    static bool told_list = false, told_level = false;
+    if (!list.empty() && !told_list) told_list = true, LOGR("weapons: dev_give list of %zu", list.size());
     if (list.empty() || tries >= 10 || !ReadLevel(l)) {
+        if (!list.empty() && tries < 10 && !told_level) told_level = true, LOGR("weapons: dev_give waits for a level");
         since = 0;
         return;
     }
     double now = Seconds();
     if (!since) since = now;
     if (now - since < 4 || now - last < 2) return;
-    const std::string& want = list[at];
-    if (weapons::HeldCode() == want) {
+    // "MP1+S": that gun with its suppressor on (a silencer's dump and tests)
+    std::string want = list[at];
+    bool supp = want.size() > 2 && want.compare(want.size() - 2, 2, "+S") == 0;
+    if (supp) want.resize(want.size() - 2);
+    uint32_t held = R32(l.inventory + kInvHeld);
+    if (weapons::HeldCode() == want && (!supp || (held && R32(held + kWeaponSuppressed)))) {
         if (!got) got = now;
         if (now - got > 10 && at + 1 < list.size()) at++, got = 0, tries = 0;
+        else if (at + 1 >= list.size()) tries = 10;  // the last one given: done (a test may change it after)
         return;
     }
     last = now;
     tries++;
     for (int t = 0; t < l.count; t++)
         if (CodeOf(Decode(EntryKey(l, t))) == want) {
-            LOGR("weapons: dev_give %s (try %d)", want.c_str(), tries);
-            DoGive(ctx, t);
+            LOGR("weapons: dev_give %s%s (try %d)", want.c_str(), supp ? " with its suppressor" : "", tries);
+            DoGive(ctx, t | (supp ? 0x100 : 0));
             return;
         }
     LOGR("weapons: dev_give %s: not in this level's table", want.c_str());
@@ -1069,8 +1077,42 @@ void DevGive(X86Context& ctx) {
 
 // game thread, each menu and HUD tick (hooks.cpp MenuTick)
 namespace game { void VrSilencerTick(); }  // vr_silencer.cpp
+// dev_invreq N: once 25 s into a level, the inventory's request (+0x38) set to N, then the request, its busy word
+// (+0xB4) and the held gun's suppressor flag logged as they change for 6 s (finding the suppressor's attach)
+void DevInvReq() {
+    static const int want = [] {
+        std::ifstream f(app::ExeDir() / "dev_invreq");
+        int n = -1;
+        f >> n;
+        return n;
+    }();
+    if (want < 0) return;
+    static double start = 0, fired = 0;
+    static uint32_t last[3] = {~0u, ~0u, ~0u};
+    Level l;
+    if (!ReadLevel(l)) return;
+    double now = Seconds();
+    if (!start) start = now;
+    // (0: nothing written, a watch from the level's start for 60 s: what the game does by itself)
+    if (want == 0 && !fired) fired = now;
+    if (!fired && now - start > 25) {
+        fired = now;
+        LOGR("weapons: dev_invreq: request %d (was %u, busy %u)", want, R32(l.inventory + kInvRequest), R32(l.inventory + kInvBusy));
+        W32(l.inventory + kInvRequest, uint32_t(want));
+    }
+    if (fired && now - fired < (want == 0 ? 60 : 6)) {
+        uint32_t w = R32(l.inventory + kInvHeld);
+        uint32_t v[3] = {R32(l.inventory + kInvRequest), R32(l.inventory + kInvBusy), w ? R32(w + kWeaponSuppressed) : 0};
+        if (std::memcmp(v, last, sizeof(v))) {
+            std::memcpy(last, v, sizeof(v));
+            LOGR("weapons: dev_invreq +%.2f s: request %u busy 0x%X suppressed %u", now - fired, v[0], v[1], v[2]);
+        }
+    }
+}
+
 void WeaponsTick(X86Context& ctx) {
     static int tick;
+    DevInvReq();
     game::VrSilencerTick();
     DevGive(ctx);
     if (int type = g_give.exchange(-1); type >= 0) DoGive(ctx, type);

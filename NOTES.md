@@ -1938,3 +1938,50 @@ brighter and bigger)
   HandInCamera keeps and kGrips' back and down). The twist: the off hand's up projected across the barrel, its
   angle against the gun's up; +60 degrees (toward the gun's right) on, -60 off. Owned: a gun seen with its silencer
   on (or given one) keeps it in the holster when off. The hip: 20 cm left, 4 cm back, 80 cm under the head.
+
+## 2026-11-24: HD on the headset, the silencer's model hunt
+
+- Builder reinstall (Wi-Fi debugging came back on port 38003): built, installed, disc found, 173 HD textures put
+  in place through /data/local/tmp. HD on vs off at mission 1's start: the roof panel's speckle is gone (mips
+  used); it now shows an even dimpled-sheet pattern where the original is plainer: a match to check by eye.
+- **Trap: dev marker files written over adb after a reinstall are closed to the app** (shell-owned, 0660 in the
+  app's folder): std::filesystem::exists still sees them, but their contents can't be read, so dev_give, dev_mission,
+  dev_scope and the like silently did nothing. Test scripts chmod 666 dev_* now (the Builder already opens what it
+  pushes). This, not the new-game path, is why dev_mission didn't apply earlier.
+- dev_give "CODE+S": that gun with its suppressor on (a held gun of that code counts as given only once suppressed).
+- Silencer model: the pistol (PST) dumped plain and suppressed (after a weapon switch, so the suppressed one came
+  out fresh): the same 5905-index mesh, and no other draw in the gun list. Setting weapon+0x108 doesn't draw a
+  silencer; the game's silencer on the model comes with its own attach (the suppressor pickup's animation,
+  inventory busy 0x13), not found how to start yet.
+
+## 2026-11-24: the suppressor pickup hunt (for the silencer by hand), read from the recompiled code
+
+- Pickups are 0x160-byte records, 64 of them (a pickup's slot freed at world (0x2D0D64) +0x5804 + index); the kind
+  at +0x140 (0..5, set by the level loader around 0xC1E00-0xC2080 and 0xC5584-0xC58CC; 4 = suppressors, as the
+  pickup message's), the type at +0x148, flags at +0x152 (8: taken next, 4: touched), +0x154 set once taken.
+- 0x1BED90 (ecx the world, esi the pickup, stack: show the message): the pickup taken: its slot freed, the message
+  0x12B510 (ecx the kind, al the type), +0x154 = 1. Called from 0x1C9EB9 (the weapon pickup: the gun's state 0x0B,
+  swapped in), 0x1E454D (0x1E4530: a pickup's use, flag 8 -> taken, else 0x1CE1F0 and flag 4) and 0x1EAF18.
+- 0x12C2D0: a pickup message by an index into a 0xA8-byte table at *0x2D12E4 +0x0C (calls 0x12B510).
+- Not found yet: where kind 4 is applied to the gun (weapon+0x108 = 1 with the attach animation, inventory +0xB4 =
+  0x13), and so whether a pickup can be spawned at runtime and its apply called later. Next: 0x1EAF18's caller,
+  or a watch on +0xB4 going to 0x13 when a level's own suppressor is picked up (the first mission has none: a
+  later one's).
+
+## 2026-11-24: our silencer's model and icon; the game's attach watched in mission 2
+
+- Our silencer (user's photo for a baseline, no markings): drawn in each eye's filter pass (Overlay), ray cast
+  against a tube (16 cm, r 1.6 cm) and its thread collar (r x0.72, the back 7.5%): matte black, a key light, two
+  grooves at 42% and 58%, a vent hole at 88%. vr_silencer.cpp VrSilencerPose: on the hip (upright, collar up), in the
+  off hand (along the controller, the collar 5 cm behind the grip), at the muzzle along the barrel (screwed on: the
+  collar 1.2 cm inside). No depth test (drawn over what's behind it; the hand under it in the fist).
+- The icon: a white silencer shape (tube, collar, two grooves) on the hud under the grenade count, while the
+  silencer is carried off the gun (holster, hand, lined up): HudMatrix maps the hud's 640x480 point (588, 94) and
+  (608, 102) into the eye (y 78 overlapped the grenade digits). Headset shots: on the pistol's muzzle; the icon.
+- dev_silencer hip|hand (an owned silencer on the gun taken off 8 s after it's seen); dev_give stops after its last
+  gun is given once (it gave the pistol again when the test took its silencer off).
+- dev_invreq N: the inventory request +0x38 written once 25 s in (7: taken and cleared next tick, nothing else:
+  not the attach). dev_invreq 0 only watches. **Mission 2's start (dev_mission 1): busy +0xB4 = 0x13 at +0.5 s
+  (the game's attach animation), the suppressor flag on at +7.1 s, busy back to 0 at +9.5 s; the request stays 0.**
+  So the attach is a ~9 s animation that sets the flag near its end, started by something that isn't the request.
+  No literal 0x13 store to +0xB4 in the code: computed. Next: what sets busy at mission 2's start.
