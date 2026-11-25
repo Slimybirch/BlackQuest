@@ -69,7 +69,7 @@ bool VrScopeEye(xr::EyeView& ev);        // vr_gun.cpp: the scope's view (its ca
 bool VrScopeLens(int eye, float* lens);  // vr_gun.cpp: where its glass is in an eye's image (the filter's lens, lens2)
 bool VrReticle(int eye, float* ret);     // vr_gun.cpp: where the barrel points in an eye's image (the filter's ret)
 bool VrSilencerPose(float* rear, float* front, float* radius);  // vr_silencer.cpp: our silencer, local space
-bool VrSilencerIcon();                                          // vr_silencer.cpp: carried off the gun
+int VrSilencerIcon();  // vr_silencer.cpp: -1 hidden, 0 dark (none in the inventory), 1 bright (one carried)
 // the held gun's stock texture painted from its own on a thread (start once a key; take: 0 baking, 1 done, -1 none)
 void VrStockBakeStart(uint32_t key, std::vector<uint8_t> tex, uint32_t pitch, uint32_t tw, uint32_t th);
 int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32_t& h);
@@ -133,7 +133,7 @@ float4 psmain(O i) : SV_Target {
 // mask's dimming; look.x the corners' shade, look.y the brightness the lines and mask take back. post.x HDR on,
 // post.y FXAA on; both go before the filter, psplain is them alone
 const char* kFilterHlsl = R"(
-cbuffer B : register(b1) { float4 uvrect; float4 opts; float4 crt; float4 look; float4 src; float4 post; float4 lens; float4 lens2; float4 ret; float4 silA; float4 silB; float4 tans; float4 icon; };
+cbuffer B : register(b1) { float4 uvrect; float4 opts; float4 crt; float4 look; float4 src; float4 post; float4 lens; float4 lens2; float4 ret; float4 silA; float4 silB; float4 tans; float4 icon; float4 iconst; };
 Texture2D img : register(t0);
 Texture2D lut : register(t1);
 Texture2D scope : register(t2);
@@ -271,19 +271,31 @@ float3 Overlay(float2 uv, float3 c) {
             c = col;
         }
     }
-    // icon: the white silencer under the ammunition (xy its centre in the frame, zw its half size there)
+    // icon: the inventory's silencer under the ammunition (xy its centre in the frame, zw its half size there), the
+    // user's icon drawn flat and horizontal: a slate tube, its lower half plum, a light stripe along it, two dark bands
+    // near the front, a brass thread collar at the back. iconst.x: 1 carried (bright, a glow round its edge), 0 dark
     if (icon.z > 0) {
         float2 f = (uv - uvrect.xy) / uvrect.zw;
-        float2 q = (f - icon.xy) / icon.zw;
+        float2 q = (f - icon.xy) / icon.zw;  // x -1..1 back to front, y -1..1 top to bottom
         float aa = 2 * length(fwidth(q));
-        // the tube (rounded at the front) and the collar
-        float2 tq = float2(max(q.x - 0.45, 0), q.y);
-        float tube = max(-0.55 - q.x, length(tq) - 0.5);
-        float collar = max(abs(q.x + 0.78) - 0.23, abs(q.y) - 0.3);
-        float dist = min(tube, collar);
-        float a = 1 - smoothstep(-aa, aa, dist);
-        float groove = (abs(q.x + 0.1) < 0.04 || abs(q.x - 0.2) < 0.04) && abs(q.y) < 0.5 ? 0.45 : 0;
-        c = lerp(c, float3(0.95, 0.95, 0.95) * (1 - groove), a * 0.92);
+        // the tube: a rounded box, corners 0.22
+        float2 bq = abs(float2(q.x - 0.12, q.y)) - float2(0.86 - 0.22, 0.52 - 0.22);
+        float tube = length(max(bq, 0)) + min(max(bq.x, bq.y), 0) - 0.22;
+        float collar = max(abs(q.x + 0.86) - 0.14, abs(q.y) - 0.3);
+        float shape = min(tube, collar);
+        float3 col = q.y < 0.02 ? float3(0.34, 0.36, 0.45) : float3(0.29, 0.22, 0.30);
+        if (abs(q.y + 0.24) < 0.06) col = float3(0.46, 0.49, 0.58);          // the light stripe
+        if (abs(q.x - 0.5) < 0.05 || abs(q.x - 0.72) < 0.05) col *= 0.7;      // the bands
+        if (collar < tube) col = abs(q.x + 0.82) < 0.04 ? float3(0.84, 0.75, 0.40) : float3(0.63, 0.45, 0.20);
+        float bright = iconst.x;
+        float inside = 1 - smoothstep(-aa, aa, shape);
+        float3 shown = bright > 0.5 ? col * 1.35 : col * 0.38;
+        c = lerp(c, shown, inside * (bright > 0.5 ? 0.97 : 0.7));
+        if (bright > 0.5) {
+            // the glow: soft, outside the edge
+            float glow = exp(-max(shape, 0) * 9) * (1 - inside);
+            c += float3(0.55, 0.9, 0.8) * glow * 0.55;
+        }
     }
     return c;
 }
@@ -4490,7 +4502,7 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     float ret[4] = {};
     bool aimed = eye_image && !last_theater_ && ::game::VrReticle(xr::ImageEye(index), ret);
     // our silencer (in the eye's space) and its icon under the hud's ammunition
-    float sil[16] = {}, icon[4] = {};
+    float sil[16] = {}, icon[4] = {}, icon_bright = 0;
     bool silenced = false, iconed = false;
     if (eye_image && !last_theater_) {
         xr::EyeView ev;
@@ -4510,7 +4522,9 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
             sil[8] = ev.tan[0], sil[9] = ev.tan[1], sil[10] = ev.tan[2], sil[11] = ev.tan[3];
             silenced = true;
         }
-        if (::game::VrSilencerIcon() && !::game::VrMenuOverPlay()) {
+        int icon_state = ::game::VrSilencerIcon();
+        icon[0] = 0;
+        if (icon_state >= 0 && !::game::VrMenuOverPlay()) {
             // under the ammunition and grenades (the hud's 640x480: about x 588, y 94), through the hud's own plane
             VkExtent2D se = xr::ScreenExtent();
             float m[16];
@@ -4522,16 +4536,18 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
                     o[1] = 0.5f - 0.5f * cy / cw;
                 };
                 float c0[2], c1[2];
-                toUv(588, 94, c0);  // (y 78 overlapped the grenade count's digits: headset shot 2026-11-24)
-                toUv(608, 102, c1);  // (its half size: 20 x 8 of the hud's pixels)
+                toUv(588, 96, c0);  // (y 78 overlapped the grenade count's digits: headset shot 2026-11-24)
+                toUv(612, 104, c1);  // (half size 24 x 8: the icon is long)  // (its half size: 20 x 8 of the hud's pixels)
                 icon[0] = c0[0], icon[1] = c0[1], icon[2] = std::fabs(c1[0] - c0[0]), icon[3] = std::fabs(c1[1] - c0[1]);
                 iconed = icon[2] > 0 && icon[3] > 0;
+                icon_bright = icon_state > 0 ? 1.0f : 0.0f;
             }
         }
     }
     bool post = game::Opt().hdr || fxaa || bright > 0 || vignette > 0.01f || scoped || aimed || silenced || iconed;
     // opts.z: the taps a side over each screen pixel, 2 averaging SSAA's samples
-    float c[52] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
+    float c[56] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
+    c[52] = icon_bright;
     if (silenced) std::memcpy(c + 36, sil, 12 * sizeof(float));
     if (iconed) std::memcpy(c + 48, icon, sizeof(icon));
     if (scoped) std::memcpy(c + 24, lens, sizeof(lens));

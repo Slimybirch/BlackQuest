@@ -2017,3 +2017,20 @@ brighter and bigger)
   on the muzzle after. The silencer by hand now asks for the game's attach at the twist (its animation, the flag,
   the sound) and its detach at the reverse twist; the flag isn't read for 4 s after a request (it lags our state).
   A gun that gains a suppressor while our state is none goes to "on the gun" (it stayed none before).
+
+## 2026-11-25: the silencer in the inventory, the levels' own (user's icon, horizontal)
+
+- vr_silencer.cpp: one silencer in the inventory (g_carried). It comes from the levels' own suppressors (user: only
+  where the game places them; a test that laid one at every level's start is gone): any attach the game starts that
+  the twist didn't ask for (the held gun's +0xD8 = 0x17 or 0x19 outside our 4 s request window) is called off
+  (weapons::CancelSuppressorAttach: the animation back to idle, the flag off) and the silencer goes into the
+  inventory; for 12 s after, the flag put on again is taken off again (mission 2's start sets it by itself ~7 s
+  after its attach began). The game's pickup taken (0x1BED90, wrapped: esi the pickup, +0x140 its kind) with kind 4
+  also puts it in the inventory (its message and sound as ever); mission 2's isn't a pickup (that hook stayed quiet).
+- Headset, mission 2's start: attach called off at +0.5 s, the flag back off at +7.17 s, the icon glowing.
+- On the gun it's that gun's (carried false); twisted off, taken off another way, or the dev cycle: carried again.
+- The icon (the user's, drawn flat and horizontal in the filter: a slate tube, its lower half plum, a light stripe,
+  two dark bands, a brass collar): always under the grenades in play, dark (x0.38, 70%) with none carried, bright
+  with a soft teal glow round its edge with one.
+- game::VrWorldToLocal and VrPlayerWorld (vr_gun.cpp: world -> local, the player in the world) stay for later use.
+- VR SETTINGS, TESTING, GIVE A SILENCER (menu.cpp kVrGiveSilencer -> game::VrSilencerGive): one into the inventory, for tests.

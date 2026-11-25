@@ -1016,6 +1016,27 @@ int SuppressorHeld(uint32_t& weapon) {
     return R32(weapon + kWeaponSuppressed) ? 1 : 0;
 }
 
+// the game's attach on the gun in hand called off (a suppressor pickup goes to the inventory, vr_silencer.cpp): its
+// animation request or run (0x17, 0x19) back to idle and the flag off; false if none. Game thread
+// the held gun's first person animation (+0xD8: 0x17 the attach asked for, 0x19 it running), 0 none. Game thread
+uint32_t HeldAnim() {
+    Level l;
+    uint32_t w = ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
+    return w ? R32(w + kWeaponAnim) : 0;
+}
+
+bool CancelSuppressorAttach() {
+    Level l;
+    uint32_t w = ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
+    if (!w) return false;
+    uint32_t anim = R32(w + kWeaponAnim);
+    bool running = anim == 0x17 || anim == 0x19;
+    if (running) W32(w + kWeaponAnim, 0);
+    bool on = R32(w + kWeaponSuppressed) != 0;
+    if (on) W32(w + kWeaponSuppressed, 0);
+    return running || on;
+}
+
 // the game's own attach (or detach) on the gun in hand: its state switch (0x1EF08D) takes +0xD8 = 0x17 to start
 // the attach (busy 0x13, the suppressor flag on half a second in, the sound with it), 0x18 the detach; false while
 // another animation runs. Game thread

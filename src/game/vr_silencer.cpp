@@ -6,27 +6,35 @@
 // to the holster. The game's suppressor button stays as it was.
 // Still to do with the headset: the silencer drawn in the hand (the gun model's own part, once found in a dump), and
 // the tail of the game's suppressor animation played as it locks
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <set>
 #include <string>
+#include <filesystem>
 #include <fstream>
+#include <mutex>
 
 #include "app/app.h"
+#include "game/layout.h"
+#include "xdk/hle.h"
 
 #include "core/log.h"
 #include "xr.h"
 
 namespace game {
 bool VrGunLocal(float* A, float* muzzle);  // vr_gun.cpp: the gun's axes and its muzzle in local space, as drawn
+bool HudShown();  // hud.cpp: the player's hud is up (in play)
 void TestEvent(const std::string& name);   // vr_totest.cpp
 }  // namespace game
 namespace weapons {
 int SuppressorHeld(uint32_t& weapon);  // -1 the held gun takes none, 0 off, 1 on; weapon: the held one
 void SetSuppressorHeld(bool on);
 bool RequestSuppressorAnim(bool attach);  // the game's own attach (true) or detach animation
+bool CancelSuppressorAttach();             // the game's attach on the gun in hand called off, its flag off
+uint32_t HeldAnim();                       // the held gun's first person animation id
 }  // namespace weapons
 
 namespace game {
@@ -40,6 +48,11 @@ float g_roll0 = 0;                // the hand's roll about the barrel where the 
 bool g_grip_was = false;
 std::atomic<int> g_shown{0};      // for the renderer and the checklist: the state, as an int
 int64_t g_wait_until = 0;         // the game's own attach or detach runs till then: its flag not read
+// the inventory (user): one silencer, picked up from the ground or put back on the hip; on a gun it's that gun's
+std::atomic<bool> g_carried{false};
+// a suppressor pickup of the level's, taken (game::sub_001BED90): the attach the game starts with it is called off
+// till then, so it stays in the inventory
+int64_t g_block_until = 0;
 
 constexpr float kGripOn = 0.6f, kGripOff = 0.35f;
 constexpr float kLineUp = 0.04f;       // within this of the muzzle it lines up
@@ -106,10 +119,29 @@ void VrSilencerTick() {
     if (weapon != g_weapon) {
         // another gun in hand: its silencer on it, or in the holster if it has one, or none
         g_weapon = weapon;
-        Set(on ? S::kOnGun : g_owned.count(weapon) ? S::kHolster : S::kNone, "a gun came to hand");
+        Set(on ? S::kOnGun : g_carried ? S::kHolster : S::kNone, "a gun came to hand");
     }
     int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    // the game's own attach, not asked for by the twist (a level's pickup, or a level that fits one at its start, as
+    // mission 2): called off before the flag goes on, the silencer into the inventory instead (user: picked up it's
+    // carried, fitted by hand)
+    if (now_ms >= g_wait_until) {
+        uint32_t anim = weapons::HeldAnim();
+        if ((anim == 0x17 || anim == 0x19 || now_ms < g_block_until) && weapons::CancelSuppressorAttach()) {
+            on = 0;
+            // (mission 2's start puts the flag on by itself ~7 s after its attach began: watched 12 s more)
+            if (now_ms >= g_block_until) {
+                g_carried = true;
+                LOGR("vr silencer: the game's attach called off (anim 0x%X): into the inventory", anim);
+                TestEvent("silencer_picked");
+            } else {
+                LOGR("vr silencer: the game's flag put on again: off (in the inventory)");
+            }
+            g_block_until = std::max(g_block_until, now_ms + 12000);
+        }
+    }
     if (g_state == S::kNone && on == 1) Set(S::kOnGun, "the gun has one now");
+    if (g_state == S::kNone && g_carried) Set(S::kHolster, "one in the inventory");
     if (g_state == S::kNone) return;
     {
         // dev_silencer "hip" or "hand": an owned silencer on the gun taken off once, 8 s after it's seen, through the
@@ -131,6 +163,7 @@ void VrSilencerTick() {
                 done = true;
                 off_at = now;
                 g_wait_until = now_ms + 4000;
+                g_carried = true;
                 Set(want == "hand" ? S::kHand : S::kHolster, "dev_silencer: taken off (the game's detach)");
             }
         }
@@ -138,13 +171,17 @@ void VrSilencerTick() {
             weapons::RequestSuppressorAnim(true)) {
             off_at = 0;
             g_wait_until = now_ms + 4000;
+            g_carried = false;
             Set(S::kOnGun, "dev_silencer cycle: on again (the game's attach)");
         }
     }
     // (while the game's own attach or detach runs, the flag lags our state: it isn't read then)
     if (now_ms >= g_wait_until) {
         if (on == 1 && g_state != S::kOnGun && g_state != S::kUnscrew) Set(S::kOnGun, "put on another way (the game's button)");
-        if (on == 0 && (g_state == S::kOnGun || g_state == S::kUnscrew)) Set(S::kHolster, "taken off another way");
+        if (on == 0 && (g_state == S::kOnGun || g_state == S::kUnscrew)) {
+            g_carried = true;
+            Set(S::kHolster, "taken off another way");
+        }
     }
 
     xr::Hand hand[2];
@@ -196,6 +233,7 @@ void VrSilencerTick() {
                 if (weapons::RequestSuppressorAnim(true)) g_wait_until = now_ms + 4000;
                 else weapons::SetSuppressorHeld(true);
                 g_owned.insert(weapon);
+                g_carried = false;  // (out of the inventory: on the gun)
                 Set(S::kOnGun, "twisted on: locked");
                 xr::Pulse(0, 0.9f, 0.08f);
                 xr::Pulse(1, 0.5f, 0.05f);
@@ -218,6 +256,7 @@ void VrSilencerTick() {
             if (twist < -kTwist) {
                 if (weapons::RequestSuppressorAnim(false)) g_wait_until = now_ms + 4000;
                 else weapons::SetSuppressorHeld(false);
+                g_carried = true;
                 Set(S::kHand, "twisted off: in the hand");
                 xr::Pulse(0, 0.9f, 0.08f);
                 xr::Pulse(1, 0.5f, 0.05f);
@@ -242,8 +281,8 @@ bool VrSilencerInHand() {
 constexpr float kSilLength = 0.16f, kSilRadius = 0.016f;
 bool VrSilencerPose(float* rear, float* front, float* radius) {
     S s = S(g_shown.load(std::memory_order_relaxed));
-    if (s == S::kNone) return false;
     *radius = kSilRadius;
+    if (s == S::kNone) return false;
     float fwd[3], at[3];
     if (s == S::kHolster) {
         // on the left hip, upright, the collar up
@@ -273,10 +312,37 @@ bool VrSilencerPose(float* rear, float* front, float* radius) {
     return true;
 }
 
-// any thread: the white silencer icon under the ammunition shows while the player carries it off the gun
-bool VrSilencerIcon() {
-    int s = g_shown.load(std::memory_order_relaxed);
-    return s == int(S::kHolster) || s == int(S::kHand) || s == int(S::kLined);
+// any thread: a silencer straight into the inventory (VR SETTINGS, TESTING, GIVE A SILENCER: user, for tests);
+// false if one is carried already
+bool VrSilencerGive() {
+    if (g_carried.exchange(true)) return false;
+    LOGR("vr silencer: one given (the settings' test button)");
+    return true;
+}
+bool VrSilencerCarried() { return g_carried; }
+
+// any thread: the inventory's icon under the ammunition: -1 hidden (out of play), 0 dark (no silencer in the
+// inventory), 1 bright with a glow (one carried: on the hip, in the hand or lined up)
+int VrSilencerIcon() {
+    if (!HudShown()) return -1;
+    return g_carried ? 1 : 0;
 }
 
 }  // namespace game
+
+// The game's pickup taken (0x1BED90; esi the pickup, its kind at +0x140, 4 a suppressor: NOTES "suppressor pickup
+// hunt"): its slot freed, its message and sound, as ever. A suppressor goes into the inventory (user: where the levels
+// place them; picked up, it's carried, not fitted): the attach the game starts with it is called off for 3 s
+X86_EXTERN_FUNC(__imp__sub_001BED90);
+X86_FUNC(sub_001BED90) {
+    uint32_t pickup = ctx.esi;
+    uint32_t kind = pickup ? kernel::R32(pickup + 0x140) : 0;
+    __imp__sub_001BED90(ctx, base);
+    if (kind != 4) return;
+    game::g_carried = true;
+    game::g_block_until = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch()).count() + 3000;
+    LOGR("vr silencer: a suppressor pickup taken: into the inventory");
+    game::TestEvent("silencer_picked");
+}
+

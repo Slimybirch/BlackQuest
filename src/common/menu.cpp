@@ -73,6 +73,8 @@ void SetStartupCheck(bool on);
 
 namespace game {
 void VrCoopTab(float em);  // vr_coop.cpp: the panel's CO-OP tab (phase 9)
+bool VrSilencerGive();     // vr_silencer.cpp: a silencer into the inventory (the test button)
+bool VrSilencerCarried();
 }
 
 namespace app {
@@ -265,7 +267,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest, kVrGunstock, kVrGunAngle,
              kVrStockHeight, kVrTurnSpeed, kVrViewHeight, kVrHdTextures, kVrVignette, kVrSeated,
-             kVrCalibrate, kVrRefresh, kVrDumpTextures, kVrReticle };
+             kVrCalibrate, kVrRefresh, kVrDumpTextures, kVrReticle, kVrGiveSilencer };
 
 using rows::Kind;
 using rows::Row;
@@ -360,6 +362,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "TESTING"},
     {Kind::Value, kVrTotest, "TEST CHECKLIST"},
     {Kind::Value, kVrDumpTextures, "DUMP TEXTURES"},
+    {Kind::Value, kVrGiveSilencer, "GIVE A SILENCER"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -621,6 +624,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             else std::snprintf(text, sizeof(text), "HEADSET'S");
             return true;
         }
+        case kVrGiveSilencer:
+            // blackquest (user): a silencer into the inventory, to test fitting it by hand (the hip, the twist)
+            if (step) game::VrSilencerGive();
+            std::snprintf(text, sizeof(text), game::VrSilencerCarried() ? "IN THE INVENTORY" : "PRESS");
+            return true;
         case kVrReticle:
             // blackquest: a reticle where the barrel points (the game's head-fixed crosshair hidden), or none
             if (step) o.vr_reticle = !o.vr_reticle;

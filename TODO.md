@@ -137,8 +137,9 @@
       (attach) / 0x18 (detach), the gun's state switch (0x1EF08D)
 - [x] (2026-11-25, headset) the twist asks for the game's attach (0x17) and the reverse its detach (0x18): both run,
       the flag (and the sound) follow; dev_silencer cycle tests both
-- [ ] next of the user's plan: a silencer pickup spawned at the start that goes to the inventory (the icon) instead
-      of on the gun
+- [x] (2026-11-25, headset) the levels' own suppressors go into the inventory instead of onto the gun (the game's
+      attach called off, mission 2's start tested); the icon dark without one, glowing with one
+- [ ] a level's placed suppressor pickup walked over (not mission 2's scripted one): check it lands in the inventory
 - [ ] our silencer has no depth test: check it in the hand (over the fingers?) and at the hip
 - [x] (built 2026-11-24, headset shots with test hands) the WA2000's scope as a lens: a third replay from the
       scope, its picture on the eyepiece with a reticle (NOTES "scopes"). Still: the user's own check that it's

@@ -1267,6 +1267,36 @@ bool VrHandWorld(int hand, float* pos, float* vel) {
     return true;
 }
 
+// a point of the game's world in local space (the inverse of VrHandWorld's way: world -> C -> local), for things
+// drawn in the room that sit in the world (the silencer on the ground); any thread
+bool VrWorldToLocal(const float* w, float* local) {
+    float yaw, pitch;
+    CamSnap cam;
+    {
+        std::lock_guard lock(g_cam_lock);
+        cam = g_cam;
+    }
+    if (!cam.ok || !VrLookAngles(yaw, pitch)) return false;
+    Aff c2w = CamToWorld(cam);
+    float d[3] = {w[0] - c2w.m[3], w[1] - c2w.m[7], w[2] - c2w.m[11]}, c[3];
+    for (int j = 0; j < 3; j++) c[j] = c2w.m[0 * 4 + j] * d[0] + c2w.m[1 * 4 + j] * d[1] + c2w.m[2 * 4 + j] * d[2];
+    float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+    float U[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
+    for (int i = 0; i < 3; i++) local[i] = U[i * 3] * c[0] + U[i * 3 + 1] * c[1] + U[i * 3 + 2] * c[2];
+    local[1] -= xr::kEyeRaise + VrViewLift();
+    return true;
+}
+
+// the player in the game's world: the eye, its forward, the floor under it; any thread
+bool VrPlayerWorld(float* eye, float* fwd, float* floor_y) {
+    std::lock_guard lock(g_cam_lock);
+    if (!g_cam.ok) return false;
+    std::memcpy(eye, g_cam.rows[3], 12);
+    std::memcpy(fwd, g_cam.rows[2], 12);
+    *floor_y = g_cam.feet;
+    return true;
+}
+
 void StartDrop(const Aff& from_c, const float* v_c) {
     CamSnap cam;
     {
