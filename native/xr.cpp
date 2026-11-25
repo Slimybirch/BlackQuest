@@ -72,6 +72,7 @@ bool g_views_valid = false;
 VkFormat g_view_format = VK_FORMAT_R8G8B8A8_UNORM;
 XrSessionState g_state = XR_SESSION_STATE_UNKNOWN;
 std::atomic<uint32_t> g_no_render{0};  // frames the runtime said not to render (FrameReport)
+std::atomic<uint32_t> g_wait_us{0}, g_worst_us{0}, g_slow{0};  // xrWaitFrame's hold, the longest gap, gaps > 21 ms
 bool g_running = false;
 bool g_frame_begun = false;
 XrTime g_display_time = 0;
@@ -793,7 +794,20 @@ bool BeginFrame() {
         return false;
     }
     XrFrameState fs{XR_TYPE_FRAME_STATE};
+    auto wait_from = std::chrono::steady_clock::now();
     XrResult r = xrWaitFrame(g_session, nullptr, &fs);
+    {
+        // how long the runtime held us (headroom: near the period when we're fast, near 0 when we're the bottleneck)
+        auto t = std::chrono::steady_clock::now();
+        g_wait_us.fetch_add(uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(t - wait_from).count()),
+                            std::memory_order_relaxed);
+        static auto prev = t;
+        uint32_t gap = uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(t - prev).count());
+        prev = t;
+        uint32_t worst = g_worst_us.load(std::memory_order_relaxed);
+        if (gap > worst) g_worst_us.store(gap, std::memory_order_relaxed);
+        if (gap > 21000) g_slow.fetch_add(1, std::memory_order_relaxed);  // over 1.5 periods at 72 Hz
+    }
     if (XR_FAILED(r)) {
         LOG_FIRST(4, "xr: xrWaitFrame failed (%s)", ResultName(r));
         return false;
@@ -848,8 +862,10 @@ static void FrameReport(uint32_t layers) {
     auto now = std::chrono::steady_clock::now();
     if (now - last < std::chrono::seconds(5)) return;
     last = now;
-    LOGR("xr: frames: %u ended, %u with no layers, %u not to render, session state %d", ended, empty,
-         g_no_render.exchange(0), int(g_state));
+    uint32_t n = ended ? ended : 1;
+    LOGR("xr: frames: %u ended, %u with no layers, %u not to render, session state %d; waited %.1f ms a frame, "
+         "worst gap %.1f ms, %u gaps over 21 ms", ended, empty, g_no_render.exchange(0), int(g_state),
+         g_wait_us.exchange(0) / 1000.0f / n, g_worst_us.exchange(0) / 1000.0f, g_slow.exchange(0));
     ended = empty = 0;
 }
 

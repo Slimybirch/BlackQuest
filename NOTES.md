@@ -2068,3 +2068,43 @@ brighter and bigger)
 - 72 fps for the first 15 s, then ~47-50 once the walther is given (test hands, ruins start): a drop to chase.
 - the walther's free hand at the pistol's angle, and grip with the trigger off points the index (test hands). The
   fore-end grip is unseen: fake hands never reach it.
+
+## 2026-11-25: the frame rate drop, measured
+- runs: every weapon 10 s each (dev_give list), dev_autofire, dev_altfire, dev_throw, new `dev_god` (god mode for
+  tests without black.toml: cheats.cpp), test hands, the ruins start; once without and once with dev_hdtex (173
+  HD textures loaded). Logged: the frame report (now with xrWaitFrame's hold, the worst gap, gaps over 21 ms) and the
+  runtime's VrApi lines (`adb logcat -s VrApi`).
+- menus: 72 fps, 12 ms a frame waiting in xrWaitFrame, GPU 20-35%. In play (from ~17 s, before any gun is given):
+  ~58-60 fps, 0 ms waiting, VrApi App (GPU) 12-14 ms of the 13.9 ms budget, GPU% 0.85-0.95 at 640 MHz, CPU% ~0.85,
+  CPU4/GPU4 levels. GPU bound, the level itself: eyes 1680x1760, Fov=0 (no foveation).
+- HD textures change nothing measurable (both runs alike). By weapon: most 57-60 fps; the SMG and SNR windows the
+  lowest (48-56), the GRL, RPG, grenades and the M203 no spikes beyond 37 ms. black.toml had vr_hd_textures false.
+- foveated rendering tried (VK_EXT_fragment_density_map: the Quest 3's Adreno has it, non-subsampled targets ok,
+  texel 16x16 to 256x256): the scene's target is 1972x1479 (4:3), not the eye's 1680x1760, its post passes
+  986x740, 493x370, 247x185, 197x99. Density map on the scene target, high: 45 fps, App 17 ms, worse than without
+  (55-59). With the extension on but no map applied: ~55, also worse. Reverted (the patch kept outside the repo).
+  Why: the next line.
+- renderings counted (vulkan.cpp BeginRender, every 5 s): ~40 begun a frame, ~14 on the 1972x1479 targets (both
+  eyes, ~7 each). Each loads and stores the whole colour and depth: ~47 MB, ~40 GB/s at 60 fps, the tiled GPU's
+  bandwidth. The likely cause of the drop; next: why the scene's rendering breaks (transitions for sampling,
+  clears, copies) and keeping it whole, or depth not stored when nothing reads it.
+- why the scene's renderings end (vulkan.cpp, `big ended` every 5 s and one frame's `seq:` 40 s in), per eye:
+  a colour-only rendering on the scene target, then its copy (to TRANSFER_SRC: Feedback or CopyRects), colour-only
+  again, then colour+depth for the scene; the 197x99 pass; back to the scene; the scene sampled (SHADER_READ: the
+  post effects); the 493x370 and 247x185 passes with their own depths; the scene once more; then the eye's end.
+  Fixed: a clear of colour or depth alone began its own rendering (a depth-only one on the 1972x1479 depth each
+  eye): now cleared in one rendering with the other attachment of the same size (Clear/ClearTarget). Big renderings
+  4322 -> 3453 in 5 s, the picture unchanged, the frame rate not measurably better (~59). So the loads and stores
+  aren't the whole cost: the scene target's 4:3 at 1972x1479 against the eye's 1680x1760 (0.95) looks like
+  shading pixels outside the eye's view; next to check, with render_percent (67) for what sets that size.
+- the 4:3 target checked: nothing is drawn outside the eye. The scene target is the guest's 640x480 scaled to
+  render_percent of the display's height (main.cpp RenderScale: 2208 x 0.67 = 1479, x4/3 = 1972), and EyeMatrix
+  maps the eye's whole frustum (its four tangents) onto the target's full extent. Each eye's view is drawn into
+  4:3 and stretched to the eye's 1680x1760: ~1.17x the eye's pixels across, ~0.84x down (vertical detail lost),
+  about the same total (2.92M vs 2.96M). The cost is the shading itself. Leads: request the higher CPU/GPU levels
+  (XR_EXT_performance_settings: VrApi shows CPU4/GPU4, GPU at 640 MHz; xr.cpp asks for none), or a target of the
+  eye's shape at fewer pixels (sharper vertically for the same cost).
+- XR_EXT_performance_settings tried: BOOST asked for CPU and GPU, both accepted (XR_SUCCESS). VrApi still showed
+  GPU level 4 at 640 MHz (the CPU briefly 8): the GPU is already at its top clock in play. Frames 295-305 per 5 s
+  against 290-300 before, within noise. Reverted: no gain, and boost costs heat and battery. What's left is the
+  work itself: render_percent (67, the user's setting) and the post effects' passes.

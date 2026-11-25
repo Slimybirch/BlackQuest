@@ -1506,7 +1506,7 @@ private:
     void Destroy(Image& im);
     void Destroy(Buffer& b);
     void Retire(Image& im) {
-        if (rend_color_ == &im || rend_depth_ == &im) EndRender();
+        if (rend_color_ == &im || rend_depth_ == &im) EndRender("retire");
         if (im) CurrentFrame().images.push_back(im);
         im = {};
     }
@@ -1527,7 +1527,10 @@ private:
     void ResetFrame(Frame& f);
     void Transition(Image& im, VkImageLayout to);
     void BeginRender(Image* color, Image* depth);
-    void EndRender();
+    void EndRender(const char* why = "other");
+    std::unordered_map<std::string, uint32_t> breaks_;  // why the big renderings ended (the frame rate hunt)
+    bool RenderingBig() const;
+    int seq_left_ = -1;  // one frame's renderings logged in order, 40 s in (the frame rate hunt)
     // without dynamic rendering: render passes that only load and store, and framebuffers per pair of views
     VkRenderPass Pass(VkFormat color, VkFormat depth, bool clear = false);
     VkFramebuffer Framebuffer(VkFormat color_fmt, VkFormat depth_fmt, VkImageView color, VkImageView depth,
@@ -1572,7 +1575,7 @@ private:
     void UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, const uint8_t* p, const uint32_t* colours);
     void BuildPipelineKey(const State& s, const Assembled& a, const DrawShaders& sh, PsoKey& k);
     void KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k);
-    void ClearTarget(Target& t, const State& s, uint32_t count, const uint8_t* rects, uint32_t flags, uint32_t color,
+    void ClearTarget(Target& t, Image* pair, const State& s, uint32_t count, const uint8_t* rects, uint32_t flags, uint32_t color,
                      float z, uint32_t stencil);
 
     // present
@@ -2383,7 +2386,7 @@ void VulkanBackend::ResetFrame(Frame& f) {
 
 // present: the frame's last commands, waiting on the acquired image and signalling its present semaphore
 void VulkanBackend::Submit(bool wait, bool present) {
-    EndRender();
+    EndRender(present ? "submit (present)" : wait ? "submit (wait)" : "submit");
     Frame& f = CurrentFrame();
     vkEndCommandBuffer(f.cb);
     uint64_t signal = ++value_;
@@ -2428,6 +2431,16 @@ void VulkanBackend::Submit(bool wait, bool present) {
 
 void VulkanBackend::Transition(Image& im, VkImageLayout to) {
     if (im.layout == to) return;
+    if (rendering_ && RenderingBig()) {
+        char why[96];
+        if (seq_left_ > 0) LOGR("vulkan: seq:   ends: %s %ux%u to layout %d", &im == rend_color_ || &im == rend_depth_ ? "its own" : "another", im.w, im.h, int(to));
+        std::snprintf(why, sizeof(why), "transition of %s %ux%u to layout %d",
+                      &im == rend_color_ || &im == rend_depth_ ? "its own" : "another", im.w, im.h, int(to));
+        breaks_[why]++;
+        if (dynamic_) end_rendering_(Cb()); else vkCmdEndRenderPass(Cb());
+        rendering_ = false;
+        rend_color_ = rend_depth_ = nullptr;
+    }
     EndRender();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     VkPipelineStageFlags src, dst;
@@ -2449,7 +2462,45 @@ void VulkanBackend::Transition(Image& im, VkImageLayout to) {
 // has the same ones
 void VulkanBackend::BeginRender(Image* color, Image* depth) {
     if (rendering_ && color == rend_color_ && depth == rend_depth_) return;
+    if (seq_left_ > 0) {
+        seq_left_--;
+        LOGR("vulkan: seq: begin %ux%u%s + %ux%u%s", color ? color->w : 0, color ? color->h : 0, color ? "" : "(none)",
+             depth ? depth->w : 0, depth ? depth->h : 0, depth ? (depth == rend_depth_ ? " same" : "") : "(none)");
+    }
+    if (rendering_ && RenderingBig()) {
+        const Image* to = color ? color : depth;
+        char why[96];
+        std::snprintf(why, sizeof(why), "begin: %s%s, to %ux%u%s%s", color == rend_color_ ? "same colour" : "colour changed",
+                      depth == rend_depth_ ? ", same depth" : ", depth changed", to ? to->w : 0, to ? to->h : 0,
+                      color ? "" : " depth only", depth ? "" : " no depth");
+        breaks_[why]++;
+        if (dynamic_) end_rendering_(Cb()); else vkCmdEndRenderPass(Cb());
+        rendering_ = false;
+        rend_color_ = rend_depth_ = nullptr;
+    }
     EndRender();
+    {
+        // every 5 s: renderings begun, and those on the scene's big targets (each one loads and stores the whole
+        // target on a tiled GPU: the frame rate hunt, NOTES 2026-11-25)
+        static uint32_t all, big;
+        static auto last = std::chrono::steady_clock::now();
+        const Image* any = color ? color : depth;
+        all++;
+        if (any && any->w * any->h >= 1000000) big++;
+        auto now = std::chrono::steady_clock::now();
+        if (now - last >= std::chrono::seconds(5)) {
+            LOGR("vulkan: renderings: %u begun in 5 s, %u on targets of 1M pixels or more", all, big);
+            std::vector<std::pair<uint32_t, std::string>> v;
+            for (auto& [k, n] : breaks_) v.push_back({n, k});
+            std::sort(v.rbegin(), v.rend());
+            for (size_t i = 0; i < v.size() && i < 8; i++) LOGR("vulkan:   big ended %u times: %s", v[i].first, v[i].second.c_str());
+            breaks_.clear();
+            static int reports = 0;
+            if (++reports == 8) seq_left_ = 90;
+            all = big = 0;
+            last = now;
+        }
+    }
     if (color) Transition(*color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     if (depth) Transition(*depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     // the renderings before wrote the same attachments: their writes come first
@@ -2499,8 +2550,15 @@ void VulkanBackend::BeginRender(Image* color, Image* depth) {
     begin_rendering_(Cb(), &ri);
 }
 
-void VulkanBackend::EndRender() {
+bool VulkanBackend::RenderingBig() const {
+    const Image* any = rend_color_ ? rend_color_ : rend_depth_;
+    return any && any->w * any->h >= 1000000;
+}
+
+void VulkanBackend::EndRender(const char* why) {
     if (!rendering_) return;
+    if (RenderingBig()) breaks_[why]++;
+    if (seq_left_ > 0) LOGR("vulkan: seq:   ends: %s", why);
     if (dynamic_)
         end_rendering_(Cb());
     else
@@ -3985,7 +4043,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
                 if (st != 0) {
                     Image im;
                     if (st == 1) {
-                        EndRender();  // the copy goes outside a pass
+                        EndRender("stock bake");  // the copy goes outside a pass
                         if (!PixelImage(im, baked, bw * 4, bw, bh)) im = {};
                     }
                     it = stock_tex.emplace(d.data, im).first;  // made or not, once
@@ -4236,7 +4294,7 @@ VkRect2D ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {
     return {{l, tp}, {uint32_t(std::max(r - l, 0)), uint32_t(std::max(b - tp, 0))}};
 }
 
-void VulkanBackend::ClearTarget(Target& t, const State& s, uint32_t count, const uint8_t* rects, uint32_t flags,
+void VulkanBackend::ClearTarget(Target& t, Image* pair, const State& s, uint32_t count, const uint8_t* rects, uint32_t flags,
                                 uint32_t color, float z, uint32_t stencil) {
     std::vector<VkClearRect> rs;
     auto add = [&](const VkRect2D& r) {
@@ -4260,13 +4318,13 @@ void VulkanBackend::ClearTarget(Target& t, const State& s, uint32_t count, const
                         ((flags & kClearStencil) && t.img.stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
         if (!ca.aspectMask) return;
         ca.clearValue.depthStencil = {std::clamp(z, 0.0f, 1.0f), stencil & 0xFF};
-        BeginRender(nullptr, &t.img);
+        BeginRender(pair, &t.img);
     } else {
         // pixels the CPU wrote before this clear go in first, a later upload would paint over the clear
         if (LatchCpuWrite(t)) UploadTarget(t, s.rt);
         ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         Color(color, ca.clearValue.color.float32);
-        BeginRender(&t.img, nullptr);
+        BeginRender(&t.img, pair);
     }
     vkCmdClearAttachments(Cb(), 1, &ca, uint32_t(rs.size()), rs.data());
 }
@@ -4275,8 +4333,14 @@ void VulkanBackend::Clear(const State& s, uint32_t count, const uint8_t* rects, 
                           float z, uint32_t stencil) {
     Target* rt = (flags & kClearTarget) ? EnsureTarget(s.rt, false) : nullptr;
     Target* ds = (flags & (kClearZ | kClearStencil)) ? EnsureTarget(s.zs, true) : nullptr;
-    for (Target* t : {rt, ds})
-        if (t) ClearTarget(*t, s, count, rects, flags, color, z, stencil);
+    // cleared in one rendering with the other attachment the draws use (same size): the draws after carry on in it,
+    // where a rendering of each alone ended and reloaded the whole scene target twice an eye (the frame rate, NOTES
+    // 2026-11-25)
+    Target* prt = rt ? rt : FindTarget(s.rt, false);
+    Target* pds = ds ? ds : FindTarget(s.zs, true);
+    bool same = prt && pds && prt->w == pds->w && prt->h == pds->h;
+    if (rt) ClearTarget(*rt, same ? &pds->img : nullptr, s, count, rects, flags, color, z, stencil);
+    if (ds) ClearTarget(*ds, same ? &prt->img : nullptr, s, count, rects, flags, color, z, stencil);
 }
 
 void VulkanBackend::Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects,
@@ -4407,7 +4471,7 @@ void VulkanBackend::RecordLate(uint32_t data) {
     if (!src) return;
     if (!l.rb[slot].buf && !CreateBuffer(l.rb[slot], VkDeviceSize(t.gw) * t.gh * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true))
         return;
-    EndRender();
+    EndRender("readback");
     VkBufferImageCopy c{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {t.gw, t.gh, 1}};
     vkCmdCopyImageToBuffer(Cb(), src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, l.rb[slot].buf, 1, &c);
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -4466,7 +4530,7 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         ~Restore() { e = v; }
     } restore{swap_extent_, keep};
     bool eye_image = stereo_ && xr::ImageEye(index) < xr::kTheater;
-    EndRender();
+    EndRender("to the eye image");
     VkCommandBuffer cb = Cb();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -4879,7 +4943,7 @@ void VulkanBackend::WaitGpuFrame(uint64_t n) { WaitValue(present_value_[n % (kFr
 
 void VulkanBackend::BeginEye(int eye) {
     if (!stereo_ || eye == eye_) return;
-    EndRender();
+    EndRender("eye");
     draw_rt_ = draw_ds_ = nullptr;
     // the scope's view comes after the right eye, its targets swapped in for the right's and back
     if (eye_ == stereo::kScopeEye) {
@@ -4905,7 +4969,7 @@ void VulkanBackend::KeepScope(Target& t) {
                          VK_IMAGE_VIEW_TYPE_2D))
             return;
     }
-    EndRender();
+    EndRender("scope copy");
     Transition(t.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     Transition(scope_img_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkImageCopy c{{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0},

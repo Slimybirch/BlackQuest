@@ -1,10 +1,12 @@
 // The cheats page's god mode, one-hit kill and infinite grenades. The rest live where the game
 // already has a hook: infinite ammo, rapid fire and no recoil with the weapon's, game speed with the frame time
 #include <algorithm>
+#include <filesystem>
 
 #include "common/options.h"
 #include "game/layout.h"
 #include "xdk/hle.h"
+#include "app/app.h"
 
 using namespace kernel;
 using namespace layout;
@@ -64,7 +66,9 @@ X86_EXTERN_FUNC(__imp__sub_001E5FA0);
 X86_FUNC(sub_001E5FA0) {
     uint32_t me = ctx.ecx;
     if (me && me == Player() && R32(me + kCharKind) == kPlayerKind) {
-        if (game::Opt().god_mode && !R32(me + kCharDying)) {
+        // dev_god: god mode for test runs without touching black.toml
+        static const bool dev_god = std::filesystem::exists(app::ExeDir() / "dev_god");
+        if ((game::Opt().god_mode || dev_god) && !R32(me + kCharDying)) {
             float& health = G<float>(me + kCharHealth);
             health = std::max(health, FullHealth());
             G<uint8_t>(me + kCharInvulnerable) = 1;
