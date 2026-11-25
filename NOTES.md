@@ -2143,3 +2143,12 @@ brighter and bigger)
 - Touch (user: reload steps and pickups felt): faint ticks (0.12, 15 ms) as the off hand reaches the slide or the
   magazine, 0.22 on the fore-end, 0.2 leaving a pump open, 0.35 on the magazine release; the existing reload
   buzzes kept. Pickups: 0x1BED90 (vr_silencer.cpp's wrap) touches both hands (0.3, 18 ms). Hits left out (user).
+
+## 2026-11-25: first launch setup
+- The user chose the steps (standing or seated, the height, turning) and the form (cards on the panel beside the
+  title). menu.cpp DrawSetup draws them in the settings panel's place while vr_setup_done is false (new option,
+  saved in black.toml by the game's own Save): 1 STANDING / SEATED (vr_seated; seated skips the height), 2 SET
+  HEIGHT (VrCalibrateHeight) then NEXT, 3 SMOOTH / SNAP 30 / SNAP 45 (vr_snap_turn) with TURN SPEED - / + for
+  smooth (vr_turn_speed, 50-200 by 25), FINISH. BACK and SKIP SETUP on each card; VR SETTINGS > FIRST LAUNCH SETUP
+  (RUN AGAIN) clears the flag. Every choice saves as it's made. Headset shot: SETUP 1/3 beside PRESS A with the two
+  buttons; the buttons need the user's hands. Handedness left out until left-handed play exists.

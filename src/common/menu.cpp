@@ -17,6 +17,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "core/log.h"
 #include "app/app.h"
 #include "audio/output.h"
 #include "common/keys.h"
@@ -267,7 +268,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
              kDynamicMax, kDynamicHold, kAutoUpdate, kVrTurn, kVrGrip, kVrReload, kVrTotest, kVrGunstock, kVrGunAngle,
              kVrStockHeight, kVrTurnSpeed, kVrViewHeight, kVrHdTextures, kVrVignette, kVrSeated,
-             kVrCalibrate, kVrRefresh, kVrDumpTextures, kVrReticle, kVrWallPull, kVrGiveSilencer };
+             kVrCalibrate, kVrRefresh, kVrDumpTextures, kVrReticle, kVrWallPull, kVrSetup, kVrGiveSilencer };
 
 using rows::Kind;
 using rows::Row;
@@ -350,6 +351,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kVrWallPull, "GUN AT WALLS"},
     {Kind::Heading, -1, "HEIGHT"},
     {Kind::Value, kVrCalibrate, "STAND STRAIGHT AND PRESS"},
+    {Kind::Value, kVrSetup, "FIRST LAUNCH SETUP"},
     {Kind::Value, kVrViewHeight, "VIEW HEIGHT"},
     {Kind::Heading, -1, "GUNSTOCK"},
     {Kind::Value, kVrGunstock, "PHYSICAL GUNSTOCK"},
@@ -637,6 +639,11 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             // blackquest: a reticle where the barrel points (the game's head-fixed crosshair hidden), or none
             if (step) o.vr_reticle = !o.vr_reticle;
             std::snprintf(text, sizeof(text), o.vr_reticle ? "ON THE BARREL" : "OFF");
+            return true;
+        case kVrSetup:
+            // blackquest (user): the first launch's cards again, in place of the settings
+            if (step) o.vr_setup_done = false;
+            std::snprintf(text, sizeof(text), "RUN AGAIN");
             return true;
         case kVrWallPull:
             // blackquest (user): the gun pulled back from a wall it would go into, or through it as the game has it
@@ -1103,6 +1110,117 @@ void DragScroll(float em) {
     glide *= std::max(0.0f, 1.0f - kFriction * io.DeltaTime);
 }
 
+// blackquest (user): the first launch's setup, a card at a time on the panel beside the title before the first
+// level: standing or seated, the height (standing only), turning. Skippable; VR SETTINGS' FIRST LAUNCH SETUP shows it
+// again. Each choice is saved as it's made
+int g_setup_step = 0;
+
+bool SetupButton(const char* label, bool on, float w, float em) {
+    ImGui::PushStyleColor(ImGuiCol_Button, on ? ImVec4(0.45f, 0.36f, 0.12f, 1.0f) : ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+    bool pressed = ImGui::Button(label, ImVec2(w, em * 3.0f));
+    ImGui::PopStyleColor();
+    return pressed;
+}
+
+void SetupText(const char* text, bool dim = false) {
+    if (dim) ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    if (dim) ImGui::PopStyleColor();
+}
+
+void DrawSetup(float em) {
+    auto& o = ::game::Opt();
+    constexpr int kSteps = 3;
+    char head[48];
+    std::snprintf(head, sizeof(head), "SETUP  %d / %d", g_setup_step + 1, kSteps);
+    DrawTitle(head);
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, em * 0.6f));
+    float w = ImGui::GetContentRegionAvail().x, half = w * 0.5f - em * 0.3f, third = w / 3.0f - em * 0.4f;
+    switch (g_setup_step) {
+        case 0:
+            SetupText("WELCOME TO BLACKQUEST. HOW WILL YOU PLAY?");
+            SetupText("Seated keeps the view at standing height, and crouching is a button rather than ducking.", true);
+            ImGui::Dummy(ImVec2(0, em));
+            if (SetupButton("STANDING", !o.vr_seated, half, em)) {
+                o.vr_seated = false;
+                Changed();
+                g_setup_step = 1;
+            }
+            ImGui::SameLine();
+            if (SetupButton("SEATED", o.vr_seated, half, em)) {
+                o.vr_seated = true;
+                Changed();
+                g_setup_step = 2;
+            }
+            break;
+        case 1: {
+            SetupText("STAND UP STRAIGHT AND LOOK AHEAD, THEN PRESS SET HEIGHT.");
+            SetupText("Your height places the view and the hands, and sets where crouching by ducking begins.", true);
+            ImGui::Dummy(ImVec2(0, em));
+            bool done = ::game::VrStandingHeight() > 0;
+            if (SetupButton(done ? "SET AGAIN" : "SET HEIGHT", !done, half, em)) {
+                ::game::VrCalibrateHeight();
+                Changed();
+            }
+            ImGui::SameLine();
+            if (SetupButton("NEXT", done, half, em)) g_setup_step = 2;
+            if (done) SetupText("HEIGHT SET.");
+            break;
+        }
+        default: {
+            SetupText("HOW SHOULD THE RIGHT STICK TURN YOU?");
+            SetupText("Smooth turns as the game does; snap turns jump by a step, easier on the stomach.", true);
+            ImGui::Dummy(ImVec2(0, em));
+            constexpr uint32_t kTurns[] = {0, 30, 45};
+            constexpr const char* kNames[] = {"SMOOTH", "SNAP 30", "SNAP 45"};
+            for (int i = 0; i < 3; i++) {
+                if (i) ImGui::SameLine();
+                if (SetupButton(kNames[i], o.vr_snap_turn == kTurns[i], third, em)) {
+                    o.vr_snap_turn = kTurns[i];
+                    Changed();
+                }
+            }
+            if (!o.vr_snap_turn) {
+                ImGui::Dummy(ImVec2(0, em * 0.4f));
+                char speed[48];
+                std::snprintf(speed, sizeof(speed), "TURN SPEED  %u%%", o.vr_turn_speed);
+                if (ImGui::Button("-", ImVec2(em * 3, em * 2)) && o.vr_turn_speed > 50) o.vr_turn_speed -= 25, Changed();
+                ImGui::SameLine();
+                ImGui::TextUnformatted(speed);
+                ImGui::SameLine();
+                if (ImGui::Button("+", ImVec2(em * 3, em * 2)) && o.vr_turn_speed < 200) o.vr_turn_speed += 25, Changed();
+            }
+            ImGui::Dummy(ImVec2(0, em * 0.6f));
+            if (SetupButton("FINISH", true, w, em)) {
+                o.vr_setup_done = true;
+                g_setup_step = 0;
+                Changed();
+                LOGR("vr setup: done (%s, turn %u, speed %u)", o.vr_seated ? "seated" : "standing", o.vr_snap_turn,
+                     o.vr_turn_speed);
+            }
+            break;
+        }
+    }
+    // back a card, or skip it all (the settings have every choice)
+    ImGui::SetCursorPosY(ImGui::GetWindowHeight() - em * 4.2f);
+    ImGui::Separator();
+    if (g_setup_step > 0) {
+        if (ImGui::Button("BACK", ImVec2(em * 8, em * 2.2f)))
+            g_setup_step = g_setup_step == 2 && o.vr_seated ? 0 : g_setup_step - 1;
+        ImGui::SameLine();
+    }
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - em * 10.6f);
+    if (ImGui::Button("SKIP SETUP", ImVec2(em * 9, em * 2.2f))) {
+        o.vr_setup_done = true;
+        g_setup_step = 0;
+        Changed();
+        LOGR("vr setup: skipped");
+    }
+}
+
 void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
@@ -1115,7 +1233,10 @@ void DrawPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 1.6f, em * 1.2f));
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
-    if (ImGui::Begin("##settings", nullptr, kFlags)) {
+    const bool open = ImGui::Begin("##settings", nullptr, kFlags);
+    if (open && xr::Active() && !::game::Opt().vr_setup_done) {
+        DrawSetup(em);  // the first launch's cards, until done or skipped
+    } else if (open) {
         DrawTitle(xr::Active() ? "VR SETTINGS" : "CHEATS");
         // (a Quest: an update's notice, here since an Android dialog isn't seen in the headset)
         if (std::string notice = UpdateNotice(); !notice.empty())

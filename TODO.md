@@ -180,7 +180,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       grip stays the reload's (magazines, slide, handle)
 - [ ] locomotion: head- or hand-relative, movement hand swappable (left-handed), comfort vignette when moving
 - [ ] HUD editor in the headset: scale, distance, and a wrist or on-gun ammo count (Phase 7)
-- [ ] first-launch setup: height, handedness, turn style, comfort, before the first level
+- [x] first-launch setup (user: stance, height, turning; a panel card each beside the title, skippable, VR SETTINGS > FIRST LAUNCH SETUP: RUN AGAIN); handedness waits on left-handed play
 - [ ] performance first: reviews of Quest ports punish frame drops more than anything (Black's explosions and
       particles are the worst case); render scale and effect options in VR Settings, measured per level
 - [ ] avoid "press A to interact" where a hand can do it (pickups by grabbing the weapon itself, doors)

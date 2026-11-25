@@ -147,3 +147,4 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] launchers: the M203, grenade launcher and RPG each a big shove, the RPG the biggest, both hands (auto: grenade_kick, rocket_kick) (confirm)
 - [ ] reload touches: a faint tick as the off hand reaches the slide or the magazine, on the fore-end, the magazine release; the existing buzzes still there (confirm)
 - [ ] pickups: a light touch in both hands for anything picked up (auto: pickup_felt) (confirm)
+- [ ] first launch setup: beside PRESS A the panel shows SETUP 1/3; STANDING goes to the height card (SET HEIGHT, then NEXT), SEATED skips it; turning: SMOOTH (with TURN SPEED - / +), SNAP 30 or SNAP 45; FINISH brings VR SETTINGS back; BACK and SKIP SETUP work; VR SETTINGS > FIRST LAUNCH SETUP: RUN AGAIN shows it again (confirm)
