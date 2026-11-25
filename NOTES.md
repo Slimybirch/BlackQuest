@@ -1985,3 +1985,16 @@ brighter and bigger)
   (the game's attach animation), the suppressor flag on at +7.1 s, busy back to 0 at +9.5 s; the request stays 0.**
   So the attach is a ~9 s animation that sets the flag near its end, started by something that isn't the request.
   No literal 0x13 store to +0xB4 in the code: computed. Next: what sets busy at mission 2's start.
+
+## 2026-11-25: the game's suppressor attach, hunt round 2
+
+- The busy word (inventory +0xB4) is an output: written 0x13 by hand (dev_invbusy 13) it was 0 again the next tick.
+  It mirrors the attach animation while it plays; it doesn't start one.
+- No store of the 17 candidate functions with a `[reg+0xB4]` store (0x1A0000-0x210000; 0x1DA1A0, co-op's death
+  wrapper, left out) turns it to 0x13 within its call (vr_attachprobe.cpp, dev_attachprobe, mission 2's start): it's
+  written elsewhere (through another register base, or a copy).
+- The weapon's first person animation id (+0xD8, earlier notes: 0x19 attach, 0x1A detach) written 0x19 by hand
+  (dev_weapanim 19) on the held pistol: nothing (busy, the flag and the hands unchanged): also an output, or it
+  needs the attach's own setup with it.
+- So the attach starts elsewhere: mission 2 starts it at +0.5 s by itself. Next: wrap the functions that write the
+  weapon's +0xD8 to 0x19 (or call the weapon's animation player with it), the same way as the probe.

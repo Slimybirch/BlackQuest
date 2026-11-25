@@ -1000,6 +1000,12 @@ bool GunDb(const std::string& code, std::vector<uint8_t>& out) {
 }
 
 // the table code of the weapon in the player's hand ("AK1", "PST"...), empty when none; game thread (vr_gun.cpp)
+// the player inventory's busy word (vr_attachprobe.cpp), ~0 out of a level
+uint32_t InvBusy() {
+    Level l;
+    return ReadLevel(l) ? R32(l.inventory + kInvBusy) : ~0u;
+}
+
 // the silencer by hand (vr_silencer.cpp), game thread: -1 the held gun takes none, else whether it's on
 int SuppressorHeld(uint32_t& weapon) {
     Level l;
@@ -1095,6 +1101,33 @@ void DevInvReq() {
     if (!start) start = now;
     // (0: nothing written, a watch from the level's start for 60 s: what the game does by itself)
     if (want == 0 && !fired) fired = now;
+    // dev_invbusy N (with dev_invreq 0 to watch): the busy word itself set to N once, 25 s in
+    static const int busy = [] {
+        std::ifstream f(app::ExeDir() / "dev_invbusy");
+        int n = -1;
+        f >> std::hex >> n;
+        return n;
+    }();
+    static bool busy_done = false;
+    // dev_weapanim N (hex): the held gun's first person animation (+0xD8) set to N once, 25 s in (0x19 attach)
+    static const int anim = [] {
+        std::ifstream f(app::ExeDir() / "dev_weapanim");
+        int n = -1;
+        f >> std::hex >> n;
+        return n;
+    }();
+    static bool anim_done = false;
+    if (anim >= 0 && !anim_done && now - start > 25) {
+        anim_done = true;
+        uint32_t w = R32(l.inventory + kInvHeld);
+        LOGR("weapons: dev_weapanim: 0x%X (was 0x%X)", anim, w ? R32(w + kWeaponAnim) : 0);
+        if (w) W32(w + kWeaponAnim, uint32_t(anim));
+    }
+    if (busy >= 0 && !busy_done && now - start > 25) {
+        busy_done = true;
+        LOGR("weapons: dev_invbusy: busy 0x%X (was 0x%X)", busy, R32(l.inventory + kInvBusy));
+        W32(l.inventory + kInvBusy, uint32_t(busy));
+    }
     if (!fired && now - start > 25) {
         fired = now;
         LOGR("weapons: dev_invreq: request %d (was %u, busy %u)", want, R32(l.inventory + kInvRequest), R32(l.inventory + kInvBusy));
