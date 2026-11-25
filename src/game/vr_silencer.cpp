@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <set>
 #include <string>
 #include <filesystem>
@@ -27,6 +28,8 @@
 namespace game {
 bool VrGunLocal(float* A, float* muzzle);  // vr_gun.cpp: the gun's axes and its muzzle in local space, as drawn
 bool HudShown();  // hud.cpp: the player's hud is up (in play)
+bool VrWorldToLocal(const float* w, float* local);  // vr_gun.cpp
+bool VrPlayerWorld(float* eye, float* fwd, float* floor_y);  // vr_gun.cpp
 void TestEvent(const std::string& name);   // vr_totest.cpp
 }  // namespace game
 namespace weapons {
@@ -35,6 +38,7 @@ void SetSuppressorHeld(bool on);
 bool RequestSuppressorAnim(bool attach);  // the game's own attach (true) or detach animation
 bool CancelSuppressorAttach();             // the game's attach on the gun in hand called off, its flag off
 uint32_t HeldAnim();                       // the held gun's first person animation id
+void PickupMessage(int kind);              // the game's pickup message (its sound and line), 4 the suppressors
 }  // namespace weapons
 
 namespace game {
@@ -53,6 +57,12 @@ std::atomic<bool> g_carried{false};
 // a suppressor pickup of the level's, taken (game::sub_001BED90): the attach the game starts with it is called off
 // till then, so it stays in the inventory
 int64_t g_block_until = 0;
+// a silencer on the ground (the settings' test button lays one 1.2 m ahead, across the way), world space; walked over
+// (within 0.7 m across the floor): into the inventory with the game's pickup message
+std::atomic<bool> g_lay{false};
+std::mutex g_ground_lock;
+bool g_ground = false;
+float g_ground_at[3], g_ground_dir[3];
 
 constexpr float kGripOn = 0.6f, kGripOff = 0.35f;
 constexpr float kLineUp = 0.04f;       // within this of the muzzle it lines up
@@ -106,8 +116,48 @@ void Set(S s, const char* why) {
 
 }  // namespace
 
+namespace {
+void GroundTick() {
+    float eye[3], fwd[3], floor_y;
+    if (!HudShown() || !VrPlayerWorld(eye, fwd, &floor_y)) return;
+    {
+        // dev_spawn_silencer: the test button pressed once, 8 s into play
+        static const bool dev = std::filesystem::exists(app::ExeDir() / "dev_spawn_silencer");
+        static int64_t first = 0;
+        int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (dev && !first) first = now;
+        if (dev && first > 0 && now - first > 8000) {
+            first = -1;
+            g_lay = true;
+        }
+    }
+    std::lock_guard lock(g_ground_lock);
+    if (g_lay.exchange(false)) {
+        float h = std::sqrt(fwd[0] * fwd[0] + fwd[2] * fwd[2]);
+        if (h > 1e-3f) {
+            float f[3] = {fwd[0] / h, 0, fwd[2] / h};
+            g_ground_at[0] = eye[0] + f[0] * 1.2f, g_ground_at[1] = floor_y + 0.017f, g_ground_at[2] = eye[2] + f[2] * 1.2f;
+            g_ground_dir[0] = -f[2], g_ground_dir[1] = 0, g_ground_dir[2] = f[0];
+            g_ground = true;
+            LOGR("vr silencer: one laid on the ground ahead (%.1f %.1f %.1f)", g_ground_at[0], g_ground_at[1], g_ground_at[2]);
+        }
+        return;
+    }
+    if (!g_ground) return;
+    float dx = eye[0] - g_ground_at[0], dz = eye[2] - g_ground_at[2], dy = eye[1] - g_ground_at[1];
+    if (dx * dx + dz * dz < 0.7f * 0.7f && dy > -0.5f && dy < 2.4f) {
+        g_ground = false;
+        g_carried = true;
+        weapons::PickupMessage(4);
+        LOGR("vr silencer: picked up from the ground into the inventory");
+        TestEvent("silencer_picked");
+    }
+}
+}  // namespace
+
 // game thread, each tick (weapons.cpp WeaponsTick)
 void VrSilencerTick() {
+    GroundTick();
     uint32_t weapon = 0;
     int on = weapons::SuppressorHeld(weapon);
     if (on < 0 || !weapon) {
@@ -282,7 +332,18 @@ constexpr float kSilLength = 0.16f, kSilRadius = 0.016f;
 bool VrSilencerPose(float* rear, float* front, float* radius) {
     S s = S(g_shown.load(std::memory_order_relaxed));
     *radius = kSilRadius;
-    if (s == S::kNone) return false;
+    if (s == S::kNone || (s == S::kHolster && !g_carried)) {
+        // on the ground, if one's lying there
+        float at[3], dir[3], wr[3], wf[3];
+        {
+            std::lock_guard lock(g_ground_lock);
+            if (!g_ground) return false;
+            std::memcpy(at, g_ground_at, 12);
+            std::memcpy(dir, g_ground_dir, 12);
+        }
+        for (int i = 0; i < 3; i++) wr[i] = at[i] - dir[i] * kSilLength * 0.5f, wf[i] = at[i] + dir[i] * kSilLength * 0.5f;
+        return VrWorldToLocal(wr, rear) && VrWorldToLocal(wf, front);
+    }
     float fwd[3], at[3];
     if (s == S::kHolster) {
         // on the left hip, upright, the collar up
@@ -312,14 +373,22 @@ bool VrSilencerPose(float* rear, float* front, float* radius) {
     return true;
 }
 
-// any thread: a silencer straight into the inventory (VR SETTINGS, TESTING, GIVE A SILENCER: user, for tests);
-// false if one is carried already
+// any thread: a silencer laid on the ground 1.2 m ahead (VR SETTINGS, TESTING, SPAWN A SILENCER: user, for tests):
+// walked over, it's picked up as a level's; false if one is carried or lying there already
 bool VrSilencerGive() {
-    if (g_carried.exchange(true)) return false;
-    LOGR("vr silencer: one given (the settings' test button)");
+    {
+        std::lock_guard lock(g_ground_lock);
+        if (g_carried || g_ground) return false;
+    }
+    g_lay = true;
     return true;
 }
-bool VrSilencerCarried() { return g_carried; }
+// 0 none, 1 on the ground, 2 in the inventory (the button's text)
+int VrSilencerWhere() {
+    if (g_carried) return 2;
+    std::lock_guard lock(g_ground_lock);
+    return g_ground ? 1 : 0;
+}
 
 // any thread: the inventory's icon under the ammunition: -1 hidden (out of play), 0 dark (no silencer in the
 // inventory), 1 bright with a glow (one carried: on the hip, in the hand or lined up)

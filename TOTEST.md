@@ -136,4 +136,4 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] silencer twist on: the game's own attach plays and the gun sounds suppressed after; twist off: the detach, normal sound (confirm)
 - [ ] a suppressor where the game places one (mission 2 starts with one): it goes to the inventory, not onto the gun, and the icon lights up (auto: silencer_picked) (confirm)
 - [ ] the silencer icon: dark with none, bright with a glow when you have one; then from the hip onto the gun: the icon darkens (confirm)
-- [ ] VR SETTINGS, TESTING, GIVE A SILENCER: the icon lights up; take it from the left hip, line it up, twist it on (confirm)
+- [ ] VR SETTINGS, TESTING, SPAWN A SILENCER: one lies on the floor ahead; walk over it: the pickup sound, the icon lights up; then the hip, line up, twist on (confirm)

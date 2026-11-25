@@ -73,8 +73,8 @@ void SetStartupCheck(bool on);
 
 namespace game {
 void VrCoopTab(float em);  // vr_coop.cpp: the panel's CO-OP tab (phase 9)
-bool VrSilencerGive();     // vr_silencer.cpp: a silencer into the inventory (the test button)
-bool VrSilencerCarried();
+bool VrSilencerGive();     // vr_silencer.cpp: a silencer laid on the ground ahead (the test button)
+int VrSilencerWhere();     // 0 none, 1 on the ground, 2 in the inventory
 }
 
 namespace app {
@@ -362,7 +362,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Heading, -1, "TESTING"},
     {Kind::Value, kVrTotest, "TEST CHECKLIST"},
     {Kind::Value, kVrDumpTextures, "DUMP TEXTURES"},
-    {Kind::Value, kVrGiveSilencer, "GIVE A SILENCER"},
+    {Kind::Value, kVrGiveSilencer, "SPAWN A SILENCER"},
     {Kind::Heading, -1, "WEAPONS"},
     {Kind::Value, kInfiniteAmmo, "INFINITE AMMO"},
     {Kind::Value, kInfiniteGrenades, "INFINITE GRENADES"},
@@ -625,9 +625,12 @@ bool StepCheatRow(int id, int step, char (&text)[64]) {
             return true;
         }
         case kVrGiveSilencer:
-            // blackquest (user): a silencer into the inventory, to test fitting it by hand (the hip, the twist)
+            // blackquest (user): a silencer on the ground ahead, to test the pickup and fitting it by hand
             if (step) game::VrSilencerGive();
-            std::snprintf(text, sizeof(text), game::VrSilencerCarried() ? "IN THE INVENTORY" : "PRESS");
+            {
+                int where = game::VrSilencerWhere();
+                std::snprintf(text, sizeof(text), where == 2 ? "IN THE INVENTORY" : where == 1 ? "ON THE GROUND" : "PRESS");
+            }
             return true;
         case kVrReticle:
             // blackquest: a reticle where the barrel points (the game's head-fixed crosshair hidden), or none

@@ -2033,4 +2033,8 @@ brighter and bigger)
   two dark bands, a brass collar): always under the grenades in play, dark (x0.38, 70%) with none carried, bright
   with a soft teal glow round its edge with one.
 - game::VrWorldToLocal and VrPlayerWorld (vr_gun.cpp: world -> local, the player in the world) stay for later use.
-- VR SETTINGS, TESTING, GIVE A SILENCER (menu.cpp kVrGiveSilencer -> game::VrSilencerGive): one into the inventory, for tests.
+- VR SETTINGS, TESTING, SPAWN A SILENCER (menu.cpp kVrGiveSilencer -> game::VrSilencerGive; user: on the ground,
+  not straight to the inventory): one laid on the floor 1.2 m ahead, across the way; walked over (0.7 m across the
+  floor) it goes into the inventory with the game's pickup message (weapons::PickupMessage(4) -> 0x12B510: ecx the
+  kind, al and dl 0, the message list *0x2D12E4 +0x0C pushed). The row reads PRESS / ON THE GROUND / IN THE
+  INVENTORY. dev_spawn_silencer presses it 8 s into play (headset log: laid ahead in mission 1).

@@ -1016,6 +1016,11 @@ int SuppressorHeld(uint32_t& weapon) {
     return R32(weapon + kWeaponSuppressed) ? 1 : 0;
 }
 
+// the game's pickup message (0x12B510: ecx the kind, al the type, dl 0, the hud's message list pushed, as 0x1BEDE5
+// calls it when a pickup is taken): its sound and its line. 4 the suppressors. Any thread: done at the next tick
+std::atomic<int> g_pickup_message{-1};
+void PickupMessage(int kind) { g_pickup_message = kind; }
+
 // the game's attach on the gun in hand called off (a suppressor pickup goes to the inventory, vr_silencer.cpp): its
 // animation request or run (0x17, 0x19) back to idle and the flag off; false if none. Game thread
 // the held gun's first person animation (+0xD8: 0x17 the attach asked for, 0x19 it running), 0 none. Game thread
@@ -1177,6 +1182,16 @@ void DevInvReq() {
 
 void WeaponsTick(X86Context& ctx) {
     static int tick;
+    if (int kind = weapons::g_pickup_message.exchange(-1); kind >= 0) {
+        if (uint32_t list = R32(0x2D12E4)) {
+            // (the registers set here are put back after: CallGuest restores them)
+            uint32_t ecx = ctx.ecx, eax = ctx.eax, edx = ctx.edx;
+            ctx.ecx = uint32_t(kind), ctx.eax &= ~0xFFu, ctx.edx &= ~0xFFu;
+            CallGuest(ctx, 0x12B510, {R32(list + 0x0C)});
+            ctx.ecx = ecx, ctx.eax = eax, ctx.edx = edx;
+            LOGR("weapons: the game's pickup message, kind %d", kind);
+        }
+    }
     DevInvReq();
     game::VrSilencerTick();
     DevGive(ctx);
