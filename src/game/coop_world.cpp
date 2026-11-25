@@ -28,6 +28,7 @@
 #include "game/coop_shots.h"
 #include "game/coop_world.h"
 #include "game/layout.h"
+#include "game/weapons.h"
 #include "xdk/hle.h"
 
 using namespace kernel;
@@ -127,7 +128,7 @@ constexpr uint32_t kRetryFrames = 120;
 constexpr size_t kWaitingMax = 256;
 constexpr int kProbeLines = 1500;
 
-enum Type : uint8_t { kDeath = 1, kProp, kProjectile, kMelee, kFlow, kObjective };
+enum Type : uint8_t { kDeath = 1, kProp, kProjectile, kMelee, kFlow, kObjective, kAmmo };  // kAmmo: blackquest
 
 #pragma pack(push, 1)
 // A death names the spawner and carries the killing hit. A prop's state (kProp) puts the prop's id in name, its
@@ -572,6 +573,14 @@ bool ObjectiveAction(uint32_t action) {
 }
 
 // the joining player's melee on the host's enemy: its hit there, by the joining player's body
+// blackquest (user): a magazine handed over in VR (vr_reload.cpp), one for the receiver's gun in hand
+Result ApplyAmmo(const Event& e) {
+    if (e.shooter != coop::LocalPlayer()) return Result::Done;  // (another player's: the host relays it to all)
+    weapons::AddMagazines(1);
+    LOGR("coop: a magazine from player %u", unsigned(e.actor));
+    return Result::Done;
+}
+
 Result ApplyMelee(X86Context& ctx, const Event& e) {
     uint32_t ch = LiveCharacter(Name(e.name_lo, e.name_hi));
     if (!ch) return Result::Stale;
@@ -842,7 +851,7 @@ void Incoming(const uint8_t* p, int bytes, int count, uint64_t now) {
         PartnerLoad(e.load, e.level);
         bool reloaded = e.level == g_partner_level && e.load != uint8_t(g_partner_load);
         bool wanted = (e.type == kDeath && g_stage >= 1) || ((e.type == kProp || e.type == kProjectile) && g_stage >= 3) ||
-                      (e.type == kMelee && g_stage >= 4) || ((e.type == kFlow || e.type == kObjective) && g_stage >= 6);
+                      ((e.type == kMelee || e.type == kAmmo) && g_stage >= 4) || ((e.type == kFlow || e.type == kObjective) && g_stage >= 6);
         if (!wanted || reloaded || (coop::Hosting() && e.level != g_level)) {
             g_count.lost++;  // from before the partner loaded that level again
             continue;
@@ -980,7 +989,8 @@ void TickOne(X86Context& ctx) {
             i++;
             continue;
         }
-        Result r = w.e.type == kObjective ? ApplyObjective(ctx, w.e)
+        Result r = w.e.type == kAmmo ? ApplyAmmo(w.e)
+                   : w.e.type == kObjective ? ApplyObjective(ctx, w.e)
                    : w.e.type == kMelee  ? ApplyMelee(ctx, w.e)
                    : w.e.type == kFlow ? ApplyFlow(ctx, w.e)
                                        : Apply(ctx, w.e);
@@ -1365,6 +1375,16 @@ void FlowTick(X86Context& ctx) {
     if (R32(world + kWorldStream)) return;  // never over a streaming step in progress
     if (any && reached >= g_advance.unit) ApplyAdvance(ctx, "all partners came");
     else if (now - g_advance.partner_seen > kAloneMs) ApplyAdvance(ctx, "the partner is not in the level");
+}
+
+// blackquest: one magazine handed to player 'to' (its own gun's kind on arrival)
+void SendAmmo(int to) {
+    if (!g_net || g_stage < 4 || to < 0 || to >= coop::kMaxPlayers) return;
+    Event e{};
+    e.type = kAmmo;
+    e.shooter = uint8_t(to);
+    Post(e);
+    LOGR("coop: a magazine handed to player %d", to);
 }
 
 void SendMelee(uint64_t name, uint32_t dir) {

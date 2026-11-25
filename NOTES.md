@@ -1899,3 +1899,42 @@ brighter and bigger)
   0xD8B80 at 320,240. Hiding 0xD8B80 left the dot; hiding 0xD9480 took it away), hidden in the headset with RETICLE
   on (hud.cpp kCrosshair). Headset runs 2026-11-24: the CO-OP tab hosting (status, the internet address found,
   COPY, the list) and the reticle drawn, both seen in shots.
+
+## 2026-11-24: Phase 10, the Builder
+
+- builder/ (BlackQuestBuilder.csproj, Program.cs, MainForm.cs, Pipeline.cs): C# WinForms on .NET Framework 4.8,
+  built with the .NET 8 SDK (`dotnet build builder -c Release`), the exe copied to the repo root (gitignored). It
+  finds the BlackQuest folder by build.bat and works there. The window: 1 GAME DISC (.iso), 2 HD TEXTURES (the
+  pack's folder; logged as coming with the converter), 3 HEADSET (adb devices -l: model and USB / Wi-Fi; Wi-Fi
+  Connect does adb connect ip[:5555]), BUILD & INSTALL (BUILD with no headset), Install the last build only, a
+  progress bar fed by build.bat's [n/5] stages and Gradle's tasks, the log. Choices kept in
+  %LOCALAPPDATA%\BlackQuestuilder.txt.
+- The work (Pipeline): the tools into toolchain/ when missing: Temurin 17 (Adoptium API zip), the Android command-
+  line tools then sdkmanager (platform 34, build-tools 34.0.0, platform-tools, NDK 28.2.13676358, CMake 3.31.6;
+  the licences answered yes, as Android Studio asks), Python embeddable 3.11.9 and MinGit 2.47.1 when not on PATH,
+  and Visual Studio's C++ build tools (VCTools + its Clang) through vs_BuildTools.exe --passive (its own UAC).
+  A new disc (path and size in assets/disc.txt) drops assets/default.xbe so build.bat takes it again. build.bat runs
+  with CI=1 (no pause), BLACK_ISO, ANDROID_HOME, JAVA_HOME. Install: adb install -r (signed with this PC's debug
+  key, as now: another PC's key needs an uninstall first, which loses the saves), then the .iso pushed to
+  Android/data/com.slimybirch.blackquest/files/assets unless the same size is there (the app reads it there with
+  no storage permission).
+- Hidden switches: --shot <png> (the window drawn to a file), --build <iso> --log <file> (no window, build only).
+
+## 2026-11-24: co-op player model, magazine handover, the silencer by hand (built, the headset away)
+
+- Co-op state (coop.cpp State, packed): `aim[3]`, `vr_aim` added at the end: the view's forward through
+  game::VrGunAim (the head's view turned to the gun hand's: the barrel in the world). coop::PartnerAim. DriveBody
+  (coop_npcs.cpp): a VR partner's controller angles: [0] its walk's heading when moving (g_body_dir, rate > 0.15),
+  else the head's, [1] and [2] the barrel's heading, [3] its pitch. Which index is body / torso / aim is the mod's
+  reading ("body, torso and aim"), to check on a real partner. Both players need this build (the packet grew).
+- Magazine handover: vr_reload.cpp's let-go branch, before the throw: HandOver() (game thread) loops the connected
+  partners (PartnerScope), their eye less 0.4 m as the chest, within 0.55 m of VrHandWorld(0): coop::world::SendAmmo
+  (event kAmmo, e.shooter the receiver; the host relays all events). The giver's reserve loses one clip (the held
+  magazine's rounds were still in it); the receiver's ApplyAmmo -> weapons::AddMagazines(1): the held gun's
+  ammunition type's reserve (inventory + type*2) plus its clip (data +kDataClip), capped.
+- Silencer (vr_silencer.cpp, ticked from WeaponsTick): states none / on the gun / holster / in hand / lined up /
+  unscrewing. weapons::SuppressorHeld (the held gun's type takes one: SuppSupportedType; weapon+0x108) and
+  SetSuppressorHeld; game::VrGunLocal (vr_gun.cpp: the gun's axes and muzzle in local space, from the frame
+  HandInCamera keeps and kGrips' back and down). The twist: the off hand's up projected across the barrel, its
+  angle against the gun's up; +60 degrees (toward the gun's right) on, -60 off. Owned: a gun seen with its silencer
+  on (or given one) keeps it in the holster when off. The hip: 20 cm left, 4 cm back, 80 cm under the head.

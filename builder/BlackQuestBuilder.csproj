@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Phase 10: the BlackQuest Builder. .NET Framework 4.8 (in every Windows 10 and 11): one small exe, nothing to
+       install. Build: dotnet build builder -c Release; the exe lands in out/builder and is copied to the repo root -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>BlackQuestBuilder</AssemblyName>
+    <RootNamespace>BlackQuestBuilder</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BaseOutputPath>..\out\builder\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>..\out\builder\obj\</BaseIntermediateOutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Product>BlackQuest Builder</Product>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+  </ItemGroup>
+  <Target Name="CopyToRepoRoot" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\.." />
+  </Target>
+</Project>

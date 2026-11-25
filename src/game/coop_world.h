@@ -34,7 +34,8 @@ bool RestoreMissionSnapshot(const uint8_t* data, size_t bytes);
 void Tick(X86Context& ctx);  // the partner's events applied, once a frame of play
 uint32_t LiveCharacter(uint64_t name);  // this copy's live character of that spawner, 0 none
 bool Applying();                        // inside a call that plays the partner's event
-void SendMelee(uint64_t name, uint32_t dir);  // joining copy: its player's melee on a puppet, for the host's
+void SendMelee(uint64_t name, uint32_t dir);
+void SendAmmo(int to);  // blackquest: a magazine handed to a player in VR  // joining copy: its player's melee on a puppet, for the host's
 void FlowTick(X86Context& ctx);  // each frame: a unit advance waiting for the partner
 bool WaitingForPartner();        // this copy's unit advance waits for the partner
 uint8_t WaitingUnit();           // the unit this copy's waiting advance is to, 0 none

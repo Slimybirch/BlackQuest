@@ -282,6 +282,18 @@ void DriveBody(uint32_t ctl) {
     float heading = std::atan2(f[0], f[2]) * 57.2957795f;
     float pitch = h > 0.01f ? -std::atan2(f[1], h) * 57.2957795f : 0.0f;
     float angles[4] = {heading, heading, heading, pitch};
+    // blackquest (user): a VR partner's body faces where it walks (its head's way when it stands), its torso and its
+    // weapon where its gun in the hand points, the barrel's elevation for the pitch
+    float aim[3];
+    if (coop::PartnerAim(aim)) {
+        float ah = std::sqrt(aim[0] * aim[0] + aim[2] * aim[2]);
+        float aim_heading = std::atan2(aim[0], aim[2]) * 57.2957795f;
+        float body = heading;
+        if (g_body_rate > 0.15f && (g_body_dir[0] != 0 || g_body_dir[2] != 0)) body = std::atan2(g_body_dir[0], g_body_dir[2]) * 57.2957795f;
+        angles[0] = body;
+        angles[1] = angles[2] = aim_heading;
+        angles[3] = ah > 0.01f ? -std::atan2(aim[1], ah) * 57.2957795f : pitch;
+    }
     std::memcpy(HostPtr(ctl + kControlAngles), angles, 16);
     G<float>(ctl + kControlSpeed) = 0;
     std::memset(HostPtr(ctl + kControlMove), 0, 16);

@@ -672,6 +672,7 @@ struct DrawTextures {
     VkImageView view[4] = {};
     VkFormat fmt[4] = {};
     uint32_t levels[4] = {1, 1, 1, 1};
+    bool hd[4] = {};  // an HD pack image bound in the stage (its own mips always used)
     bool rt[4] = {};
     float k[4] = {1, 1, 1, 1};
     float wide[4] = {};
@@ -2781,6 +2782,9 @@ VkSampler VulkanBackend::StageSampler(const State& s, int i, const DrawTextures&
     const auto& t = s.tss[size_t(i)];
     uint32_t mag = t[kTssMagFilter], min = t[kTssMinFilter], mip = t[kTssMipFilter];
     auto lin = [](uint32_t f) { return f >= kTexfLinear; };
+    // an HD pack image: its mips used even where the game's texture had none (or the game set no mip filter), else a
+    // 1024 image drawn small speckles (headset shot 2026-11-24, a roof panel)
+    if (stages.hd[i] && lin(min)) mip = kTexfLinear;
     bool filterable = stages.fmt[i] != VK_FORMAT_R32_SFLOAT || r32f_linear_;
     sd.minFilter = lin(min) && filterable ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     sd.magFilter = lin(mag) && filterable ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
@@ -3543,6 +3547,7 @@ VkImageView VulkanBackend::BindGuestTexture(const State& s, int stage, const Tex
         if (const Image* hd = HdFor(t.hash)) {
             stages.fmt[stage] = hd->fmt;
             stages.levels[stage] = hd->levels;
+            stages.hd[stage] = true;
             return hd->view;
         }
     }
@@ -3560,6 +3565,7 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
     stages.wide[stage] = 0;
     stages.fmt[stage] = kBgra;
     stages.levels[stage] = 1;
+    stages.hd[stage] = false;
     TextureDesc d;
     if (!s.textures[size_t(stage)] || !Describe(s.textures[size_t(stage)], d)) return VK_NULL_HANDLE;
     const FormatInfo& fi = Format(d.format);

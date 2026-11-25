@@ -21,5 +21,6 @@ View Current();      // any thread
 void Give(int type);  // any thread: done on the game thread's next tick
 void FillAmmo();      // any thread: both slots' ammunition to full
 void FillMedkits();    // any thread: the medkits to the game's maximum
+void AddMagazines(int n);  // any thread: n of the held gun's magazines to its reserve (co-op's handover)
 
 }  // namespace weapons

@@ -39,6 +39,10 @@ using namespace kernel;
 using layout::kWorld;
 using layout::kWorldPlayer;
 
+namespace game {
+bool VrGunAim(float* dir);  // vr_gun.cpp: a direction turned from the head's view to the gun hand's
+}
+
 namespace coop {
 
 namespace {
@@ -119,6 +123,10 @@ struct State {
     float yaw, pitch;
     uint32_t shot_ack;   // the last of the partner's shots taken
     uint32_t world_ack;  // and of its world events
+    // blackquest: a VR player's gun, the barrel's direction in the world (its body aims along it, not its head's
+    // view); vr_aim 0: a flat player, the view's forward stands
+    float aim[3];
+    uint8_t vr_aim;
 };
 // the shots (or world events) not yet acknowledged, each frame until they are: one event after another
 struct Shots {
@@ -385,6 +393,12 @@ void Sample(State& s, uint64_t now) {
     s.yaw = G<float>(world + kWorldController + kControllerYaw);
     s.pitch = G<float>(world + kWorldController + kControllerPitch);
     s.crouch = G<uint8_t>(player + kPlayerCrouch);
+    {
+        // blackquest: the gun in the hand's barrel, the view's forward turned by the hand (vr_gun.cpp)
+        float d[3] = {s.view[kRowForward][0], s.view[kRowForward][1], s.view[kRowForward][2]};
+        s.vr_aim = game::VrGunAim(d) ? 1 : 0;
+        std::memcpy(s.aim, d, sizeof(d));
+    }
     // Sample() runs for each logical recipient at the same timestamp. Measure
     // once, then send everyone the same speed rather than differentiating the
     // receiver's bursty packet arrivals (which makes online bodies slide).
@@ -851,6 +865,11 @@ std::string Nickname(int player) {
     return player >= 0 && player < kMaxPlayers ? g_players[player].nickname : std::string();
 }
 bool PartnerCrouch() { return g_remote.in_level && g_remote.crouch; }
+bool PartnerAim(float out[3]) {
+    if (!g_remote.in_level || !g_remote.vr_aim) return false;
+    std::memcpy(out, g_remote.aim, 12);
+    return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+}
 void PartnerMotion(float direction[3], float& speed) {
     std::memcpy(direction, g_remote.move, sizeof g_remote.move);
     speed = g_remote.in_level && NowMs() - CurrentParticipant().state_at <= 500 ? g_remote.speed : 0;

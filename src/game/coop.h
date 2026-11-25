@@ -80,6 +80,7 @@ bool HostHeard();                // a joining copy: its host welcomed it and was
 bool InPlay();                   // the world steps and its player with it
 const float* PartnerForward();   // the partner's view, its last state's forward row
 bool PartnerCrouch();            // the partner crouches
+bool PartnerAim(float out[3]);   // blackquest: a VR partner's gun barrel in the world (false: none, a flat player)
 // the partner's current unit in this level (-1 not in it), its next one activated, the unit its advance waits for
 int PartnerUnit(int* next_active, int* waiting);
 bool PartnerDown();  // the partner is dead in this level, waiting for the team's checkpoint

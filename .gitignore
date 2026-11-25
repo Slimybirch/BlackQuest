@@ -64,3 +64,8 @@ europe.patch
 # generated at build time by tools/stocks.py (too big for git)
 /src/game/vr_stocks.h
 __pycache__/
+
+# phase 10: the builder's outputs (built by dotnet build builder -c Release)
+builder/obj/
+builder/bin/
+/BlackQuestBuilder.exe

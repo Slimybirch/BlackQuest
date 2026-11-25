@@ -126,3 +126,8 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] CO-OP tab: HOST shows your internet address and port, COPY ADDRESS pastes into Messenger (confirm)
 - [ ] co-op over the internet: a partner joins by the pasted address; both see each other (confirm)
 - [ ] the barrel reticle: a green ring where the barrel points, steady in both eyes (confirm)
+- [ ] co-op partner in VR: its soldier walks the way it moves and aims where its gun points (confirm)
+- [ ] co-op: a magazine from your chest let go of at your partner's chest goes to them (auto: mag_given) (confirm)
+- [ ] silencer: from the left hip, lined up at the muzzle, one twist on (auto: silencer_on) (confirm)
+- [ ] silencer: grip it on the gun, twist back off; let go: back to the hip (auto: silencer_off) (confirm)
+

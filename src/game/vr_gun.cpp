@@ -3009,6 +3009,22 @@ void QuatOf(const float* m, float* q) {
 }
 }  // namespace
 
+// the gun's axes (A: columns, -z down the barrel) and its muzzle in local space, as last posed (the silencer)
+bool VrGunLocal(float* A, float* muzzle) {
+    float p[3];
+    {
+        std::lock_guard lock(g_scope_lock);
+        if (NowMs() - g_scope_ms > 250) return false;
+        std::memcpy(A, g_scope_a, sizeof(g_scope_a));
+        std::memcpy(p, g_scope_p, sizeof(p));
+    }
+    auto it = kGrips.find(weapons::HeldCode());
+    const Grip& g = it == kGrips.end() ? kDefaultGrip : it->second;
+    // the grip sits back and down from the muzzle by kGrips' back and down
+    for (int i = 0; i < 3; i++) muzzle[i] = p[i] - A[i * 3 + 2] * g.back + A[i * 3 + 1] * g.down;
+    return true;
+}
+
 // the barrel's reticle (user): a point 20 m down the barrel from the gun, in each eye; off with no gun in the hand,
 // a melee swing on, or RETICLE off
 bool VrReticle(int eye, float* ret) {

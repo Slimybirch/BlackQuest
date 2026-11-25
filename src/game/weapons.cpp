@@ -963,6 +963,8 @@ View Current() {
 void Give(int type) { g_give = type; }
 
 void FillAmmo() { g_fill = true; }
+std::atomic<int> g_add_mags{0};
+void AddMagazines(int n) { g_add_mags += n; }
 void FillMedkits() { g_medkits = true; }
 
 void SetAutoSuppressor(bool on) { g_auto_suppressor = on; }  // add its declaration to game/weapons.h
@@ -998,6 +1000,23 @@ bool GunDb(const std::string& code, std::vector<uint8_t>& out) {
 }
 
 // the table code of the weapon in the player's hand ("AK1", "PST"...), empty when none; game thread (vr_gun.cpp)
+// the silencer by hand (vr_silencer.cpp), game thread: -1 the held gun takes none, else whether it's on
+int SuppressorHeld(uint32_t& weapon) {
+    Level l;
+    weapon = ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
+    if (!weapon || R32(l.inventory + kInvRequest) || weapon != R32(l.inventory + kInvSwitchTo)) return -1;  // switching
+    LoadSuppressorCodes();
+    if (!SuppSupportedType(l.manager, G<uint8_t>(weapon + kWeaponType))) return -1;
+    return R32(weapon + kWeaponSuppressed) ? 1 : 0;
+}
+
+// on or off on the gun in hand (its sound follows at the next weapon switch, as the panel's)
+void SetSuppressorHeld(bool on) {
+    Level l;
+    uint32_t w = ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
+    if (w) W32(w + kWeaponSuppressed, on ? 1 : 0);
+}
+
 std::string HeldCode() {
     Level l;
     if (!ReadLevel(l)) return {};
@@ -1049,11 +1068,28 @@ void DevGive(X86Context& ctx) {
 }
 
 // game thread, each menu and HUD tick (hooks.cpp MenuTick)
+namespace game { void VrSilencerTick(); }  // vr_silencer.cpp
 void WeaponsTick(X86Context& ctx) {
     static int tick;
+    game::VrSilencerTick();
     DevGive(ctx);
     if (int type = g_give.exchange(-1); type >= 0) DoGive(ctx, type);
     if (g_fill.exchange(false)) DoFill();
+    if (int n = weapons::g_add_mags.exchange(0)) {
+        // a magazine handed over (co-op): the held gun's clip of rounds to its ammunition type's reserve
+        Level l;
+        uint32_t w = ReadLevel(l) ? R32(l.inventory + kInvHeld) : 0;
+        uint32_t mag = w ? R32(w + kWeaponMagazine) : 0;
+        uint32_t data = mag ? R32(mag + kMagazineData) : 0;
+        if (data) {
+            uint32_t type = R32(data + kDataAmmoType), clip = G<uint16_t>(data + kDataClip);
+            if (type < kAmmoTypes) {
+                uint16_t& ammo = G<uint16_t>(l.inventory + type * 2);
+                ammo = uint16_t(std::clamp<int>(int(ammo) + n * int(clip), 0, int(kAmmoMax)));
+                SetStatus("A magazine from your partner");
+            }
+        }
+    }
     if (g_medkits.exchange(false)) DoFillMedkits();
     if (++tick % 10 == 0) Refresh();
     Heartbeat();

@@ -10,6 +10,13 @@ the co-op of [black-seamless-coop](https://github.com/MuriloDagustin/black-seaml
 
 ## Building BlackQuest (Windows)
 
+**The easy way: BlackQuest Builder.** Start `BlackQuestBuilder.exe` in this folder, pick your Black disc image
+(USA, `.iso`), pick your Quest (plugged in by USB with USB debugging allowed, or connected over Wi-Fi by its
+address), and press **BUILD & INSTALL**. It downloads what it needs into `toolchain\` (Java, the Android SDK,
+and Visual Studio's C++ build tools through their own installer), builds the game from your disc, installs it and
+copies the disc to the headset. The first build takes 30 to 90 minutes; later ones are quick. Build it from source
+with `dotnet build builder -c Release`. The steps below are what it does, by hand.
+
 This repository holds **no game files of any kind**: no disc image, no `default.xbe`, no recompiled code, and no
 patch made from game binaries. You need your own copy of *Black* for the original Xbox, USA (NTSC-U) or Europe
 (PAL), dumped to an `.iso`.

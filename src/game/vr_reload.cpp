@@ -21,6 +21,8 @@
 #include "app/app.h"
 #include "common/options.h"
 #include "core/log.h"
+#include "game/coop.h"
+#include "game/coop_world.h"
 #include "game/layout.h"
 #include "xdk/hle.h"
 
@@ -44,6 +46,28 @@ uint32_t HeldWeapon();
 }
 
 namespace game {
+
+bool VrHandWorld(int hand, float* pos, float* vel);  // vr_gun.cpp: a hand's grip in the game's world, metres
+
+// co-op: the off hand within reach of a partner's chest (its eye less 0.4 m, within 0.55 m): the magazine is handed
+// to that partner (coop_world.cpp SendAmmo); game thread
+bool HandOver() {
+    if (!coop::Networked()) return false;
+    float p[3], v[3];
+    if (!VrHandWorld(0, p, v)) return false;
+    for (int player = 0; player < coop::kMaxPlayers; player++) {
+        if (player == coop::LocalPlayer() || !coop::Connected(player)) continue;
+        coop::PartnerScope scope(player);
+        float view[4][3];
+        if (!coop::PartnerView(view) || coop::PartnerDown()) continue;
+        float d[3] = {p[0] - view[3][0], p[1] - (view[3][1] - 0.4f), p[2] - view[3][2]};
+        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 0.55f * 0.55f) {
+            coop::world::SendAmmo(player);
+            return true;
+        }
+    }
+    return false;
+}
 float VrViewLift();                           // vr_body.cpp
 int64_t VrGameCycledMs();                     // vr_gun.cpp: the game last cycled the held gun's pump or bolt
 int VrModePresses();                          // vr_body.cpp: the fire-mode button's presses
@@ -1439,6 +1463,15 @@ void VrReloadTick() {
         } else if (!grab && !g_seating && (g_parts.shells || g_parts.revolver)) {
             state = 0;  // a shell let go of away from the gun: back on the belt (nothing taken)
             g_insert = -1;
+        } else if (!grab && !g_seating && reserve >= a.size && HandOver()) {
+            // co-op (user): let go of at a partner's chest, it's theirs: one clip off the reserve (its rounds were
+            // still counted there), and nothing drops
+            reserve = uint16_t(reserve - a.size);
+            state = 0;
+            g_insert = -1;
+            xr::Pulse(0, 0.6f, 0.08f);
+            TestEvent("mag_given");
+            LOGR("vr reload: %s magazine handed over, reserve %u", code.c_str(), reserve);
         } else if (!grab && !g_seating) {
             // let go of it away from the gun: thrown with the hand's speed (its rounds were never taken)
             {

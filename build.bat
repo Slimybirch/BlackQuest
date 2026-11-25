@@ -13,8 +13,9 @@ set "PF86=%ProgramFiles(x86)%"
 set "VSWHERE=%PF86%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "TOOLS=%CD%\out\build\android-tools"
 rem blackquest: a portable sdk and jdk in toolchain\ (gitignored) win over the machine's
-if exist "%CD%\toolchain\android-sdk\platforms" set "ANDROID_HOME=%CD%\toolchain\android-sdk"
-if exist "%CD%\toolchain\jdk17\lib\jvm.cfg" set "JAVA_HOME=%CD%\toolchain\jdk17"
+rem (the Builder sets them to its tools folder or the player's own tools first: those stand)
+if not defined BLACK_BUILDER if exist "%CD%\toolchain\android-sdk\platforms" set "ANDROID_HOME=%CD%\toolchain\android-sdk"
+if not defined BLACK_BUILDER if exist "%CD%\toolchain\jdk17\lib\jvm.cfg" set "JAVA_HOME=%CD%\toolchain\jdk17"
 if not defined ANDROID_HOME set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
 set "NDK=%ANDROID_HOME%\ndk\28.2.13676358"
 set "SDKCMAKE=%ANDROID_HOME%\cmake\3.31.6\bin"

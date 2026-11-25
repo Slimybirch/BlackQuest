@@ -115,9 +115,13 @@
       (joint limits, a ground and world collision through the game's ray queries), and write the bones back
       each frame in place of the death animation. Needs the skeleton/bone update and the death hook (co-op
       0x1DA240/0x1DA1A0 area); a big job, after Phase 6. In co-op each copy would run its own (cosmetic only).
-- [ ] silencer by hand (Phase 5 style, with the reload work): hold the silencer in the off hand and twist it onto
-      the barrel to fit it; twist the other way to take it off. Find the game's silencer toggle and call it when
-      the twist completes; the button stays as a fallback.
+- [x] (built 2026-11-24, not run) silencer by hand (vr_silencer.cpp): a holster on the left hip for a gun whose
+      silencer the player has (seen on it, or put on), grip there takes it, within 4 cm of the muzzle along the barrel
+      it lines up, one ~60 degree clockwise twist locks it (weapon+0x108 on), grip at the muzzle and the reverse
+      twist takes it off into the hand, let go anywhere else: back to the holster
+- [ ] silencer, with the headset: the silencer drawn in the hand (the gun model's own silencer part: a dev_dumpgun
+      of a suppressed gun), the tail of the game's suppressor animation as it locks (what starts it: the inventory's
+      busy 0x13), the sound changing at once (now at the next weapon switch, as the panel's); the hip's place
 - [x] (built 2026-11-24, headset shots with test hands) the WA2000's scope as a lens: a third replay from the
       scope, its picture on the eyepiece with a reticle (NOTES "scopes"). Still: the user's own check that it's
       sharp, aligned and smooth at the eye; the frame rate while scoped; X2/X5 zoom levels (now about 4x)
@@ -345,6 +349,12 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] the HD mips only filter when the game's texture had mips (the game's sampler state): check distant HD walls
 - [ ] the loader's KTX2 has no supercompression (zstd): the converter writes plain ASTC
 - [ ] the pack converter (PC): match the PS2 pack's images to the Xbox dumps, review sheet, ASTC KTX2, size cap
+- [x] (2026-11-24) the converter (builder/HdPack.cs): --match pairs the pack's images (PCSX2 hashes) with the
+      Xbox dump by picture (32x32 shape and edges, colour, alpha; mutual best, clear of the runner-up, score <= 0.68
+      from review sheets): tools/hd_map.txt, 173 of 895 dump textures. Conversion keeps the pack's DXT and mips
+      under a 1024 cap (KTX2 BC1/BC3: the Quest 3 samples BC); mip-less ones and PNGs get a BC3 encode
+- [x] HD images always mip-filtered (stages.hd): a 1024 image on a texture the game drew without mips speckled
+- [ ] coverage: 173 of 895; better matching (the PS2's art often differs) or a hand-made list for the rest
 - [ ] coverage report per level
 
 ## Phase 9 (co-op; user, 2026-11-24: moved up from 11)
@@ -356,8 +366,12 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       players' names (HOST, YOU); YOUR NAME on a letter pad; PORT
 - [ ] headset run: hosting at the title, the tab, the address found and copied (needs the user's go-ahead)
 - [ ] the first internet test (the user hosts, port 45410 UDP forwarded to the headset)
-- [ ] VR on the wire: the partner sees our head and the gun hand's aim, not the game's camera (the mod sends the
-      game's player state: check how a VR player looks to the other; the arms/gun in the hand are ours alone)
+- [x] (built 2026-11-24, not run) VR on the wire: the state carries the gun's barrel (aim, vr_aim); a VR partner's
+      body faces its walk (its head's way standing), its torso and weapon its gun's aim and pitch (DriveBody)
+- [ ] check which of the controller's angles is body / torso / aim on a real partner; arms posed to the real hands
+- [x] (built, not run) magazines handed over: a magazine from the chest let go of at a partner's chest (0.55 m of
+      its eye less 0.4 m) is theirs: kAmmo event (relayed by the host), one clip off our reserve, one of their gun's
+      clips onto theirs (weapons::AddMagazines)
 - [ ] the names over teammates in 3D (the mod draws them on the 2D overlay: wrong in the headset) and its status
       line; the go-to-teammate (F8 / L3+R3 in the mod) on a VR control; the down player's spectate in VR
 - [ ] room codes (EOS): see NOTES "room codes"; then a ROOM CODE row (create, join by code on the letter pad)
@@ -365,7 +379,28 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] giving ammo to another player (see Phase 6's list); grenades host-synced (NOTES)
 
 ## Phase 10 (the launcher / Builder; was 9)
-- [ ] the PC launcher: fetch, build and install over adb; normalise the xbe's cert patch before hashing (Phase 1)
+- [x] (built 2026-11-24) BlackQuestBuilder.exe (builder/, C# WinForms on .NET Framework 4.8: one small exe, nothing
+      to install): the disc, the HD pack (its converter is Phase 8's next step), the headset (USB or Wi-Fi by
+      address), one button BUILD & INSTALL; the tools fetched into toolchain/ when missing (JDK 17, the Android SDK
+      parts, Python, MinGit; Visual Studio's C++ build tools through their own installer), build.bat run with its
+      stages as progress, adb install, the disc copied to the app's files/assets on the headset
+- [x] the user's run (2026-11-24): BlackQuest uninstalled, then the Builder (no window, --build --hd --device) built,
+      installed and copied the disc over Wi-Fi in 41 s (the build was already up to date; the disc 28 s at 58 MB/s)
+- [ ] the disc is copied to the app's folder even when the headset has it in /storage/emulated/0/Black already
+      (1.7 GB twice): look there first (adb can read it), or ask
+- [ ] black window and teal buttons (the game's menu colour): the user's look, check it on their screen
+- [ ] on a clean PC (no toolchain/, no VS): the downloads and the VS installer step
+- [x] (2026-11-24) the HD pack step: tools\hd_map.txt (173 pairs) converted to out	extures_hd (201 MB), copied to
+      the headset through /data/local/tmp and the headset's cp (adb's push into the app's folder fails its chown)
+- [x] the headset's files checked first: the disc (the app's folder, then the shared Black folder; asks before
+      replacing a different one, or copying when it's only in Black), the HD textures (asks before replacing)
+- [x] a tools folder of the player's choice, the download sizes asked first, the downloaded tools removed after
+      success (VS's build tools installed into it and uninstalled), the player's own Java and Android SDK
+- [x] folders adb makes in the app's folder are the shell user's, closed to the app: opened (chmod), else the game
+      found no disc after a fresh install
+- [ ] finish the HD run: the headset went offline mid-test; reinstall (the mip fix below), then shots HD on/off
+- [ ] the builder ships prebuilt recompiler tools (no VS needed) and the source in the release zip (Phase 11)
+- [ ] normalise the xbe's cert patch before hashing (Phase 1 note)
 
 ## Phase 11 (release prep; was 10)
 - [ ] signed release build, README and credits (MIT notices kept), the version tag (only with the user's go-ahead)
