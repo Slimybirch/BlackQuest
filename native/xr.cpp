@@ -71,6 +71,7 @@ std::atomic<bool> g_head_valid{false};
 bool g_views_valid = false;
 VkFormat g_view_format = VK_FORMAT_R8G8B8A8_UNORM;
 XrSessionState g_state = XR_SESSION_STATE_UNKNOWN;
+std::atomic<uint32_t> g_no_render{0};  // frames the runtime said not to render (FrameReport)
 bool g_running = false;
 bool g_frame_begun = false;
 XrTime g_display_time = 0;
@@ -833,7 +834,23 @@ bool BeginFrame() {
     }
     ReadControls();
     ApplyRefreshRate();
+    if (!fs.shouldRender) g_no_render.fetch_add(1, std::memory_order_relaxed);
     return fs.shouldRender;
+}
+
+// every 5 s: frames ended, how many had no layers (the compositor shows passthrough/home for those), how many the
+// runtime said not to render, the session state. Why a capture shows the room while the game's focused
+static void FrameReport(uint32_t layers) {
+    static uint32_t ended, empty;
+    static auto last = std::chrono::steady_clock::now();
+    ended++;
+    if (!layers) empty++;
+    auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::seconds(5)) return;
+    last = now;
+    LOGR("xr: frames: %u ended, %u with no layers, %u not to render, session state %d", ended, empty,
+         g_no_render.exchange(0), int(g_state));
+    ended = empty = 0;
 }
 
 // the refresh rate VR SETTINGS asks for (0 the headset's own), when it changes and the runtime offers it: the
@@ -1023,6 +1040,7 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
         if (ei.layerCount >= 1 && !(panel && placed) && tip_size.width > 0)
             layers[ei.layerCount++] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&hint);
         ei.layers = layers;
+        FrameReport(ei.layerCount);
         XrResult r = xrEndFrame(g_session, &ei);
         if (XR_FAILED(r)) LOG_FIRST(4, "xr: xrEndFrame failed (%s)", ResultName(r));
         g_render_views[0] = g_next_views[0];
@@ -1067,6 +1085,7 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     ei.layerCount = drawn ? (panel && g_views_valid ? 2 : 1) : 0;
     ei.layers = layers;
+    FrameReport(ei.layerCount);
     XrResult r = xrEndFrame(g_session, &ei);
     if (XR_FAILED(r)) LOG_FIRST(4, "xr: xrEndFrame failed (%s)", ResultName(r));
     g_render_views[0] = g_next_views[0];

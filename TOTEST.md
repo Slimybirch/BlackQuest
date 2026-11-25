@@ -137,3 +137,6 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] a suppressor where the game places one (mission 2 starts with one): it goes to the inventory, not onto the gun, and the icon lights up (auto: silencer_picked) (confirm)
 - [ ] the silencer icon: dark with none, bright with a glow when you have one; then from the hip onto the gun: the icon darkens (confirm)
 - [ ] VR SETTINGS, TESTING, SPAWN A SILENCER: one lies on the floor ahead; walk over it: the pickup sound, the icon lights up; then the hip, line up, twist on (confirm)
+- [ ] the off hand points: grip pressed, index finger off the trigger: the index straight out (the Uzi in the other hand too) (confirm)
+- [ ] the Uzi: one-handed, its free off hand not turned (confirm)
+- [ ] the Walther: the off hand on the fore-end gripped like the AK's, free it's not turned (confirm)

@@ -103,7 +103,8 @@ const std::map<std::string, Grip> kGrips = {
     {"PST", {0.13f, 0.09f, 0.13f, true}}, {"PS5", {0.20f, 0.09f, 0.20f, true}},
     {"GK1", {0.13f, 0.09f, 0.13f, true}}, {"GK5", {0.20f, 0.09f, 0.20f, true}},
     {"MGN", {0.20f, 0.09f, 0.20f, true}}, {"MG5", {0.20f, 0.09f, 0.20f, true}},
-    {"SMG", {0.17f, 0.10f, 0.08f, true}},  {"SM5", {0.17f, 0.10f, 0.08f, true}},
+    // (the uzi: one-handed, as the game holds it: user, 2026-11-25)
+    {"SMG", {0.17f, 0.10f, 0.08f, false}}, {"SM5", {0.17f, 0.10f, 0.08f, false}},
     {"SM3", {0.14f, 0.09f, 0.06f, true}},  {"MC5", {0.14f, 0.09f, 0.06f, true}},
     {"MP1", {0.30f, 0.08f, 0.15f, true}},  {"MP5", {0.36f, 0.08f, 0.20f, true}},
     {"P90", {0.25f, 0.08f, 0.08f, true}},  {"P95", {0.25f, 0.08f, 0.08f, true}},
@@ -699,7 +700,11 @@ float SignedAngle(const float* a, const float* b, const float* axis) {
 }
 
 // one hand's fingers curled in G (before the hand is moved): curl 0 open .. 1 closed per finger (thumb: down)
-void CurlFingers(float (*c)[4], const ArmRig& a, const HandFingers& hf, const float* curl, bool on_gun) {
+// geo: the curl's direction from the mesh's own hand (toward the thumb's side of the palm), not from the game's pose:
+// a gun whose game left hand isn't a real pose (the uzi's clenched and hidden, the walther's turned) read it backward
+// and "open" bent the fingers further into a fist (user, 2026-11-25: point with the off hand)
+void CurlFingers(float (*c)[4], const ArmRig& a, const HandFingers& hf, const float* curl, bool on_gun, bool geo = false,
+                 const std::string& code = {}) {
     Aff hb = Bone(c, a.hand);
     // the knuckle line, across the hand from the little finger to the index, in G
     float lat_m[3], lat[3];
@@ -717,7 +722,23 @@ void CurlFingers(float (*c)[4], const ArmRig& a, const HandFingers& hf, const fl
         RotOf(Bone(c, hf.f[i].bone[0]), hf.f[i].dir[0], d);
         sum += SignedAngle(hd, d, lat);
     }
-    if (sum < 0)
+    bool flip = sum < 0;
+    {
+        // the mesh's palm side: the thumb's root off the plane of the knuckles and the wrist; a curl (+ about the
+        // knuckle line, little to index) carries a finger toward it
+        float mid[3] = {}, v[3], pn[3], th[3];
+        for (int i = 1; i < 5; i++)
+            for (int j = 0; j < 3; j++) mid[j] += hf.f[i].pivot[0][j] * 0.25f;
+        for (int j = 0; j < 3; j++) v[j] = mid[j] - a.wrist[j], th[j] = hf.f[0].pivot[0][j] - mid[j];
+        Cross(lat_m, v, pn);
+        bool geo_flip = pn[0] * th[0] + pn[1] * th[1] + pn[2] * th[2] < 0;
+        static std::set<std::string> told;
+        if (!code.empty() && told.insert(code + (a.side < 0 ? "L" : "R")).second)
+            LOGR("vr arms: %s %s hand's curl: from its pose %s, from the mesh %s%s", code.c_str(), a.side < 0 ? "left" : "right",
+                 flip ? "flipped" : "kept", geo_flip ? "flipped" : "kept", geo ? " (the mesh's used)" : "");
+        if (geo) flip = geo_flip;
+    }
+    if (flip)
         for (float& v : lat) v = -v;
     for (int i = 0; i < 5; i++) {
         const Finger& f = hf.f[i];
@@ -822,6 +843,22 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
             LOGR("vr arms: %s left hand on root %d: %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f; "
                  "palm %.3f %.3f %.3f", code.c_str(), GunRoot(code), rel.m[0], rel.m[1], rel.m[2], rel.m[3], rel.m[4],
                  rel.m[5], rel.m[6], rel.m[7], rel.m[8], rel.m[9], rel.m[10], rel.m[11], palm[0], palm[1], palm[2]);
+            // and the left hand's turn in the gun's own axes (GunAxes, C: the bone's G with x and z flipped), which
+            // the free off hand is posed against: Q = Rᵀ F B F
+            Frame fr;
+            std::memcpy(&fr, frame, sizeof(fr));
+            float R[9], Q[9];
+            GunAxes(fr, R);
+            Aff h = Bone(c, rig[0].hand);
+            const float F[3] = {-1, 1, -1};
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) {
+                    float v = 0;
+                    for (int k = 0; k < 3; k++) v += R[k * 3 + i] * F[k] * h.m[k * 4 + j] * F[j];
+                    Q[i * 3 + j] = v;
+                }
+            LOGR("vr arms: %s left hand in the gun's axes: %.4f %.4f %.4f | %.4f %.4f %.4f | %.4f %.4f %.4f", code.c_str(),
+                 Q[0], Q[1], Q[2], Q[3], Q[4], Q[5], Q[6], Q[7], Q[8]);
         }
     }
     // the uzi's and walther's game left hand isn't on the gun (the uzi's hidden half a metre off, the walther's
@@ -831,6 +868,19 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
     if (code == "SMG" || code == "SM5" || code == "SNR" || code == "SN5") {
         static const float kM16Left[9] = {0.0351f, 0.5319f, -0.8461f, -0.9744f, 0.2062f, 0.0892f,
                                           0.2219f, 0.8213f, 0.5255f};
+        // the uzi (one-handed, user 2026-11-25): its free off hand as the pistol's, the pistol's left hand in the gun's
+        // own axes (dev_lefthand: PST, Q = Rᵀ F B F) put on the uzi's (the root's own turn differs gun to gun: the
+        // M16's hand on the uzi's root came palm up toward the gun)
+        static const float kPstInGun[9] = {-0.0365f, 0.9956f, -0.0641f, -0.9940f, -0.0423f, -0.0869f,
+                                           -0.0878f, 0.0615f, 0.9937f};
+        // the walther (user, 2026-11-25): on its fore-end the AK's left hand in the gun's axes (a rifle's fore-grip,
+        // the game's own; the walther's is turned at the stock's side, the M16's borrowed cupped it from under), free
+        // the pistol's, as the uzi's
+        static const float kAkInGun[9] = {0.0351f, -0.4000f, -0.9158f, 0.9743f, 0.2173f, -0.0576f,
+                                          0.2220f, -0.8903f, 0.3974f};
+        const bool uzi = code == "SMG" || code == "SM5";
+        const float* in_gun = uzi ? kPstInGun : g_left_on.load(std::memory_order_relaxed) ? kAkInGun : kPstInGun;
+        const float* left = kM16Left;
         Frame fr;
         std::memcpy(&fr, frame, sizeof(fr));
         Aff root = Bone(c, GunRoot(code)), old_hand = Bone(c, rig[0].hand), hand = kIdentityAff;
@@ -838,9 +888,21 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++) {
                 float v = 0;
-                for (int k = 0; k < 3; k++) v += root.m[i * 4 + k] * kM16Left[k * 3 + j];
+                for (int k = 0; k < 3; k++) v += root.m[i * 4 + k] * left[k * 3 + j];
                 hand.m[i * 4 + j] = v;
             }
+        {
+            // B = F R Q F (G: x and z flipped from C)
+            float R[9];
+            GunAxes(fr, R);
+            const float F[3] = {-1, 1, -1};
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) {
+                    float v = 0;
+                    for (int k = 0; k < 3; k++) v += R[i * 3 + k] * in_gun[k * 3 + j];
+                    hand.m[i * 4 + j] = F[i] * v * F[j];
+                }
+        }
         // the palm at the fore-grip (C before K, x and z flipped into G)
         float want[3], at[3];
         for (int i = 0; i < 3; i++) want[i] = fr.grip[i] + fr.fwd[i] * fr.fore;
@@ -960,7 +1022,9 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
                     held = false;
                 }
                 for (int i = 0; i < 5; i++) eased[h][i] += (want[i] - eased[h][i]) * k;
-                CurlFingers(c, rig[h], found->second[h], eased[h], held || h == 1);
+                // the guns whose game left hand is borrowed (uzi, walther): the curl's direction from the mesh
+                const bool borrowed = h == 0 && (code == "SMG" || code == "SM5" || code == "SNR" || code == "SN5");
+                CurlFingers(c, rig[h], found->second[h], eased[h], held || h == 1, borrowed, code);
             }
         }
     }

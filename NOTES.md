@@ -2038,3 +2038,33 @@ brighter and bigger)
   floor) it goes into the inventory with the game's pickup message (weapons::PickupMessage(4) -> 0x12B510: ecx the
   kind, al and dl 0, the message list *0x2D12E4 +0x0C pushed). The row reads PRESS / ON THE GROUND / IN THE
   INVENTORY. dev_spawn_silencer presses it 8 s into play (headset log: laid ahead in mission 1).
+
+## 2026-11-25: the Uzi one-handed, its free off hand
+
+- kGrips: SMG and SM5 no longer two-handed (user: the game holds the Uzi one-handed), so the fore-grip isn't taken.
+- dev_lefthand also logs the game's left hand in the gun's own axes (Q = Rᵀ F B F, R = GunAxes, F the x/z flip):
+  PST -0.037 0.996 -0.064 | -0.994 -0.043 -0.087 | -0.088 0.062 0.994; SMG's own (hidden) hand 1.000 -0.016 0.004
+  | 0.002 0.363 0.932 | -0.016 -0.932 0.363. The Uzi's borrowed hand is now F R Q_pst F (the pistol's turn on the
+  Uzi's axes) instead of the root times the M16's: test-hands shots show the Uzi's free hand at the pistol's angle
+  (root·PST-on-root gave the same: both roots sit alike in their guns) but still a fist: the free fingers open by a
+  set flex from the game's pose, and the Uzi's hidden left hand is clenched. Next: open the free fingers from the
+  mesh's own bind directions (or the pistol's finger pose) on guns whose game left hand isn't a real pose.
+- The free fingers' curl direction: CurlFingers can take it from the mesh (the thumb's side of the knuckles' plane)
+  instead of the game's pose (geo, used for the borrowed left hands: SMG, SM5, SNR, SN5); logged per gun: PST and
+  SMG left both "flipped" either way, so the direction wasn't the Uzi's fault. dev_curl "1 0 0" (grip, trigger,
+  thumb: the point gesture) on the Uzi: the gun hand's index straight out, the others closed; the off hand's fingers
+  out of the test view (low, pointing away). Pointing is the grip pressed with the index off the trigger.
+- The Walther (SNR, SN5): dev_lefthand in the gun's axes: AK1 0.035 -0.400 -0.916 | 0.974 0.217 -0.058 | 0.222
+  -0.890 0.397; SNR's own 0.416 -0.129 -0.900 | 0.536 0.833 0.128 | 0.733 -0.536 0.416. Its borrowed hand is now the
+  AK's turn on the Walther's axes while the off hand holds the fore-end (a rifle's grip; the M16's had it cupped from
+  under), the pistol's when free, as the Uzi's. Built and installed; the test shots came out as the Meta Store over
+  passthrough (the Store in front of the game both runs): not seen yet.
+
+
+## 2026-11-25: the frame report; the Walther seen
+- `xr: frames: N ended, N with no layers, N not to render, session state S` every 5 s (native/xr.cpp FrameReport):
+  the walther runs that showed only passthrough were the shell (the Store, QGO) in front, not the game stalling: 0
+  empty frames, focused throughout once they were closed.
+- 72 fps for the first 15 s, then ~47-50 once the walther is given (test hands, ruins start): a drop to chase.
+- the walther's free hand at the pistol's angle, and grip with the trigger off points the index (test hands). The
+  fore-end grip is unseen: fake hands never reach it.
