@@ -67,7 +67,8 @@ The settings panel, with the VR settings and cheats, opens beside the game's own
 ## Building and installing (Windows)
 
 You need a Windows PC with about 15 GB free, your *Black* disc dumped to an `.iso` (USA or Europe release; region
-patched dumps are fine), and a Quest 3 in [developer mode](https://developers.meta.com/horizon/documentation/native/android/mobile-device-setup/).
+patched dumps are fine; an XISO or a full disc dump both work, and a dump named `.xiso` only needs renaming to
+`.iso`), and a Quest 3 in [developer mode](https://developers.meta.com/horizon/documentation/native/android/mobile-device-setup/).
 
 ### The easy way: BlackQuest Builder
 
