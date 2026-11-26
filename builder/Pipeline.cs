@@ -81,7 +81,7 @@ public sealed class Pipeline {
         if (!SdkReady()) { list.Add("the Android SDK, NDK and CMake (1.2 GB, 3.5 GB on disk)"); gb += 3.5; }
         if (FindOnPath("python.exe") == null && !File.Exists(Path.Combine(Toolchain, "python", "python.exe"))) { list.Add("Python (0.01 GB)"); gb += 0.03; }
         if (FindOnPath("git.exe") == null && !File.Exists(Path.Combine(Toolchain, "git", "cmd", "git.exe"))) { list.Add("git (0.05 GB, 0.3 GB on disk)"); gb += 0.3; }
-        if (!HasVsCpp()) { list.Add("Visual Studio's C++ build tools (2 GB, 6 GB on disk; Windows asks to allow them)"); gb += 6; }
+        if (!Prebuilt() && !HasVsCpp()) { list.Add("Visual Studio's C++ build tools (2 GB, 6 GB on disk; Windows asks to allow them)"); gb += 6; }
         return list;
     }
 
@@ -142,7 +142,7 @@ public sealed class Pipeline {
             downloaded.Add(Path.Combine(Toolchain, "git"));
         }
         // Visual Studio's C++ tools (the recompiler is a Windows program); its installer asks for permission itself
-        if (!HasVsCpp()) {
+        if (!Prebuilt() && !HasVsCpp()) {
             Log("Visual Studio C++ Build Tools: not found. Downloading its installer; Windows will ask to allow it.");
             string vs = Path.Combine(Toolchain, "vs_BuildTools.exe");
             if (!Download(kVsUrl, vs)) return false;
@@ -173,6 +173,10 @@ public sealed class Pipeline {
         }
         Progress(100, "Done, the downloaded tools removed");
     }
+
+    // the release's recompiler, prebuilt (tools\bin): no Visual Studio then
+    bool Prebuilt() =>
+        File.Exists(Path.Combine(Root, "tools", "bin", "xbe_recomp.exe")) && File.Exists(Path.Combine(Root, "tools", "bin", "xbe_symbols.exe"));
 
     bool HasVsCpp() {
         string vswhere = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft Visual Studio", "Installer", "vswhere.exe");

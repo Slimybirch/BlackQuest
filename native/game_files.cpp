@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 
 #include "app/app.h"
@@ -112,6 +113,23 @@ std::string Sha1(const std::vector<uint8_t>& data) {
         hex += "0123456789abcdef"[b & 15];
     }
     return hex;
+}
+
+// the sha1 an xbe is known by: its certificate's allowed media and region set back to the us release's (0x202, 1),
+// as dump tools patch them for region-free play (code and data untouched); tools/xbe_sha1.py does the same for the
+// build's kImageSha1, so any dump of the us disc matches
+std::string CertSha1(const std::vector<uint8_t>& xbe) {
+    if (xbe.size() < 0x11C || std::memcmp(xbe.data(), "XBEH", 4) != 0) return Sha1(xbe);
+    uint32_t base, cert;
+    std::memcpy(&base, xbe.data() + 0x104, 4);
+    std::memcpy(&cert, xbe.data() + 0x118, 4);
+    uint64_t off = uint64_t(cert) - base;
+    if (cert < base || off + 0xA4 > xbe.size()) return Sha1(xbe);
+    std::vector<uint8_t> copy = xbe;
+    const uint32_t media = 0x202, region = 1;
+    std::memcpy(copy.data() + off + 0x9C, &media, 4);
+    std::memcpy(copy.data() + off + 0xA0, &region, 4);
+    return Sha1(copy);
 }
 
 bool ReadHostFile(const fs::path& path, std::vector<uint8_t>& out) {
@@ -321,7 +339,7 @@ int Search(GameFiles& game) {
         std::string sha = Sha1(xbe);
         bool europe = sha == kEuropeSha1;
         if (europe) europe = ConvertEurope(xbe);
-        std::string image_sha = europe ? Sha1(xbe) : sha;
+        std::string image_sha = CertSha1(xbe);
         bool match = image_sha == kImageSha1;
         const char* release = europe ? ", Europe release" : "";
         LOGR("Game: %s in %s, sha1 %s%s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(), release,

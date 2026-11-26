@@ -10,12 +10,22 @@ the co-op of [black-seamless-coop](https://github.com/MuriloDagustin/black-seaml
 
 ## Building BlackQuest (Windows)
 
-**The easy way: BlackQuest Builder.** Start `BlackQuestBuilder.exe` in this folder, pick your Black disc image
-(USA, `.iso`), pick your Quest (plugged in by USB with USB debugging allowed, or connected over Wi-Fi by its
-address), and press **BUILD & INSTALL**. It downloads what it needs into `toolchain\` (Java, the Android SDK,
-and Visual Studio's C++ build tools through their own installer), builds the game from your disc, installs it and
-copies the disc to the headset. The first build takes 30 to 90 minutes; later ones are quick. Build it from source
-with `dotnet build builder -c Release`. The steps below are what it does, by hand.
+**The easy way: the release zip and BlackQuest Builder.** Download `BlackQuest-<version>.zip` from
+[Releases](https://github.com/Slimybirch/BlackQuest/releases) and unzip it to a folder with about 15 GB free (a
+short path such as `C:\BlackQuest` is best). It holds this source, `BlackQuestBuilder.exe` and the recompiler
+prebuilt in `tools\bin`, so **no Visual Studio is needed**. Start `BlackQuestBuilder.exe`, pick your Black disc
+image (`.iso`), pick your Quest (plugged in by USB with USB debugging allowed, or connected over Wi-Fi by its
+address), and press **BUILD & INSTALL**. It downloads what it needs into a tools folder (Java, the Android SDK,
+Python and git when missing), builds the game from your disc, installs it and copies the disc to the headset. The
+first build takes 30 to 90 minutes; later ones are quick. The Quest must be in developer mode.
+
+No APK is ever published: it would contain the game's code. Each player's APK is built on their own PC and signed
+with that PC's own Android key (`%USERPROFILE%\.android\debug.keystore`), so later builds from the same PC
+install over it and keep its settings and saves; a build from another PC has to be uninstalled first.
+
+From a clone of the repository instead, the Builder (`dotnet build builder -c Release`) and `build.bat` also build
+the recompiler, which needs Visual Studio's C++ build tools (the Builder installs them). The steps below are what
+it does, by hand.
 
 This repository holds **no game files of any kind**: no disc image, no `default.xbe`, no recompiled code, and no
 patch made from game binaries. You need your own copy of *Black* for the original Xbox, USA (NTSC-U) or Europe
@@ -24,7 +34,9 @@ patch made from game binaries. You need your own copy of *Black* for the origina
 1. Clone this repository.
 2. Put your disc image in the repository's root folder (for example `Black.iso`), or in `assets\` or `iso\`, or set
    `BLACK_ISO` to its path. Git ignores it; never commit it.
-3. Tools: Visual Studio 2022 or 2026 (Build Tools are enough) with the C++ workload; Android SDK Platform 34,
+3. Tools: Visual Studio 2022 or 2026 (Build Tools are enough) with the C++ workload (not needed when
+   `tools\bin` holds the prebuilt recompiler, as in the release zip: `build.bat` then fetches the recompiler's SDK
+   into `sdk\` with git); Android SDK Platform 34,
    NDK `28.2.13676358` and CMake `3.31.6`; JDK 17; and Clang 20 or newer for the recompiler when your Visual Studio
    is 2026 (its C++ library refuses older Clang). They can live in a `toolchain\` folder in the repository
    (`toolchain\jdk17`, `toolchain\android-sdk`, `toolchain\llvm`), which `build.bat` uses first. Python 3 pulls

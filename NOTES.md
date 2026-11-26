@@ -2175,3 +2175,27 @@ brighter and bigger)
   0.074..0.093, z 0.028..0.111, 8.3 cm: taken as the bolt in the ejection port, the lock moves it back 7 cm), 99
   (+x, z 0.031..0.052), 102 (top, z 0.050..0.095). Bone 90 not yet confirmed (the headset was off the network for
   the dev_hidebone run); the handle now moves with the off hand's pull alone (g_handle).
+
+## 2026-11-25: release prep (Phase 11): prebuilt recompiler, the disc check, the version
+- User: push and release so a friend can build and install; the recompiler prebuilt, the disc check fixed, a signed
+  release, a licence of my choosing.
+- Recompiler prebuilt: tools/CMakeLists.txt links the C runtime statically (CMAKE_MSVC_RUNTIME_LIBRARY
+  MultiThreaded): the exes import only KERNEL32 (they needed MSVCP140/VCRUNTIME140 before). Built into
+  out/build/prebuilt-tools (clang-cl 20 from toolchain/llvm, VS 2026's libs) from the pinned SDK 99078b1; its
+  output over config/game.toml is byte for byte the old build's (generated/game's hashes equal). The release
+  zip carries them in tools/bin; build.bat and the Builder skip Visual Studio when tools/bin has both, build.bat
+  then cloning the SDK (for its xdk folder) into sdk/ at the pinned commit unless sdk/, ref/ or ../ has it.
+- Disc check: the xbe's sha1 is taken with the certificate's allowed media (+0x9C) and region (+0xA0) set back to
+  the US release's 0x202 and 1, on the PC (tools/xbe_sha1.py, CMake's kImageSha1) and in game_files.cpp
+  (CertSha1). The user's patched dump now hashes to the stock US c5bfed25…, so any US dump, patched or not,
+  matches any build. Seen on the headset: the disc found, no "another release". The Europe check (its stock sha1,
+  then europe.patch) is unchanged: a patched PAL dump still isn't recognised.
+- Version: VERSION (0.1.0) at the root; app/build.gradle takes versionName from it and versionCode 1.2.3 -> 10203
+  unless -P sets them; the headset reports 0.1.0 / 100 (was 1.0 / 1: an upgrade, kept data).
+- Signing: no APK can be published (it holds the game's code), so each player's build is signed by their own PC's
+  Android debug key; same PC, updates install over and keep the data. BLACK_KEYSTORE still signs with a real key.
+- Licence: MIT kept (black-android's, the base, is MIT; XboxXBE-Recomp, black-seamless-coop, toml++, zydis are MIT
+  too); the zip's tools/bin carries the recompiler's, zydis' and toml++'s licence texts.
+- tools/package.py packs out/release/BlackQuest-<VERSION>.zip: what git tracks (and new unignored files), the
+  Builder exe, tools/bin; refuses game-data extensions and files over 2 MB (2.8 MB, 139 files).
+- origin/main holds only GitHub's "Initial commit" (a 2-line README), not an ancestor of local main.

@@ -25,6 +25,8 @@ echo [1/5] Tools
 if not exist "%ANDROID_HOME%\platforms" goto :nosdk
 if not exist "%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang-cl.exe" goto :nosdk
 if not exist "%SDKCMAKE%\cmake.exe" goto :nosdk
+rem blackquest: the release ships the recompiler prebuilt in tools\bin: no visual studio needed then
+if exist "%CD%\tools\bin\xbe_recomp.exe" if exist "%CD%\tools\bin\xbe_symbols.exe" goto :novs
 for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
 if not defined VSDIR (
     echo       Visual Studio with "Desktop development with C++" was not found: the recompiler links with its tools.
@@ -33,6 +35,7 @@ if not defined VSDIR (
 rem vs 2026 build tools' VsDevCmd calls vswhere by name
 set "PATH=%PF86%\Microsoft Visual Studio\Installer;%PATH%"
 call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 >nul
+:novs
 set "PATH=%SDKCMAKE%;%PATH%"
 rem Visual Studio's own Clang when it has it, else the NDK's: both build the recompiler for Windows
 rem blackquest: vs 2026's stl wants clang 20+, the ndk's is 19: a portable llvm in toolchain\ goes first
@@ -65,10 +68,24 @@ python -I tools\xdvdfs.py "%ISO%" %GAME_XBE% assets\%GAME_XBE% || goto :fail
 
 rem ---------------------------------------------------------------- recompiler
 echo [3/5] Recompiler
+if not exist "%CD%\tools\bin\xbe_recomp.exe" goto :buildtools
+rem prebuilt: only its sdk's xdk folder is wanted, from the checkout the native build also looks for, else cloned
+rem at the pinned commit into sdk\ (tools\CMakeLists.txt pins the same)
+set "TOOLS=%CD%\tools\bin"
+set "SDK="
+for %%d in ("%CD%\sdk" "%CD%\ref\XboxXBE-Recomp" "%CD%\..\XboxXBE-Recomp") do if not defined SDK if exist "%%~d\cmake\XbeRecomp.cmake" set "SDK=%%~fd"
+if defined SDK goto :symbols
+echo       fetching the recompiler's SDK (XboxXBE-Recomp 99078b1)
+git clone -q https://github.com/TGP482/XboxXBE-Recomp.git sdk || goto :fail
+git -C sdk checkout -q 99078b119b5d5e0d1d6afb1390e29437c0c984c0 || goto :fail
+set "SDK=%CD%\sdk"
+goto :symbols
+:buildtools
 cmake -S tools -B "%TOOLS%" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=%CLANGCL%" "-DCMAKE_CXX_COMPILER=%CLANGCL%" >nul || goto :fail
 cmake --build "%TOOLS%" >nul || goto :fail
 set /p SDK=<"%TOOLS%\sdk_dir.txt"
 set "SDK=%SDK:/=\%"
+:symbols
 findstr /b /l /c:"[symbols]" config\game.toml >nul 2>nul && goto :recompile
 "%TOOLS%\xbe_symbols.exe" assets\%GAME_XBE% "%SDK%\xdk" --out config\game.toml || goto :fail
 

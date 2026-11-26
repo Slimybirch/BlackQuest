@@ -24,7 +24,7 @@
 
 ## Later
 - [ ] touch overlay hidden under XR (done in RenderUi); "PRESS ANYWHERE" text is the touch port's (Phase 7)
-- [ ] xbe check: normalise the dump tool's region/media cert patch before hashing (game_files.cpp, Builder)
+- [x] (2026-11-25) xbe check: normalise the dump tool's region/media cert patch before hashing (game_files.cpp, Builder)
 - [ ] find the fire ray builder (Phase 4) and the grenade spawn (Phase 6)
 - [ ] `EnsureBackend`: stop cleanly when the renderer can't start instead of crashing in vkCreateImage
 
@@ -421,8 +421,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       found no disc after a fresh install
 - [x] HD run (2026-11-24): reinstalled through the Builder, HD on/off shots: no speckle now; the roof panel's match
       to check by eye
-- [ ] the builder ships prebuilt recompiler tools (no VS needed) and the source in the release zip (Phase 11)
-- [ ] normalise the xbe's cert patch before hashing (Phase 1 note)
+- [x] (2026-11-25) the builder ships prebuilt recompiler tools (no VS needed) and the source in the release zip (Phase 11)
+- [x] normalise the xbe's cert patch before hashing (Phase 1 note)
 
 ## Phase 11 (release prep; was 10)
 - [ ] signed release build, README and credits (MIT notices kept), the version tag (only with the user's go-ahead)

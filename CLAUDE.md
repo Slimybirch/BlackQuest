@@ -30,6 +30,11 @@ base port's guide, still accurate unless noted). The plan, phases and hard rules
   latest "state (consolidated)" entries summarise each phase's addresses, bones and dev markers.
 - The package is `com.slimybirch.blackquest` (not the base port's `com.racas.black`): settings, logs and dev
   markers are in `Android/data/com.slimybirch.blackquest/files`. From Git Bash, set MSYS_NO_PATHCONV=1 for adb.
+- Release (Phase 11): `VERSION` sets the app's version; `python -I tools/package.py` packs
+  `out/release/BlackQuest-<VERSION>.zip` (the source, `BlackQuestBuilder.exe`, the recompiler prebuilt with a static
+  C runtime from `out/build/prebuilt-tools` into `tools/bin`, which lets `build.bat` and the Builder skip Visual
+  Studio). No APK is ever published. The xbe check hashes with the cert's region/media patch undone
+  (`tools/xbe_sha1.py`, `CertSha1` in `native/game_files.cpp`).
 - The headset: ask before installing, launching or screenshotting over adb; never send the
   `com.oculus.vrpowermanager` broadcasts (the user controls the proximity sensor). Game data dumps stay in the
   scratchpad or on the headset, never in git.

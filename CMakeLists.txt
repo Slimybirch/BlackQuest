@@ -45,7 +45,12 @@ set(GEN_SOURCES ${GEN}/x86_func_mapping.cpp)
 foreach(i RANGE ${last})
     list(APPEND GEN_SOURCES ${GEN}/x86_recomp.${i}.cpp)
 endforeach()
-file(SHA1 ${XBE} xbe_sha1)
+# the xbe's sha1 with the dump tool's region/media patch undone (tools/xbe_sha1.py; game_files.cpp hashes alike):
+# a patched dump and a stock one of the us release build the same check
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+execute_process(COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/xbe_sha1.py ${XBE}
+                OUTPUT_VARIABLE xbe_sha1 OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${XBE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/xbe_sha1.py)
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp CONTENT "extern const char kImageSha1[] = \"${xbe_sha1}\";\n")
 # the build's version for the log: the commit when the project is in git, else unknown
 set(BUILD_COMMIT "unknown")

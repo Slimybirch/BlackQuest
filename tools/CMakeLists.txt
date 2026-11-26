@@ -5,6 +5,8 @@ cmake_minimum_required(VERSION 3.22)
 project(xbe_recomp_tool C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
+# the c runtime linked in: the release's prebuilt exes run on a pc without visual studio's redistributable
+set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 get_filename_component(REPO ${CMAKE_CURRENT_SOURCE_DIR}/.. ABSOLUTE)
