@@ -19,14 +19,16 @@ public sealed class MainForm : Form {
     readonly TextBox iso = new TextBox(), hd = new TextBox(), wifi = new TextBox(), log = new TextBox(), tools = new TextBox();
     readonly CheckBox cleanup = new CheckBox();
     readonly ComboBox device = new ComboBox();
-    readonly Button go = new Button(), installOnly = new Button();
+    readonly Button go = new Button(), installOnly = new Button(), updateBtn = new Button();
+    readonly Label updateLine = new Label();
+    Release update;
     readonly ProgressBar bar = new ProgressBar();
     readonly Label stage = new Label();
     readonly Settings settings;
     List<KeyValuePair<string, string>> devices = new List<KeyValuePair<string, string>>();
     Thread worker;
 
-    public MainForm(string folder) {
+    public MainForm(string folder, bool afterUpdate = false, bool hdRedo = false) {
         pipe = new Pipeline(folder);
         settings = Settings.Load();
         Text = "BlackQuest Builder";
@@ -46,6 +48,24 @@ public sealed class MainForm : Form {
         var sub = new Label { Text = "Builds BlackQuest for your Quest from your own copy of Black, and installs it.", ForeColor = Dim, AutoSize = true, Margin = new Padding(3, 0, 3, 14) };
         root.Controls.Add(title);
         root.Controls.Add(sub);
+        // a newer release (Updater): what it changes, and one button to update, rebuild and install
+        var updRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 10), Visible = false };
+        updateLine.AutoSize = true;
+        updateLine.ForeColor = Gold;
+        updateLine.MaximumSize = new Size(470, 0);
+        updateLine.Margin = new Padding(3, 6, 10, 0);
+        updateBtn.Text = "UPDATE && INSTALL";
+        updateBtn.Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold);
+        updateBtn.BackColor = Gold;
+        updateBtn.ForeColor = Color.Black;
+        updateBtn.FlatStyle = FlatStyle.Flat;
+        updateBtn.FlatAppearance.BorderSize = 0;
+        updateBtn.AutoSize = true;
+        updateBtn.Cursor = Cursors.Hand;
+        updateBtn.Click += (s, e) => StartUpdate();
+        updRow.Controls.Add(updateLine);
+        updRow.Controls.Add(updateBtn);
+        root.Controls.Add(updRow);
 
         root.Controls.Add(Section("1   GAME DISC", "Your Black disc image (USA, .iso)."));
         root.Controls.Add(PathRow(iso, settings.Iso, () => {
@@ -137,6 +157,13 @@ public sealed class MainForm : Form {
         Shown += (s, e) => new Thread(() => {
             pipe.EnsureAdb();
             BeginInvoke((Action)RefreshDevices);
+            if (afterUpdate) {
+                // the new Builder, started by the old one's update: the build and install carry on
+                pipe.HdRedo = hdRedo;
+                BeginInvoke((Action)(() => { log.AppendText("Updated to " + Updater.Installed(pipe.Root) + ". Rebuilding..." + Environment.NewLine); Start(false); }));
+                return;
+            }
+            CheckForUpdate(updRow);
         }) { IsBackground = true }.Start();
         FormClosing += (s, e) => {
             Save();
@@ -237,6 +264,61 @@ public sealed class MainForm : Form {
         Cursor = Cursors.Default;
         log.AppendText(answer + Environment.NewLine);
         RefreshDevices();
+    }
+
+    // at start: GitHub's newest release over this folder's (a git clone is told to pull instead)
+    void CheckForUpdate(Control row) {
+        Release r = Updater.Check(pipe.Root, out string error);
+        if (error != null) { BeginInvoke((Action)(() => log.AppendText("No update check (" + error + ")." + Environment.NewLine))); return; }
+        if (r == null) return;
+        BeginInvoke((Action)(() => {
+            update = r;
+            string how = r.Full ? "a full rebuild: the game is recompiled, 30 to 90 minutes" : "a quick rebuild, a few minutes";
+            if (r.HdRedo) how += "; the HD textures are redone";
+            if (Updater.IsGitCheckout(pipe.Root)) {
+                updateLine.Text = r.Name + " is out (you have " + Updater.Installed(pipe.Root) + "). This folder is a git clone: git pull, then BUILD & INSTALL.";
+                updateBtn.Visible = false;
+            } else {
+                updateLine.Text = r.Name + " is out (you have " + Updater.Installed(pipe.Root) + "): " + how + ".";
+            }
+            row.Visible = true;
+            if (r.Changes.Length > 0) log.AppendText("What's new in " + r.Name + ":" + Environment.NewLine + r.Changes + Environment.NewLine);
+        }));
+    }
+
+    // the update: the release over this folder, then the usual build and install (by the new Builder if it changed)
+    void StartUpdate() {
+        if (update == null || (worker != null && worker.IsAlive)) return;
+        if (!File.Exists(iso.Text)) { MessageBox.Show(this, "Pick your Black disc image (.iso) first: the update rebuilds the game from it.", "Game disc"); return; }
+        string what = update.Full ? "This update recompiles the game: 30 to 90 minutes, like the first build."
+                                  : "This update rebuilds quickly: a few minutes.";
+        if (update.HdRedo) what += "\nThe HD textures are converted and copied to the headset again.";
+        if (device.SelectedIndex <= 0) what += "\n\nNo headset is picked: it will be built, not installed.";
+        if (MessageBox.Show(this, "Update to " + update.Name + "?\n\n" + what + "\n\nYour settings and saves on the headset stay.",
+                            "BlackQuest Builder", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        Save();
+        Release r = update;
+        go.Enabled = installOnly.Enabled = updateBtn.Enabled = false;
+        log.Clear();
+        worker = new Thread(() => {
+            bool ok = Updater.Apply(pipe.Root, r, pipe.Log, out bool builderChanged);
+            BeginInvoke((Action)(() => {
+                go.Enabled = installOnly.Enabled = updateBtn.Enabled = true;
+                if (!ok) { stage.Text = "The update failed: see the log."; return; }
+                if (builderChanged) {
+                    // the new Builder carries on (the choices are saved; it rebuilds and installs at start)
+                    System.Diagnostics.Process.Start(Path.Combine(pipe.Root, Updater.ExeName), "--after-update" + (r.HdRedo ? " --hd-redo" : ""));
+                    worker = null;
+                    Close();
+                    return;
+                }
+                pipe.HdRedo = r.HdRedo;
+                update = null;
+                updateBtn.Parent.Visible = false;
+                Start(false);
+            }));
+        }) { IsBackground = true };
+        worker.Start();
     }
 
     void Start(bool installOnlyRun) {

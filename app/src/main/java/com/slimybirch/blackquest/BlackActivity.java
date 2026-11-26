@@ -291,11 +291,12 @@ public class BlackActivity extends SDLActivity {
         if (!r.changes.isEmpty()) msg.append("\n\nWhat's new:\n").append(r.changes);
         // this apk is built from the player's own disc, so no ready-made one can be downloaded: the pc launcher
         // fetches the new source, rebuilds and reinstalls over this one
-        msg.append("\n\nTo update, run the BlackQuest launcher on your PC with the headset connected (USB or "
-                + "wireless). It rebuilds the game and installs it over this one; your settings and saves stay.");
+        msg.append("\n\nTo update, start BlackQuest Builder on your PC with the headset connected (USB or wireless) "
+                + "and press UPDATE & INSTALL: " + r.howLong() + ". It installs over this one; your settings and saves stay.");
         if (QUEST) {
             // (in the headset: the panel's top line, beside the game's menus)
-            nativeUpdateNotice("UPDATE AVAILABLE: " + r.name + " - run the BlackQuest launcher on your PC to install it");
+            nativeUpdateNotice("UPDATE AVAILABLE: " + r.name + " - start BlackQuest Builder on your PC, UPDATE & INSTALL ("
+                    + r.howLong() + ")");
             return;
         }
         dialog = new AlertDialog.Builder(this)

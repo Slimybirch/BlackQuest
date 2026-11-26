@@ -18,6 +18,8 @@ static class Program {
                             "BlackQuest Builder");
             return;
         }
+        // an update's old Builder, renamed while it ran
+        try { File.Delete(Path.Combine(root, "BlackQuestBuilder.old.exe")); } catch { }
         // --match <pack> <dumps> <map>: the HD pack's map from an Xbox texture dump (a developer's step, once)
         {
             string[] a = Environment.GetCommandLineArgs();
@@ -57,7 +59,22 @@ static class Program {
                 Environment.Exit(ok ? 0 : 1);
             }
         }
-        var form = new MainForm(root);
+        // --apply <zip or url> <tag> --log <file>: an update's apply alone, no window (tests)
+        {
+            string[] a = Environment.GetCommandLineArgs();
+            int u = Array.IndexOf(a, "--apply"), l = Array.IndexOf(a, "--log");
+            if (u > 0 && u + 2 < a.Length) {
+                var w = new StreamWriter(l > 0 && l + 1 < a.Length ? a[l + 1] : Path.Combine(root, "out", "update.log"), false) { AutoFlush = true };
+                string src = a[u + 1];
+                var r = new Release { Tag = a[u + 2], Name = "BlackQuest " + a[u + 2], Zip = src.Contains("://") ? src : new Uri(Path.GetFullPath(src)).AbsoluteUri };
+                bool ok = Updater.Apply(root, r, line => w.WriteLine(line), out bool changed);
+                w.WriteLine((ok ? "== OK" : "== FAILED") + (changed ? ", the Builder changed" : ""));
+                w.Close();
+                Environment.Exit(ok ? 0 : 1);
+            }
+        }
+        string[] cl = Environment.GetCommandLineArgs();
+        var form = new MainForm(root, Array.IndexOf(cl, "--after-update") > 0, Array.IndexOf(cl, "--hd-redo") > 0);
         // --shot <png>: the window drawn to a file once shown, then closed (screenshots for the docs and tests)
         string[] args = Environment.GetCommandLineArgs();
         int at = Array.IndexOf(args, "--shot");

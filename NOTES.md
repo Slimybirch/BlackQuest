@@ -2199,3 +2199,25 @@ brighter and bigger)
 - tools/package.py packs out/release/BlackQuest-<VERSION>.zip: what git tracks (and new unignored files), the
   Builder exe, tools/bin; refuses game-data extensions and files over 2 MB (2.8 MB, 139 files).
 - origin/main holds only GitHub's "Initial commit" (a 2-line README), not an ancestor of local main.
+
+## 2026-11-25: the update path (user: option 2, the Builder updates; release only once it exists)
+- Builder (builder/Updater.cs): at start it asks GitHub for the latest release; newer than VERSION, a line and
+  UPDATE & INSTALL show (a git clone is told to pull instead). The update downloads the release's zip, removes
+  what the old MANIFEST.txt had and the new one doesn't (a stale source would still be globbed into the build),
+  writes only the files whose bytes changed, stamped now (the zip's times can be older than the player's last
+  build, which ninja would then skip), never touching toolchain, out, generated, assets, sdk, ref, .git. Its own
+  exe, if changed, is renamed to BlackQuestBuilder.old.exe (deleted at the next start) and the new one started
+  with --after-update, which rebuilds and installs at once. Then the usual build and install; "HD textures: redo"
+  replaces the headset's HD textures without asking. --apply <zip|url> <tag> applies alone (tests).
+- Release notes (tools/package.py -> out/release/notes.md): the commit subjects since the last tag under "## What's
+  Changed", "Rebuild: full" when config/game.toml, tools/CMakeLists.txt or CMakeLists.txt changed (the game's code
+  recompiled, 30-90 minutes), else "Rebuild: quick"; "HD textures: redo" when tools/hd_map.txt or HdPack.cs did.
+  The zip carries MANIFEST.txt.
+- Headset (UpdateChecker): the launch check only on Wi-Fi (or ethernet); the panel's notice says to start the
+  Builder and press UPDATE & INSTALL, a quick or full rebuild, HD textures redone.
+- Tested on S:\bqtest (the 0.1.0 zip unzipped): a 0.1.1 zip applied (140 files, a planted stale source removed),
+  then a 0.1.2 (2 files written, the Builder's exe swapped); build.bat after it: 8 s (no game or host code
+  changed). The headset build launched, its check quiet (no release yet: 404). The GUI's update button itself
+  wasn't clicked (no release on GitHub yet to offer one).
+- xbe_recomp leaves unchanged generated files alone (their times kept), so the recompile step costs seconds and
+  the native build only redoes partitions whose code changed.

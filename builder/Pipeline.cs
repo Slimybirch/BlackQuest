@@ -39,6 +39,7 @@ public sealed class Pipeline {
     string Toolchain => ToolsDir;
     string Sdk => !string.IsNullOrEmpty(SdkOverride) ? SdkOverride : Path.Combine(Toolchain, "android-sdk");
     string Jdk => !string.IsNullOrEmpty(JdkOverride) ? JdkOverride : Path.Combine(Toolchain, "jdk17");
+    public bool HdRedo;  // an update's: the headset's HD textures replaced without asking
     public string HdOut => Path.Combine(Root, "out", "textures_hd");
     public string Adb => Path.Combine(Sdk, "platform-tools", "adb.exe");
     public string Apk => Path.Combine(Root, "app", "build", "outputs", "apk", "release", "app-release.apk");
@@ -285,7 +286,7 @@ public sealed class Pipeline {
             string count = Shell(device, "ls " + remoteHd + " 2>/dev/null | wc -l");
             bool push = true;
             if (int.TryParse(count, out int n) && n > 0) {
-                push = Ask("The headset has " + n + " HD textures already.\n\nReplace them with this build's?");
+                push = HdRedo || Ask("The headset has " + n + " HD textures already.\n\nReplace them with this build's?");
                 if (push) Shell(device, "rm -rf " + remoteHd);
             }
             if (push) {

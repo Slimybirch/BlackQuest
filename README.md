@@ -1,172 +1,138 @@
 # BlackQuest
-A standalone Meta Quest 3 VR port of the original Xbox version of *Black*, in development. It is built on
-[black-android](https://github.com/ranggacasper/black-android) and contains no game data or recompiled game code:
-each player builds their own APK from their own disc.
 
-Credits: [black-android](https://github.com/ranggacasper/black-android) by Rangga Casper (MIT), the base;
-[XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482 (MIT), the recompiler and runtime;
-the co-op of [black-seamless-coop](https://github.com/MuriloDagustin/black-seamless-coop) by Murilo D'agustin
-(MIT, `src/game/COOP_LICENSE`); the reverse-engineering notes of [black-pc](https://github.com/Spark198rus/black-pc) (facts only, no code).
+A standalone Meta Quest 3 VR port of *Black* (Criterion, 2006), the original Xbox version, running natively on
+the headset. It is built on [black-android](https://github.com/ranggacasper/black-android): the game's x86 code is
+statically recompiled to C++ with [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) and built for arm64,
+with OpenXR for the headset and Vulkan for drawing.
 
-## Building BlackQuest (Windows)
+> [!IMPORTANT]
+> This repository contains **no game data and no game code**. Every player builds their own APK on their own PC
+> from their own disc of *Black* for the original Xbox. No APK is ever published, and the one you build contains
+> code recompiled from your disc: keep it to yourself.
 
-**The easy way: the release zip and BlackQuest Builder.** Download `BlackQuest-<version>.zip` from
-[Releases](https://github.com/Slimybirch/BlackQuest/releases) and unzip it to a folder with about 15 GB free (a
-short path such as `C:\BlackQuest` is best). It holds this source, `BlackQuestBuilder.exe` and the recompiler
-prebuilt in `tools\bin`, so **no Visual Studio is needed**. Start `BlackQuestBuilder.exe`, pick your Black disc
-image (`.iso`), pick your Quest (plugged in by USB with USB debugging allowed, or connected over Wi-Fi by its
-address), and press **BUILD & INSTALL**. It downloads what it needs into a tools folder (Java, the Android SDK,
-Python and git when missing), builds the game from your disc, installs it and copies the disc to the headset. The
-first build takes 30 to 90 minutes; later ones are quick. The Quest must be in developer mode.
+BlackQuest is in development. *Black* is a trademark of its respective owners; this project is not affiliated with
+or endorsed by them.
 
-No APK is ever published: it would contain the game's code. Each player's APK is built on their own PC and signed
-with that PC's own Android key (`%USERPROFILE%\.android\debug.keystore`), so later builds from the same PC
-install over it and keep its settings and saves; a build from another PC has to be uninstalled first.
+## Features
 
-From a clone of the repository instead, the Builder (`dotnet build builder -c Release`) and `build.bat` also build
-the recompiler, which needs Visual Studio's C++ build tools (the Builder installs them). The steps below are what
-it does, by hand.
+- **Full stereo VR** at the headset's refresh rate, the view following your head, with the game's own HUD
+  kept readable in front of you.
+- **The gun in your hand**, held and aimed with the controller; your own hands with fingers that follow the
+  controllers' touch sensors; the off hand grips the fore-end for two-handed aim; the gun pulls back instead of
+  going through walls.
+- **Manual reloads for every gun**: drop the magazine, take a fresh one from your chest, seat it, rack the slide or
+  handle. Guns lock open on the last round where the real gun does. Shotguns load a shell at a time and pump,
+  the revolver swings out its cylinder for a speed loader, the launchers take a grenade from the waist or a rocket
+  from over the left shoulder, the M16's M203 opens and loads by hand.
+- **Throw grenades** with your arm, **melee** with a swing, switch weapons by reaching behind your right shoulder,
+  crouch with the right stick.
+- **A silencer** you carry on your hip and twist onto the muzzle.
+- **Haptics** tuned per weapon (heavier guns kick harder), light touches as your hands find the magazine, the slide
+  and pickups.
+- **The game's reticle dot** where the barrel points, in its usual colours (black for things that burn, red for
+  enemies, blue for objectives, green for friends).
+- **Comfort**: standing or seated play, smooth or snap turning, a vignette while moving, a first launch setup for
+  stance, height and turning.
+- **HD textures**: the Builder can convert the *BLACK HD Reimagined* texture pack, if you have it, for the
+  headset (optional, not included).
+- **Co-op** from black-seamless-coop, being brought to the headset (host or join over the internet or the same
+  Wi-Fi).
 
-This repository holds **no game files of any kind**: no disc image, no `default.xbe`, no recompiled code, and no
-patch made from game binaries. You need your own copy of *Black* for the original Xbox, USA (NTSC-U) or Europe
-(PAL), dumped to an `.iso`.
+## Controls (Touch controllers)
 
-1. Clone this repository.
-2. Put your disc image in the repository's root folder (for example `Black.iso`), or in `assets\` or `iso\`, or set
-   `BLACK_ISO` to its path. Git ignores it; never commit it.
-3. Tools: Visual Studio 2022 or 2026 (Build Tools are enough) with the C++ workload (not needed when
-   `tools\bin` holds the prebuilt recompiler, as in the release zip: `build.bat` then fetches the recompiler's SDK
-   into `sdk\` with git); Android SDK Platform 34,
-   NDK `28.2.13676358` and CMake `3.31.6`; JDK 17; and Clang 20 or newer for the recompiler when your Visual Studio
-   is 2026 (its C++ library refuses older Clang). They can live in a `toolchain\` folder in the repository
-   (`toolchain\jdk17`, `toolchain\android-sdk`, `toolchain\llvm`), which `build.bat` uses first. Python 3 pulls
-   `default.xbe` out of the disc image.
-4. Run `build.bat`. It extracts the xbe, builds the recompiler, recompiles the game into `generated\` and builds
-   `app\build\outputs\apk\release\app-release.apk`. The first build can take 30–90 minutes.
-5. **Europe (PAL) discs:** the PAL disc is turned into the US one at runtime by black-android's `europe.patch`.
-   Because that patch is made from the game's own bytes, it is **not** in this repository. The build fetches it
-   from black-android at a pinned commit (from `ref\black-android` if you have that checkout, otherwise over the
-   internet) and checks its SHA-256. If it can't be fetched, the build still succeeds, but that APK accepts only the
-   USA disc. USA discs never need it.
-6. Install on the Quest 3 (developer mode, USB or wireless adb):
+| Action | Control |
+| --- | --- |
+| Move | Left stick |
+| Turn | Right stick left / right (smooth or snap, in the settings) |
+| Fire | Right trigger |
+| Two-handed aim | Left grip on the gun's fore-end |
+| Fire mode | Right stick up |
+| Medpack | Right stick down |
+| Pick up weapons, use | Right grip |
+| Switch weapon | Reach behind your right shoulder and grip |
+| Throw a grenade | Throw with your arm |
+| Melee | Swing a controller |
+| Crouch | Click the right stick |
+| Drop the magazine | A |
+| Take a magazine, shell or round | Left grip at your chest (shells: left trigger; grenades at your waist, rockets over your left shoulder) |
+| Rack the slide or handle | Left grip on it, pull back, let go |
+| M16's M203 | Left trigger |
+| Silencer on | Left grip at your left hip takes it; bring it to the muzzle and twist it clockwise to lock it on |
+| Silencer off | Left grip on it at the muzzle, twist it back the other way; let go anywhere and it returns to your hip |
+| Pause / back | Menu button: tap to pause, hold for back |
+| Recentre | Hold the Meta button |
+
+The settings panel, with the VR settings and cheats, opens beside the game's own menus.
+
+## Building and installing (Windows)
+
+You need a Windows PC with about 15 GB free, your *Black* disc dumped to an `.iso` (USA or Europe release; region
+patched dumps are fine), and a Quest 3 in [developer mode](https://developers.meta.com/horizon/documentation/native/android/mobile-device-setup/).
+
+### The easy way: BlackQuest Builder
+
+1. Download `BlackQuest-<version>.zip` from [Releases](https://github.com/Slimybirch/BlackQuest/releases) and unzip
+   it to a short path such as `C:\BlackQuest`. It holds this source, `BlackQuestBuilder.exe` and the recompiler
+   prebuilt in `tools\bin`, so **no Visual Studio is needed**.
+2. Start `BlackQuestBuilder.exe`. Pick your disc image and your Quest (plugged in by USB with USB debugging
+   allowed, or over Wi-Fi by its address), and the HD texture pack if you have it.
+3. Press **BUILD & INSTALL**. It downloads what is missing into a tools folder (Java, the Android SDK, Python, git),
+   asking first; builds the game from your disc; installs it; and copies the disc to the headset. The first build
+   takes 30 to 90 minutes, later ones are quick.
+4. On the headset, start **BlackQuest** from the Library's **Unknown Sources**.
+
+Your APK is signed with your PC's own Android key (`%USERPROFILE%\.android\debug.keystore`): later builds from the
+same PC install over it and keep your settings and saves. A build from another PC must be uninstalled first.
+
+### Updating
+
+When a new release is out, the headset says so at launch (it checks over Wi-Fi) with how long the update takes.
+Start `BlackQuestBuilder.exe` on your PC: it checks too, shows what's new and offers **UPDATE & INSTALL**. That
+downloads the release over your folder, rebuilds (a few minutes, or 30 to 90 when the game itself must be
+recompiled) and installs it over the old one, keeping your settings and saves. A git clone updates with `git pull`.
+
+### By hand
+
+1. Clone this repository and put your disc image in its root folder (or in `assets\` or `iso\`, or set
+   `BLACK_ISO` to its path). Git ignores it; never commit it.
+2. Tools: Android SDK Platform 34, NDK `28.2.13676358` and CMake `3.31.6`; JDK 17; Python 3; git. To build the
+   recompiler yourself, Visual Studio 2022 or 2026 (Build Tools are enough) with the C++ workload, plus Clang 20
+   or newer with Visual Studio 2026; or put the release zip's `tools\bin` in place and skip it. A `toolchain\`
+   folder in the repository (`toolchain\jdk17`, `toolchain\android-sdk`, `toolchain\llvm`) is used first.
+3. Run `build.bat`. It extracts `default.xbe`, builds (or takes) the recompiler, recompiles the game into
+   `generated\` and builds `app\build\outputs\apk\release\app-release.apk`.
+4. **Europe discs** are turned into the USA one at runtime by black-android's `europe.patch`. It is made from the
+   game's bytes, so it is not in this repository: the build fetches it from black-android at a pinned commit and
+   checks its SHA-256. Without it the APK accepts only the USA disc.
+5. Install and copy the disc:
    ```
    adb install -r app\build\outputs\apk\release\app-release.apk
    adb shell appops set com.slimybirch.blackquest MANAGE_EXTERNAL_STORAGE allow
    adb shell mkdir -p /sdcard/Black
    adb push Black.iso /sdcard/Black/Black.iso
    ```
-   Then start **BlackQuest** from the Library's **Unknown Sources**.
 
-The APK you build contains code recompiled from your disc: keep it to yourself, don't share it.
+Settings, saves and logs are in `Android/data/com.slimybirch.blackquest/files` on the headset. The game looks for
+the disc there (in `assets`) and in `/storage/emulated/0/Black`.
 
-The rest of this file is black-android's README, kept for now.
-
----
-
-# Black for Android
-An unofficial native Android port of the original Xbox version of *Black*, with touch controls, gyroscope aiming, controller support and extended graphics options.
-
-The game's x86 code is statically recompiled ahead of time to C++ with [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp), then built for arm64. Drawing goes through Vulkan, and windowing, input and audio through SDL3. No emulator is involved.
-
-> [!NOTE]
-> This project does not include any game assets. You must provide the files from your own legally acquired copy of the game to install or build.
-
-<p align="center">
-  <a href="https://youtu.be/x5bczwTuyhw">
-    <img src="https://img.youtube.com/vi/x5bczwTuyhw/maxresdefault.jpg" alt="Black Android gameplay on POCO F6" width="720">
-  </a>
-  <br>
-  <sub>▶ Gameplay on POCO F6, max settings + gyro aim</sub>
-</p>
-
-## Installation
-1. Install the APK.
-2. Open **Black Android** and allow **all files access** when it asks (on Android 10, the **storage** permission).
-3. Copy the game into `/storage/emulated/0/Black`, or into a `Black` folder at the top of your SD card: the USA or Europe release, either as a disc image (`.iso`) or as `default.xbe` with its data folders. The app creates the folder on the phone's storage once access is allowed, and starts the game as soon as it finds the files.
-
-If you don't grant that access, `Android/data/com.racas.black/files/assets` works too.
-
-Settings (`black.toml`, `android.toml`, `layout.toml`), saves (`hdd`), logs and the shader cache are stored in `Android/data/com.racas.black/files`.
-
-## Features
-The settings are in the game's own options menu, each page under its own button: **Graphics**, **Touch Controls**, **General**, **Mouse and Keyboard** and **Cheats**. Within a page the settings are grouped under headings, and arrows above and below the list show there is more to scroll to; tap them to move the list one row. In the pause menu, the *Page* row switches between the pages. Android's back button opens the pause menu.
-
-### Graphics
-- **Display**
-  - **Render Resolution**: 20% to 200% of the screen's height (67% by default), instead of the original 640x480.
-  - **Field of View**: horizontal FOV from 45 to 140 degrees during gameplay. The game's default is 70.
-  - **Viewmodel Field of View**: FOV of the first-person weapon and arms.
-  - **FMV Scale**: *Fill* zooms the 4:3 videos to fill the screen; *4:3* keeps their original aspect ratio.
-- **Performance**
-  - **V-Sync**, off by default.
-  - **Max Frame Rate**: unlimited by default, or capped at the display's refresh rate or a custom value. This replaces the Xbox's 30 FPS limit.
-  - **FPS Counter**.
-- **Quality**
-  - **Anisotropic Filtering**, applied to all textures.
-  - **Draw Distance**: 2x, 4x or 8x the game's level of detail and draw distances.
-  - **Reload Blur**: turns the blur while reloading on or off.
-
-### Touch Controls
-- **Touch**: the left side of the screen is a movement stick, and dragging on the right turns the view. On-screen buttons cover fire, aim, reload, use, melee, grenades, crouch, weapon switching and the suppressor. Dragging from a fire button turns the view while firing. The controls hide over loading screens and cutscenes.
-- **Menus**: a D-pad and a back button move through the menus and the options; tap an arrow to step one row, or hold it to keep going.
-- **Touch Sensitivity**: how fast a drag turns the view, separate from the mouse's sensitivity.
-- **Controls Layout**: pick a preset (*Default*, *3 Finger* or *4 Finger*) and set the controls' opacity and overall size.
-- **Button Style**: *Xbox* (the skin's icons with the Xbox controller's A, B, X, Y and other button marks), *Clean* (the same icons without them) or *Classic* (the original drawn icons).
-- **Edit Controls Position**: drag each control where you want it. To resize one, select it and tap **−** or **+**, or pinch it with a second finger.
-- **Motion Controls**: aim with the gyroscope by turning the phone, or a DualShock 4 or DualSense on Android 12 and newer, either always or only while firing, with adjustable sensitivity. The controller's gyroscope is used while you play with the controller, the phone's while you use the touch screen.
-
-### Other Input
-- **Controller**: any controller SDL3 supports, with rumble. The touch buttons hide while a controller is in use. Controllers that some phones pass on as a virtual device (a DualShock 4 on MIUI, for example) work too.
-  - **Stick Deadzone and Sensitivity**, under *Touch Controls → Controller*, for each stick: a radial dead zone from 0% to 50% of the travel (0% leaves the game's own), past which the travel runs from rest to full again, scaled by a sensitivity from 0.1 to 3.0.
-- **Keyboard and Mouse**, with rebindable controls, mouse sensitivity and invert look. In play the mouse is captured as on a PC: no pointer on the screen, and the view keeps turning past the screen's edge.
-
-### General
-- **Language**: English, French, German, Italian or Spanish where the disc has them, plus Indonesian for the port's own text.
-- **Skip Intros** skips the intro logos.
-- **Audio Output**: automatic, mono, stereo or 5.1 surround.
-- **Check for Updates**: the app checks GitHub for a new release each time it opens. This button checks right away.
-- **Background Pause**: the game and its sound pause while the app is in the background.
-
-### Cheats
-- **Weapons**: infinite ammo, infinite grenades, rapid fire (2x to 4x) and no recoil.
-- **Player**: god mode and one-hit kills.
-- **Game**: game speed from 25% to 200%.
-
-## System Requirements
-- **Android** 10 or newer, arm64.
-- **GPU** with a Vulkan 1.1 driver, for example Adreno 6xx or newer, Mali-G7x or newer, or Xclipse. Drivers without dynamic rendering or timeline semaphores are supported.
-- **Memory**: 4 GB.
-- **Storage**: 2 GB for the game files and saves.
-
-## Building
-Building requires a Windows PC.
-
-### 1. Clone the repository
-```
-git clone https://github.com/RanggaCasper/Black-Android.git
-```
-
-### 2. Add the game files
-Put `default.xbe` from the USA release in `assets/`, or put the USA disc image (`.iso`) in `assets/` or `iso/`. The build extracts `default.xbe` from the image.
-
-### 3. Install the dependencies
-- [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) with *Desktop development with C++*. The recompiler runs on the PC.
-- [Android Studio](https://developer.android.com/studio). In its SDK Manager, install Android SDK Platform 34, NDK `28.2.13676358` and CMake `3.31.6`.
-- [Python](https://www.python.org/), needed only to extract `default.xbe` from a disc image.
-
-### 4. Build
-Run `build.bat`. It builds the recompiler, recompiles the xbe into `generated/game`, then builds `app/build/outputs/apk/release/app-release.apk` with Gradle. The first build compiles the whole game for arm64 and takes 30 to 90 minutes.
-
-Install the APK with:
-```
-adb install -r app/build/outputs/apk/release/app-release.apk
-```
+To build the Builder: `dotnet build builder -c Release`. To pack a release zip: `python -I tools/package.py`.
 
 ## Credits
-- [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482: the static recompiler and the portable runtime (Xbox kernel, XDK libraries and Direct3D 8) this port is built on.
-- [black-seamless-coop](https://github.com/MuriloDagustin/black-seamless-coop) by Murilo D'agustin (MIT): the co-op (`src/game/coop*`, its licence in `src/game/COOP_LICENSE`), ported to the headset.
-- [SDL](https://github.com/libsdl-org/SDL), [glslang](https://github.com/KhronosGroup/glslang), [toml++](https://github.com/marzer/tomlplusplus) and [Dear ImGui](https://github.com/ocornut/imgui).
-- [bagasromadon](https://github.com/bagasromadon): the touch controls' button skin.
-- [xemu](https://github.com/xemu-project/xemu) and [Cxbx-Reloaded](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded), which XboxXBE-Recomp used as references for Xbox hardware and API behavior.
 
-*Black* is a trademark of its respective owners. This project is not affiliated with or endorsed by them.
+- [black-android](https://github.com/ranggacasper/black-android) by Rangga Casper (MIT): the Android port this is
+  built on.
+- [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482 (MIT): the static recompiler and the
+  portable runtime (Xbox kernel, XDK libraries and Direct3D 8), which used [xemu](https://github.com/xemu-project/xemu)
+  and [Cxbx-Reloaded](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded) as references.
+- [black-seamless-coop](https://github.com/MuriloDagustin/black-seamless-coop) by Murilo D'agustin (MIT): the co-op
+  (`src/game/coop*`, its licence in `src/game/COOP_LICENSE`).
+- [black-pc](https://github.com/Spark198rus/black-pc): its reverse-engineering notes (facts and addresses only,
+  no code).
+- [SDL](https://github.com/libsdl-org/SDL), [glslang](https://github.com/KhronosGroup/glslang),
+  [toml++](https://github.com/marzer/tomlplusplus), [Dear ImGui](https://github.com/ocornut/imgui),
+  [Zydis](https://github.com/zyantific/zydis) and the [OpenXR](https://www.khronos.org/openxr/) loader.
+- [bagasromadon](https://github.com/bagasromadon): the touch controls' button skin from black-android.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). The licences of the projects above apply to their parts.

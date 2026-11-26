@@ -3,6 +3,8 @@ package com.slimybirch.blackquest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -35,6 +37,14 @@ final class UpdateChecker {
         String page;     // the release on GitHub
         String apk;      // the APK's download, or null
         String changes;  // the "What's Changed" list as plain text, or ""
+        boolean full;    // "Rebuild: full" in its notes: the PC recompiles the game (30-90 minutes)
+        boolean hdRedo;  // "HD textures: redo": the Builder converts and copies them again
+
+        // how the Builder's update goes, for the notice
+        String howLong() {
+            String s = full ? "a full rebuild on your PC, 30 to 90 minutes" : "a quick rebuild on your PC, a few minutes";
+            return hdRedo ? s + ", HD textures redone" : s;
+        }
     }
 
     interface Listener {
@@ -53,6 +63,11 @@ final class UpdateChecker {
         new Thread(() -> {
             Release newer = null;
             boolean failed = false;
+            // at launch only over wi-fi (user): no mobile data spent, no wait on a slow link
+            if (!manual && !onWifi(app)) {
+                Log.i(TAG, "no update check: not on wi-fi");
+                return;
+            }
             try {
                 Release r = fetch();
                 boolean skipped = r != null && !manual && r.tag.equals(prefs.getString(SKIPPED, null));
@@ -86,6 +101,23 @@ final class UpdateChecker {
                 .edit().putBoolean(STARTUP, on).apply();
     }
 
+    // a line of the release's notes starting so (case aside)
+    private static boolean marker(String body, String regex) {
+        return java.util.regex.Pattern.compile("^" + regex, java.util.regex.Pattern.MULTILINE
+                | java.util.regex.Pattern.CASE_INSENSITIVE).matcher(body).find();
+    }
+
+    static boolean onWifi(Context app) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) app.getSystemService(Context.CONNECTIVITY_SERVICE);
+            NetworkCapabilities nc = cm == null ? null : cm.getNetworkCapabilities(cm.getActiveNetwork());
+            return nc != null && (nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    || nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     static String installedVersion(Context app) {
         try {
             return app.getPackageManager().getPackageInfo(app.getPackageName(), 0).versionName;
@@ -116,7 +148,10 @@ final class UpdateChecker {
                     break;
                 }
             }
-            r.changes = changes(j.optString("body", ""));
+            String body = j.optString("body", "");
+            r.changes = changes(body);
+            r.full = marker(body, "Rebuild:\\s*full");
+            r.hdRedo = marker(body, "HD textures:\\s*redo");
             return r;
         } finally {
             c.disconnect();

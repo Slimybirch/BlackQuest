@@ -1,6 +1,9 @@
-"""the release zip: the source (what git tracks, and new files it doesn't ignore), the Builder and the recompiler prebuilt in tools/bin
+"""the release zip and its notes: the source (what git tracks, and new files it doesn't ignore), the Builder and the recompiler prebuilt in tools/bin
 with its licences. Never the game's files: only what git tracks plus those built tools, each checked by name.
-python -I tools/package.py -> out/release/BlackQuest-<VERSION>.zip"""
+python -I tools/package.py -> out/release/BlackQuest-<VERSION>.zip and notes.md (the release's body: what changed
+since the last tag, and the markers the Builder and the headset read: "Rebuild: full" when the game's code is
+recompiled, "HD textures: redo" when the HD textures must be converted again). MANIFEST.txt in the zip lists its
+files, so the Builder's update removes the ones a release drops"""
 import os, subprocess, sys, zipfile
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,4 +35,28 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         z.write(path, 'BlackQuest/' + f)
     for name, path in extra.items():
         z.write(path, 'BlackQuest/' + name)
+    names = sorted(f for f in files if f and os.path.isfile(os.path.join(root, f))) + sorted(extra)
+    z.writestr('BlackQuest/MANIFEST.txt', '\n'.join(names + ['MANIFEST.txt']) + '\n')
+
+# the notes, against the newest tag before this version's
+def git(*a):
+    return subprocess.run(['git'] + list(a), cwd=root, capture_output=True, text=True).stdout.strip()
+
+tags = [t for t in git('tag', '--list', 'v*', '--sort=-v:refname').split() if t != 'v' + version]
+prev = tags[0] if tags else None
+span = (prev + '..HEAD') if prev else 'HEAD'
+subjects = [s for s in git('log', '--no-merges', '--format=%s', span).splitlines() if s]
+def changed(*paths):
+    return prev is None or bool(git('diff', '--name-only', prev, 'HEAD', '--', *paths))
+# the recompiled code's inputs: its hooks and symbols, the recompiler's pin, the native build's flags
+full = changed('config/game.toml', 'tools/CMakeLists.txt', 'CMakeLists.txt')
+hd = prev is not None and changed('tools/hd_map.txt', 'builder/HdPack.cs')
+notes = ['## What\'s Changed'] + ['- ' + s for s in subjects[:40]] + ['', 'Rebuild: ' + ('full' if full else 'quick')]
+if hd:
+    notes.append('HD textures: redo')
+notes += ['', 'Update with BlackQuest Builder on your PC (it checks for updates when it starts); a first install: '
+          'download the zip below and see the README.']
+open(os.path.join(root, 'out', 'release', 'notes.md'), 'w', encoding='utf-8', newline='\n').write('\n'.join(notes) + '\n')
+print('notes: since', prev or 'the start', '-', len(subjects), 'commits, rebuild', 'full' if full else 'quick',
+      '(HD redo)' if hd else '')
 print(out, os.path.getsize(out) // 1024, 'KB')
