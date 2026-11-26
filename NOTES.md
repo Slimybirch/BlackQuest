@@ -2152,3 +2152,26 @@ brighter and bigger)
   smooth (vr_turn_speed, 50-200 by 25), FINISH. BACK and SKIP SETUP on each card; VR SETTINGS > FIRST LAUNCH SETUP
   (RUN AGAIN) clears the flag. Every choice saves as it's made. Headset shot: SETUP 1/3 beside PRESS A with the two
   buttons; the buttons need the user's hands. Handedness left out until left-handed play exists.
+
+## 2026-11-25: the rifles' lock back checked
+- Emptied on the headset (test hands, side on, dev_firehold; the M16 with dev_rapid, its trigger fires bursts):
+  AK, M16, M249, G36, MP5, P90, Uzi, MAC-10 each log "empty: its slide (or handle) locked back". Shots against the
+  same pose loaded: the AK's carrier and handle back with the ejection port open; the M16's charging handle back
+  out of the receiver's rear; the M249's run moved between shots (its log alone). The game's guns are mirrored:
+  the handle's bone is on the mesh's +x, the side facing the player (the AK's 84: x 0.005..0.031). Every parts
+  table has a slide bone but the magnum's and the RPG's (none to lock). Nothing found broken; the user's case
+  (which gun, what was done before) wanted.
+- dev_hidebone with the gun's mesh dump (bones.py over dumps/gun_<code>.bin: 36-byte vertices, weights at +12,
+  int16 bone registers at +16) finds which register holds a part.
+
+## 2026-11-25: lock back as the real guns (user)
+- User: only the guns that hold open in real life lock back; the M16's action opens but its charging handle stays
+  home. GunParts gains hold_open (M16 and its M203 form, G36, WA2000, pistol, Glock) and lock_bone (the part the
+  lock holds back if not the slide). The others, emptied, set g_spent (the bolt forward on an empty chamber): a
+  seated magazine's rounds wait for a rack as before; the uzi, mac-10 and m249 fire from an open bolt that rides
+  forward when the trigger's held through the last round.
+- The M16's mesh (dump gun_M16, bones.py): 75 the gun, 78 magazine, 81 its rounds, 84 the T charging handle
+  (y 0.092..0.098, z -0.100..0.003), 87 (+x, y 0.011..0.056, z 0.004..0.027: the bolt catch?), 90 (-x, y
+  0.074..0.093, z 0.028..0.111, 8.3 cm: taken as the bolt in the ejection port, the lock moves it back 7 cm), 99
+  (+x, z 0.031..0.052), 102 (top, z 0.050..0.095). Bone 90 not yet confirmed (the headset was off the network for
+  the dev_hidebone run); the handle now moves with the off hand's pull alone (g_handle).

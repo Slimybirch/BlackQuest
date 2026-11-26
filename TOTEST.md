@@ -148,3 +148,5 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] reload touches: a faint tick as the off hand reaches the slide or the magazine, on the fore-end, the magazine release; the existing buzzes still there (confirm)
 - [ ] pickups: a light touch in both hands for anything picked up (auto: pickup_felt) (confirm)
 - [ ] first launch setup: beside PRESS A the panel shows SETUP 1/3; STANDING goes to the height card (SET HEIGHT, then NEXT), SEATED skips it; turning: SMOOTH (with TURN SPEED - / +), SNAP 30 or SNAP 45; FINISH brings VR SETTINGS back; BACK and SKIP SETUP work; VR SETTINGS > FIRST LAUNCH SETUP: RUN AGAIN shows it again (confirm)
+- [ ] lock back as real guns: emptied, the M16, G36, WA2000, pistol and Glock hold open; the AK, MP5, P90, Uzi, MAC-10 and M249 close on empty (handle forward) and a fresh magazine still needs a rack before it fires (confirm)
+- [ ] M16 (and M16+M203) empty: the bolt back in the ejection port, the charging handle home at the rear; pulling the handle still racks it (unverified guess: the bolt is the mesh's bone 90) (confirm)

@@ -233,8 +233,10 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] user test 7, every gun (dev_give cycles codes): the handle zones (the log's out/up/fwd), seating (the log's
       "held top ... from the well"), each gun's slide travel and knob (guesses: AK 7 cm), the sounds (the log names
       each sample found or not found), rounds riding with the magazine, the floor height, racking loaded
-- [ ] (user, 2026-11-23: now) guns that don't lock back (AK, M16, M249) show their handle held back when empty, as the
+- [x] (user, 2026-11-23: now) guns that don't lock back (AK, M16, M249) show their handle held back when empty, as the
       pistol's slide (the real bolt's lock is on the gun's far side, not easily seen)
+- [ ] (user, 2026-11-25) lock back only where the real gun does (M16, G36, WA2000, pistols); the M16's bolt back,
+      its charging handle home: built, untested (the headset was off the network); confirm bone 90 is the bolt
 - [x] the game's own rack sounds: AK AkCock0/AkCock1, pistol PstBrch0/PstBbrch1, found by recording and played
       from where the game's draw played them (NOTES 2026-11-22)
 - [ ] hear them on the headset (dev_racksound or a real rack); the other guns' are in (built 2026-11-22)

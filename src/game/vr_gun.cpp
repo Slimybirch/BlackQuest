@@ -53,6 +53,8 @@ bool VrMeleeHidden();                          // vr_body.cpp
 int VrMagState();
 int VrMagBone();
 float VrSlide();
+int VrLockBone();
+float VrHandle();
 bool VrGunParts(int& mag, int& slide, float& travel, float* mid, float* up, bool& measure, float& top, float& bottom,
                 int& bullets);
 bool VrRacking();
@@ -2093,11 +2095,15 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
         }
         return true;
     }
-    // the slide, held back by a lock or a hand: its bone back along the mesh's -z
-    if (slide >= 0 && VrSlide() > 0.001f) {
+    // the slide, held back by a lock or a hand: its bone back along the mesh's -z. A gun whose lock holds another
+    // part (the m16's bolt) moves that with the lock or the hand, its handle with the hand only
+    const int lock_bone = VrLockBone();
+    const float handle = lock_bone >= 0 ? VrHandle() : VrSlide();
+    for (auto [bone, by] : {std::pair{slide, handle}, std::pair{lock_bone, VrSlide()}}) {
+        if (bone < 0 || by <= 0.001f) continue;
         Aff back = kIdentityAff;
-        back.m[11] = -travel * VrSlide();
-        SetBone(c, slide, Compose(Bone(c, slide), back));
+        back.m[11] = -travel * by;
+        SetBone(c, bone, Compose(Bone(c, bone), back));
     }
     // the rack point where the gun's own draw has it (not the arms', whose bones are another set)
     int rack_bone;

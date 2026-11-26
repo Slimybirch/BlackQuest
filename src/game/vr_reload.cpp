@@ -141,6 +141,13 @@ struct GunParts {
     // forward (travel negative), worked only after a shot: forward kTubeStroke at kPumpSpeed opens it, the round
     // goes into its back, back again shuts it. Without one (the rpg) the round goes straight in and it's loaded
     bool launcher = false;
+    // its action holds open on the last round, as the real gun's (user: the m16, g36, wa2000 and pistols); the rest
+    // close on an empty chamber (the ak, mp5, p90; the uzi, mac-10 and m249 fire from an open bolt that rides
+    // forward), a fresh magazine's rounds then waiting for a rack all the same
+    bool hold_open = false;
+    // the part the lock holds back, when it isn't the slide (the m16's bolt: its charging handle stays home, user);
+    // -1 the slide
+    int lock_bone = -1;
     int take = 0;  // where it's taken: kTakeChest, kTakeShoulder (over the left), kTakeWaist (low, near the waist)
     int root = -1;  // the gun's root bone (the round's place in the gun when the game has hidden it)
 };
@@ -162,22 +169,22 @@ constexpr float kSlideReach = 0.04f;
 const GunParts kPistol = {.mag = 114, .slide = 117, .travel = 0.037f, .mid = {0, -0.022f, -0.057f},
                           .up = {0, 0.98f, 0.19f}, .top = 0.044f, .bottom = -0.051f, .measured = true, .rack_bone = 117,
                           .rack = {0, 0.080f, -0.094f}, .hold = 0.025f, .rack_out = {0, 0, 1}, .rack_len = 0.111f,
-                          .rack_reach = kSlideReach};
+                          .rack_reach = kSlideReach, .hold_open = true};
 // glock: magazine 117 in the grip, its rounds 114, slide 120 (z -0.090..0.101, its top y 0.060)
 const GunParts kGlock = {.mag = 117, .slide = 120, .travel = 0.035f, .mid = {0, -0.012f, -0.047f},
                          .up = {0, 0.95f, 0.31f}, .top = 0.050f, .bottom = -0.078f, .measured = true, .bullets = 114,
                          .rack_bone = 120, .rack = {0, 0.074f, -0.090f}, .hold = 0.03f, .rack_out = {0, 0, 1},
-                         .rack_len = 0.096f, .rack_reach = kSlideReach};
+                         .rack_len = 0.096f, .rack_reach = kSlideReach, .hold_open = true};
 // g36c: magazine 78, the handle on 81
 const GunParts kG36 = {.mag = 78, .slide = 81, .travel = 0.07f, .mid = {0, -0.055f, 0.075f}, .up = {0, 0.99f, -0.14f},
                        .top = 0.069f, .bottom = -0.069f, .rack_bone = 81, .rack = {0.025f, 0.076f, 0.100f},
                        .hold = 0.04f, .depth = 0.03f, .rack_out = {1, 0, 0}, .rack_len = kKnobLen,
-                       .rack_reach = kKnobReach};
+                       .rack_reach = kKnobReach, .hold_open = true};
 // m16: magazine 78, its rounds 81, the T handle 84 at the receiver's rear: its zone runs back from the T
 const GunParts kM16 = {.mag = 78, .slide = 84, .travel = 0.07f, .mid = {0, -0.010f, 0.077f}, .up = {0, 1, 0},
                        .top = 0.056f, .bottom = -0.085f, .bullets = 81, .rack_bone = 84, .rack = {0, 0.095f, -0.100f},
                        .hold = 0.035f, .depth = 0.05f, .rack_out = {0, 0, -1}, .rack_len = kKnobLen,
-                       .rack_reach = kKnobReach};
+                       .rack_reach = kKnobReach, .hold_open = true, .lock_bone = 90};
 GunParts M203() {  // the m16a2 + m203: the m16's, its magazine a little apart
     GunParts p = kM16;
     p.mid[1] = -0.012f, p.mid[2] = 0.078f, p.top = 0.057f, p.bottom = -0.083f;
@@ -210,7 +217,7 @@ const GunParts kWa2000 = {.mag = 81, .slide = 84, .travel = 0.07f, .mid = {0, -0
                           // (user: it slides home once its top reaches the well's bottom: the mouth 2.6 cm under the
                           // seated top, the line on 2.4 cm past it, 3 cm round it)
                           .hold = 0.02f, .depth = 0.05f, .seat_reach = 0.03f, .rack_out = {1, 0, 0}, .rack_len = kKnobLen,
-                          .rack_reach = 0.06f, .bolt = true};  // the user's hand 5-6 cm off it (play log 2026-11-23)
+                          .rack_reach = 0.06f, .bolt = true, .hold_open = true};  // the user's hand 5-6 cm off it (play log 2026-11-23)
 // m249: the box 99 at the side under the feed (its belt, bones 102-111, stays in the gun), the handle 114
 const GunParts kM249 = {.mag = 99, .slide = 114, .travel = 0.07f, .mid = {0.025f, 0.035f, 0.128f}, .up = {0, 1, 0},
                         .top = 0.031f, .bottom = -0.045f, .rack_bone = 114, .rack = {0.035f, 0.077f, 0.082f},
@@ -525,6 +532,7 @@ GunParts g_parts;  // the held gun's (game thread writes, render reads: copied u
 // the slide: locked back when the gun ran dry; a magazine seated then waits for a rack (its rounds pending);
 // the off hand's grip near it pulls it (0 forward .. 1 back)
 std::atomic<float> g_slide{0};
+std::atomic<float> g_handle{0};  // the hand's pull alone (a lock_bone gun's handle: the lock leaves it home)
 bool g_locked = false;
 uint16_t g_pending = 0;
 bool g_spent = false;  // a bolt worked by hand, fired: the chamber empty, the bolt forward (the rounds wait for a rack)
@@ -1544,14 +1552,20 @@ void VrReloadTick() {
     // along the barrel (taken above); let go and it runs forward, chambering a round if it was locked or pulled
     // most of the way
     if (state == 0 && clip == 0 && !g_pending && !g_locked && !g_parts.shells && !g_parts.revolver) {
-        g_locked = true;
-        g_slide = 1;
-        LOGR("vr reload: %s empty: its slide (or handle) locked back", code.c_str());
+        if (g_parts.hold_open) {
+            g_locked = true;
+            g_slide = 1;
+            LOGR("vr reload: %s empty: its slide (or bolt) locked back", code.c_str());
+        } else if (!g_spent) {
+            g_spent = true;  // closed on an empty chamber: a magazine's rounds wait for a rack
+            LOGR("vr reload: %s empty: its bolt forward on an empty chamber", code.c_str());
+        }
     }
     if (g_racking) {
         {
             float pull = std::clamp((g_rack_from - along) / kRackPull, 0.0f, 1.0f);
             g_slide = std::max(pull, g_locked ? 1.0f : 0.0f);  // a locked slide is back already
+            g_handle = pull;
             // the pull's sound once it's well on its way back (a locked slide: on the grab); its release waits for
             // the hand to let go (syncing either to the motion: TODO)
             if (!g_rack_back_cued && (pull > 0.4f || g_locked)) {
@@ -1583,6 +1597,7 @@ void VrReloadTick() {
             }
         }
     }
+    if (!g_racking) g_handle = 0;
     if (state != 2) g_seating = false;
     g_state = state;
     last_clip = clip;
@@ -1669,6 +1684,15 @@ void DevModeDump() {
 float VrSlide() {
     static const bool held = std::filesystem::exists(app::ExeDir() / "dev_rackheld");
     return held ? 1.0f : g_slide.load(std::memory_order_relaxed);
+}
+// render thread: the part an empty lock holds back if not the slide (-1), and the handle's pull by hand alone
+int VrLockBone() {
+    std::lock_guard lock(g_lock);
+    return g_parts.lock_bone;
+}
+float VrHandle() {
+    static const bool held = std::filesystem::exists(app::ExeDir() / "dev_rackheld");
+    return held ? 1.0f : g_handle.load(std::memory_order_relaxed);
 }
 // render thread: the held gun's parts (the magazine's top and bottom: the table's, used when not measured)
 bool VrGunParts(int& mag, int& slide, float& travel, float* mid, float* up, bool& measure, float& top, float& bottom,
