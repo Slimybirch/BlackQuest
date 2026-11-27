@@ -51,7 +51,13 @@ def changed(*paths):
 # the recompiled code's inputs: its hooks and symbols, the recompiler's pin, the native build's flags
 full = changed('config/game.toml', 'tools/CMakeLists.txt', 'CMakeLists.txt')
 hd = prev is not None and changed('tools/hd_map.txt', 'builder/HdPack.cs')
-notes = ['## What\'s Changed'] + ['- ' + s for s in subjects[:40]] + ['', 'Rebuild: ' + ('full' if full else 'quick')]
+# NEXT_RELEASE.md: the player's list of what's new, kept while commits gather (user: a few commits make an update);
+# the commit subjects when it's empty. Empty it after the release
+nf = os.path.join(root, 'NEXT_RELEASE.md')
+items = [l.strip() for l in open(nf, encoding='utf-8').read().splitlines() if l.strip().startswith('- ')] if os.path.exists(nf) else []
+if not items:
+    items = ['- ' + s for s in subjects[:40]]
+notes = ['## What\'s Changed'] + items + ['', 'Rebuild: ' + ('full' if full else 'quick')]
 if hd:
     notes.append('HD textures: redo')
 notes += ['', 'Update with BlackQuest Builder on your PC (it checks for updates when it starts); a first install: '

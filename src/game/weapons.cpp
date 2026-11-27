@@ -1206,13 +1206,22 @@ void WeaponsTick(X86Context& ctx) {
         uint32_t anim = w ? R32(w + kWeaponAnim) : 0;
         // a gun's draw (0x9, the gun cocked, 1.3-1.9 s), picked up or switched to, skipped to idle in vr (user
         // 2026-11-26: no cocking on pickup, nor on a switch back)
+        // the m16's m203 reloaded by the game after its shot (0x2, busy C: user, in the way; ours loads it by hand)
+        if (w && anim == 0x2 && xr::Active() && weapons::HeldCode() == "BNS") {
+            W32(w + kWeaponAnim, 0);
+            static int skipped = 0;
+            if (skipped++ < 20) LOGR("weapons: BNS's m203 reload skipped (busy %X)", R32(al.inventory + kInvBusy));
+            anim = 0;
+        }
         if (w && anim == 0x9 && xr::Active()) {
             W32(w + kWeaponAnim, 0);
             static int skipped = 0;
             if (skipped++ < 20) LOGR("weapons: %s's draw skipped (busy %X)", weapons::HeldCode().c_str(), R32(al.inventory + kInvBusy));
             anim = 0;
         }
-        if (w && (anim != last_anim || w != last_w) && logged < 200) {
+        // (the shots' 0x1 and back not logged: they used up the lines)
+        const bool shot = (anim == 0x1 && last_anim == 0) || (anim == 0 && last_anim == 0x1);
+        if (w && (anim != last_anim || w != last_w) && !(shot && w == last_w) && logged < 200) {
             logged++;
             LOGR("weapons: held %08X (%s) anim 0x%X busy %X", w, weapons::HeldCode().c_str(), anim, R32(al.inventory + kInvBusy));
         }

@@ -262,11 +262,12 @@ float3 Overlay(float2 uv, float3 c) {
             float spec = pow(saturate(dot(reflect(-light, nrm), v)), 24);
             float3 col = float3(0.045, 0.045, 0.05) + diff * float3(0.16, 0.16, 0.17) + spec * 0.28;
             if (part > 0.5) col *= 0.8;  // the thread collar, a little darker
+            if (silB.w > 1.5) col = float3(0.75, 0.88, 1.0) * (0.8 + 0.2 * diff);  // the menus' laser: lit, plain
             float g1 = abs(along - 0.42), g2 = abs(along - 0.58);
-            if (part < 0.5 && (g1 < 0.006 || g2 < 0.006)) col *= 0.35;  // the grooves
+            if (silB.w < 1.5 && part < 0.5 && (g1 < 0.006 || g2 < 0.006)) col *= 0.35;  // the grooves
             float3 hit = best * d - silA.xyz;
             float3 sideRef = normalize(cross(ax, float3(0, 0, 1)) + 1e-4);
-            if (part < 0.5 && abs(along - 0.88) < 0.012 && dot(normalize(hit - dot(hit, ax) * ax), sideRef) > 0.96) col = 0.01;  // the vent hole
+            if (silB.w < 1.5 && part < 0.5 && abs(along - 0.88) < 0.012 && dot(normalize(hit - dot(hit, ax) * ax), sideRef) > 0.96) col = 0.01;  // the vent hole
             c = col;
         }
     }
@@ -1147,10 +1148,11 @@ bool HudMatrix(int eye, float aspect, float* out) {
     {
         static bool fixed = false;
         static float c[3], Rp[9];
-        // (user 2026-11-26: the paused menu static in front of the player again, head-locked as the hud: the room
-        // fix is off; dev_hudroom turns it back on to compare)
-        static const bool locked = !std::filesystem::exists(app::ExeDir() / "dev_hudroom");
+        // (user 2026-11-26: fixed in the room again, 5 ft wide 2.5 ft ahead: xr::kMenuDistance; dev_hudlock keeps it
+        // head-locked as the hud to compare)
+        static const bool locked = std::filesystem::exists(app::ExeDir() / "dev_hudlock");
         if (locked || !::game::VrMenuOverPlay()) {
+            if (fixed) xr::SetMenuPlane(nullptr, nullptr, 0, 0);
             fixed = false;
         } else {
             if (!fixed) {
@@ -1162,10 +1164,15 @@ bool HudMatrix(int eye, float aspect, float* out) {
                 float fx = -R[2], fz = -R[8], l = std::sqrt(fx * fx + fz * fz);  // the view's -z, level
                 if (l < 1e-3f) fx = 0, fz = -1, l = 1;
                 fx /= l, fz /= l;
-                c[0] = h[0] + fx * kHudDistance, c[1] = h[1], c[2] = h[2] + fz * kHudDistance;
-                // the plane's x right, y up, z back toward the head
-                float r[9] = {-fz, 0, fx, 0, 1, 0, -fx, 0, -fz};
+                c[0] = h[0] + fx * xr::kMenuDistance, c[1] = h[1], c[2] = h[2] + fz * xr::kMenuDistance;
+                // the plane's x right, y up, z back toward the head: its columns (they were its rows, the turn
+                // backwards: off the room's forward the plane faced away, its text read mirrored: screencaps
+                // 2026-11-26)
+                float r[9] = {-fz, 0, -fx, 0, 1, 0, fx, 0, -fz};
                 std::memcpy(Rp, r, sizeof(r));
+                // (the laser's target: xr.cpp GameMenuPointer)
+                const float fwd[3] = {fx, 0, fz};
+                xr::SetMenuPlane(c, fwd, xr::kMenuHalfWidth, xr::kMenuHalfWidth / aspect);
             }
             float Re[9];
             QuatMatrix(ev.quat, Re);
@@ -1177,7 +1184,7 @@ bool HudMatrix(int eye, float aspect, float* out) {
                     A[i * 3 + j] = Re[0 * 3 + i] * Rp[0 * 3 + j] + Re[1 * 3 + i] * Rp[1 * 3 + j] + Re[2 * 3 + i] * Rp[2 * 3 + j];
             }
             float l = ev.tan[0], r = ev.tan[1], u = ev.tan[2], dn = ev.tan[3];
-            float wh = kHudHalfWidth, hh = kHudHalfWidth / aspect;
+            float wh = xr::kMenuHalfWidth, hh = xr::kMenuHalfWidth / aspect;
             // the clip's (x, y) to the eye's (X, Y) and its depth Z = -z, each a row over (x, y, z, 1)
             float X[4] = {A[0] * wh, A[1] * hh, 0, b[0]}, Y[4] = {A[3] * wh, A[4] * hh, 0, b[1]},
                   Z[4] = {-A[6] * wh, -A[7] * hh, 0, -b[2]};
@@ -4567,12 +4574,39 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     bool aimed = eye_image && !last_theater_ && ::game::VrReticle(xr::ImageEye(index), ret);
     // our silencer (in the eye's space) and its icon under the hud's ammunition
     float sil[16] = {}, icon[4] = {}, icon_bright = 0;
-    bool silenced = false, iconed = false;
+    bool silenced = false, iconed = false, beam_shown = false;
     if (eye_image && !last_theater_) {
         xr::EyeView ev;
         float rear[3], front[3], radius;
         int e = xr::ImageEye(index);
-        if (xr::RenderEye(e, ev) && ::game::VrSilencerPose(rear, front, &radius)) {
+        // the menus' laser (user 2026-11-26): a thin bright beam from the right controller to the paused menu or the
+        // settings panel, the game's dot where it lands; drawn as the silencer's tube was (silB.w 2: lit, not matte)
+        float beam_from[3], beam_to[3];
+        bool beam = ::game::VrMenuOverPlay() && xr::PointerBeam(beam_from, beam_to);
+        if (beam && xr::RenderEye(e, ev)) {
+            float R[9];
+            QuatMatrix(ev.quat, R);
+            auto toEye = [&](const float* p, float* o) {
+                float d[3] = {p[0] - ev.pos[0], p[1] - ev.pos[1], p[2] - ev.pos[2]};
+                for (int i = 0; i < 3; i++) o[i] = R[0 * 3 + i] * d[0] + R[1 * 3 + i] * d[1] + R[2 * 3 + i] * d[2];
+            };
+            toEye(beam_from, sil);
+            sil[3] = 0.0022f;
+            toEye(beam_to, sil + 4);
+            sil[7] = 2;
+            sil[8] = ev.tan[0], sil[9] = ev.tan[1], sil[10] = ev.tan[2], sil[11] = ev.tan[3];
+            silenced = true;
+            // the dot: the hit's point in the eye's frame, 1 cm across
+            float z = -sil[6];
+            if (z > 0.05f) {
+                float sx = sil[4] / z, sy = sil[5] / z;
+                ret[0] = (sx - ev.tan[0]) / (ev.tan[1] - ev.tan[0]);
+                ret[1] = (sy - ev.tan[2]) / (ev.tan[3] - ev.tan[2]);
+                ret[2] = 0.012f / z / (ev.tan[1] - ev.tan[0]);
+                ret[3] = 0.012f / z / (ev.tan[2] - ev.tan[3]);
+                aimed = beam_shown = true;
+            }
+        } else if (xr::RenderEye(e, ev) && ::game::VrSilencerPose(rear, front, &radius)) {
             float R[9];
             QuatMatrix(ev.quat, R);
             auto toEye = [&](const float* p, float* o) {
@@ -4608,6 +4642,18 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
             }
         }
     }
+    // the theater screen (the title's menus): the laser's dot on the game's frame where the ray meets it
+    if (!eye_image && xr::Active()) {
+        float u, v;
+        bool theater, trig;
+        if (xr::GameMenuPointer(u, v, theater, trig) && theater) {
+            float qw = 16, qh = 9, fw = std::min(qw, qh * aspect), fh = fw / aspect;
+            ret[0] = (u * qw - (qw - fw) * 0.5f) / fw;
+            ret[1] = (v * qh - (qh - fh) * 0.5f) / fh;
+            ret[2] = 0.012f, ret[3] = 0.012f * aspect;
+            aimed = beam_shown = ret[0] >= 0 && ret[0] <= 1 && ret[1] >= 0 && ret[1] <= 1;
+        }
+    }
     bool post = game::Opt().hdr || fxaa || bright > 0 || vignette > 0.01f || scoped || aimed || silenced || iconed;
     // opts.z: the taps a side over each screen pixel, 2 averaging SSAA's samples
     float c[56] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, ssaa ? 2.0f : 1.0f, 1};
@@ -4619,7 +4665,8 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         std::memcpy(c + 32, ret, sizeof(ret));
         // the game's crosshair colour (hud.cpp), its green if it hasn't drawn lately
         float rgb[3] = {0.35f, 0.9f, 0.4f};
-        ::game::VrDotColour(rgb);
+        if (beam_shown) rgb[0] = rgb[1] = rgb[2] = 0.95f;  // the menus' pointer: the game's dot, white
+        else ::game::VrDotColour(rgb);
         c[53] = rgb[0], c[54] = rgb[1], c[55] = rgb[2];
     }
     c[20] = game::Opt().hdr ? 1.0f : 0.0f;

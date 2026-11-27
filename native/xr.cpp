@@ -709,6 +709,80 @@ bool CardPointer(float& u, float& v) {
     return c.live && RayOnQuad(c, g_card_pose, g_card_size, u, v);
 }
 
+namespace {
+std::mutex g_menu_lock;
+bool g_menu_plane = false;     // the paused menu's plane in play (vulkan.cpp HudMatrix)
+XrPosef g_menu_pose{{0, 0, 0, 1}, {0, 0, 0}};
+XrExtent2Df g_menu_size{};
+bool g_theater_up = false;     // the theater screen shown (its pose: g_screen_pose)
+XrPosef g_screen_pose{{0, 0, 0, 1}, {0, 0, 0}};
+XrExtent2Df g_screen_size{};
+bool g_panel_up = false;       // the settings panel shown (its pose: g_ui_pose)
+
+// where the ray meets a quad, the distance along it (false: misses)
+bool RayHit(const Controls& c, const XrPosef& p, const XrExtent2Df& size, float& u, float& v, float& t) {
+    if (!RayOnQuad(c, p, size, u, v)) return false;
+    XrQuaternionf aq{c.aim[1][0], c.aim[1][1], c.aim[1][2], c.aim[1][3]};
+    XrVector3f d = Rotate(p.orientation, Rotate(aq, {0, 0, -1}), true);
+    XrVector3f o = Rotate(p.orientation, {c.aim_pos[1][0] - p.position.x, c.aim_pos[1][1] - p.position.y,
+                                          c.aim_pos[1][2] - p.position.z}, true);
+    t = -o.z / d.z;
+    return true;
+}
+}  // namespace
+
+void SetMenuPlane(const float* centre, const float* fwd, float half_w, float half_h) {
+    std::lock_guard lock(g_menu_lock);
+    g_menu_plane = centre != nullptr;
+    if (!centre) return;
+    float yaw = std::atan2(-fwd[0], -fwd[2]);
+    g_menu_pose = {{0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)}, {centre[0], centre[1], centre[2]}};
+    g_menu_size = {half_w * 2, half_h * 2};
+}
+
+// the ray's nearest hit: 0 none, 1 the game's menu, 2 the settings panel
+int PointerHit(const Controls& c, float& u, float& v, float& t, bool& theater) {
+    std::lock_guard lock(g_menu_lock);
+    int hit = 0;
+    float pu, pv, pt;
+    t = 1e9f;
+    if (g_panel_up && RayHit(c, g_ui_pose, g_ui_size, pu, pv, pt) && pt < t) hit = 2, t = pt, u = pu, v = pv;
+    theater = false;
+    if (g_theater_up && RayHit(c, g_screen_pose, g_screen_size, pu, pv, pt) && pt < t)
+        hit = 1, t = pt, u = pu, v = pv, theater = true;
+    else if (!g_theater_up && g_menu_plane && RayHit(c, g_menu_pose, g_menu_size, pu, pv, pt) && pt < t)
+        hit = 1, t = pt, u = pu, v = pv;
+    return hit;
+}
+
+bool GameMenuPointer(float& u, float& v, bool& theater, bool& trigger) {
+    Controls c;
+    {
+        std::lock_guard lock(g_controls_lock);
+        c = g_controls;
+    }
+    float t;
+    if (!c.live || PointerHit(c, u, v, t, theater) != 1) return false;
+    trigger = c.trigger[1] > 0.5f;
+    return true;
+}
+
+bool PointerBeam(float* from, float* to) {
+    Controls c;
+    {
+        std::lock_guard lock(g_controls_lock);
+        c = g_controls;
+    }
+    float u, v, t;
+    bool theater;
+    if (!c.live || !c.aim_ok[1] || !PointerHit(c, u, v, t, theater)) return false;
+    XrQuaternionf aq{c.aim[1][0], c.aim[1][1], c.aim[1][2], c.aim[1][3]};
+    XrVector3f d = Rotate(aq, {0, 0, -1}, false);
+    for (int i = 0; i < 3; i++) from[i] = c.aim_pos[1][i];
+    to[0] = from[0] + d.x * t, to[1] = from[1] + d.y * t, to[2] = from[2] + d.z * t;
+    return true;
+}
+
 bool MenuControls(MenuInput& in) {
     Controls c;
     {
@@ -937,7 +1011,8 @@ XrPosef PanelBeside(const XrPosef& at, float half, float panel_w) {
     return p;
 }
 // its width beside the paused hud, the theater (user 2026-11-26: 3 times bigger, it was too small to read everywhere)
-constexpr float kPanelBesideHud = 3.0f, kPanelBesideScreen = 4.8f;
+// (beside the paused menu, now 2.5 ft away: as wide as the menu, the same look as 3 m at 1.5 m)
+constexpr float kPanelBesideHud = 1.52f, kPanelBesideScreen = 4.8f;
 
 std::atomic<bool> g_last_theater{true};
 bool LastTheater() { return g_last_theater.load(std::memory_order_relaxed); }
@@ -985,11 +1060,11 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
             float yaw = std::atan2(-fx, -fz), l = std::sqrt(fx * fx + fz * fz);
             if (l < 1e-3f) fx = 0, fz = -1, l = 1;
             XrPosef hud;
-            hud.position = {0.5f * (h.position.x + g_render_views[1].pose.position.x) + fx / l * 1.5f,
+            hud.position = {0.5f * (h.position.x + g_render_views[1].pose.position.x) + fx / l * kPanelMenuDistance,
                             0.5f * (h.position.y + g_render_views[1].pose.position.y),
-                            0.5f * (h.position.z + g_render_views[1].pose.position.z) + fz / l * 1.5f};
+                            0.5f * (h.position.z + g_render_views[1].pose.position.z) + fz / l * kPanelMenuDistance};
             hud.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
-            at = PanelBeside(hud, 1.02f, kPanelBesideHud);
+            at = PanelBeside(hud, kPanelMenuHalfWidth, kPanelBesideHud);
         }
         XrCompositionLayerQuad over{XR_TYPE_COMPOSITION_LAYER_QUAD};
         over.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;  // imgui over clear: premultiplied
@@ -1052,6 +1127,10 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
         ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         ei.layerCount = drawn && g_views_valid ? (panel && placed ? 2 : 1) : 0;
         if (panel && placed) g_ui_pose = over.pose, g_ui_size = over.size;
+        {
+            std::lock_guard lock(g_menu_lock);
+            g_panel_up = panel && placed, g_theater_up = false;
+        }
         if (ei.layerCount == 1 && g_card_size.width > 0)
             layers[ei.layerCount++] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&wrist);
         if (ei.layerCount >= 1 && !(panel && placed) && tip_size.width > 0)
@@ -1094,6 +1173,11 @@ void EndFrame(bool drawn, bool theater, bool panel, bool card, bool tip) {
     if (panel && g_views_valid) {
         side.pose = PanelBeside(screen_at, kScreenMetres * 0.5f, kPanelBesideScreen);
         g_ui_pose = side.pose, g_ui_size = side.size;
+    }
+    {
+        std::lock_guard lock(g_menu_lock);
+        g_panel_up = panel && g_views_valid, g_theater_up = drawn;
+        g_screen_pose = quad.pose, g_screen_size = quad.size;
     }
     const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad),
                                                     reinterpret_cast<XrCompositionLayerBaseHeader*>(&side)};

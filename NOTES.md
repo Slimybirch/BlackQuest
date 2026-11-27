@@ -2315,3 +2315,67 @@ brighter and bigger)
 ## 2026-11-26: hud out 25%
 
 src/game/hud.cpp kVrPullX 0.78 -> 0.975, kVrPullY 0.55 -> 0.69 (each corner's distance from the middle x1.25; user: too close in). Headset capture: health and ammo well apart, no overlap.
+
+## 2026-11-26: off hand turned 90° holding a shell
+
+Watched in play (screencaps every 3 s): with a shell the off hand stood up, back of the hand to the eye. vr_gun.cpp WorkedGun (the shotguns): while cycling, bones 9+ are put back from a snapshot taken at rest, which can hold the off hand as it was on the fore-end, over the free hand's kPstInGun. The free off hand's bones (rig[0].hand..finger_hi) are now left out of that restore.
+
+## 2026-11-26: test round 3 (silencer model, M203, pause menu, texts)
+
+- Our modelled silencer drew on the muzzle beside the game's own (AK, M16): VrSilencerPose now returns only the
+  ground test one.
+- M16+M203 (BNS): the game's M203 reload after a shot is anim 0x2 (busy C, log 438.997); skipped to idle in
+  WeaponsTick like the draw's 0x9. The drop that failed: with the M203 empty and grenades left the reload code ran
+  the gun as "B203" (the tube's parts, no magazine) until loaded, so A dropped nothing. A now hands it back to the
+  rifle (rifle_first) until the rifle's reload is done, then the M203's back.
+- Silencer: RequestSuppressorAnim refuses while +0xD8 or the busy word is set (a shot's 0x1): a grip then retries
+  for 1 s. Anim logging no longer counts the shots' 0x1/0x0 (the 200 lines ran out before the second detach).
+- Pause menu room-fixed again (dev_hudlock for head-locked): xr::kMenuDistance 0.76 m, half width 0.762 (5 ft);
+  the settings panel beside it 1.52 m wide. The panel's window clamped to its image.
+- HUD items with anchor (0.5, 0.2-0.8) (callbacks 0xD71A0, 0xD8B80, 0x1355B0 texts; 0xD9480 the crosshair) grow
+  0.75 (kVrGrowMiddle) instead of 1.25: the objective texts; "hud: item" lines log each callback's anchor once.
+- vr_totest off by default; its key renamed vr_totest_on so saved settings start off.
+
+## 2026-11-26: the menus' laser pointer
+
+The game's Flash menus already take a cursor (src/game/mouse.cpp, black-android's mouse support: input::Cursor,
+the focus stepped to the button under it, a click confirms). In the headset input::Cursor (native/touch.cpp) now
+comes from xr::GameMenuPointer: the right aim ray on the paused menu's plane (vulkan.cpp HudMatrix reports it with
+xr::SetMenuPlane) or the theater screen (16:9, the frame in its middle), the right trigger the click; the settings
+panel takes the ray when it's nearer (xr.cpp PointerHit). Drawn: in play the silencer's eye-space tube (silB.w 2: a
+plain lit beam, 2.2 mm) from the controller to the hit, the reticle's dot (ret, white, 1.2 cm) at it; on the theater
+only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with live controllers.
+
+## 2026-11-26: watched play (42 screencaps, 3 s apart; notes only, nothing changed)
+
+- Pause menu (room-fixed, 5 ft at 2.5 ft): its text is mirrored left to right ("BLACK", "PAUSE MENU" read backwards)
+  in every frame: HudMatrix's room-fixed plane is flipped across x. At 2.5 ft it overfills the view and bends
+  round the lens's edge.
+- The laser shows (a pale blue line from the right controller to the menu or the panel); the white dot isn't
+  seen at its end in these frames.
+- The VR settings panel is small next to the menu, in front of its right part and tilted (1.52 m wide beside a
+  1.52 m menu: PanelBeside's offset puts it at the menu's edge, nearer the head).
+- M16+M203: the M203's reload skipped (log 295.1); A dropped the rifle's magazine with the M203 empty
+  (308.3, reloaded 320.5): the fix works.
+- Shotgun: "pumped on a live round: thrown out" twice (127.3, 159.5): the pump worked with a round chambered.
+- The ammo item 0xD9110 was once drawn at the middle (304.8, anchor 0.5 0.5): it got the middle's smaller size.
+- No crash; pistol reload took a minute (41.3 out, 102.8 in).
+
+## 2026-11-26: fixes from the watched play (installed, not run)
+
+- Pause menu plane: HudMatrix's Rp listed the plane's axes as rows but was used by columns: the transpose, the
+  plane turned the wrong way for any yaw but the room's forward (the mirrored text). Now its columns. Size and
+  distance per the user: xr::kMenuDistance 1.52, kMenuHalfWidth 0.381; the settings panel keeps its place from
+  kPanelMenuDistance 0.76 / kPanelMenuHalfWidth 0.762.
+- Fore-grip lockout after a reload: once the magazine's well was measured (the first reload), near_mag (and the
+  chest zone) set g_near_rack whenever the off hand was by the magazine, and LeftHold dropped any grip while
+  VrRacking(): on the AK and the shotguns the fore-end is in that zone. Now the fore-grip wins within its reach
+  (vr_gun.cpp g_left_fore, VrLeftFore; near_mag needs > 5 cm from it and never on a shotgun; the chest > 8 cm);
+  only a magazine in the hand or the slide held block it. The hand "upside down" with a shell/magazine: likely the
+  same (the hand never took the gun); not seen since.
+- One-handed long guns (fore >= 0.05, not the uzi): the drawn kick x2 (kOneHandKick), the shot within 4 degrees of
+  the barrel's line (kOneHandSpread, VrFireShot).
+- M16 handle zone: rack y 0.110, 10 cm back, 7 cm round (was 0.095, 6, 5).
+- M203 (B203 tube): opens on kPumpStroke (7 cm) at kPumpSpeed after a shot (was the whole 13 cm travel); its zero
+  then reset so it's fully open. Spent case: a case-only M433 (to 60 mm) merged into the BNS's extra mesh on bone
+  126, out of the barrel's back and falling 0.5 s (VrM203CaseOut).

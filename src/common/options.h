@@ -25,7 +25,7 @@ struct Options {
     bool hdr = false;  // a tone map that brings back the colours the console's overbright look burns out
     uint32_t draw_distance = 1;  // times the game's LOD and draw distances
     bool vr_grip_toggle = false;
-    bool vr_totest = true;  // vr: TOTEST.md's unchecked items one at a time on a card over the left wrist (user)
+    bool vr_totest = false;  // (off by default, user 2026-11-26; its key renamed so saved settings start off) vr: TOTEST.md's unchecked items one at a time on a card over the left wrist (user)
     bool vr_manual_reload = true;  // vr: magazines out and in by hand where the gun's magazine is known (phase 5)  // vr: the off hand's grip takes the gun with a press and lets go with the next (user)
     // vr: a physical gunstock (user): the barrel aims from the gun hand to the off hand whenever it's ahead, no grip
     bool vr_gunstock = false;

@@ -140,6 +140,7 @@ std::atomic<int64_t> g_shot_ms{0};  // steady ms of the player's last shot (the 
 // the left hand on the gun: gripped at the fore-grip (or the gun hand, on a pistol), the left arm drawn where the
 // game holds it; off it, the left arm follows the left controller
 std::atomic<bool> g_left_on{false};
+std::atomic<float> g_left_fore{1e9f};  // the off hand's distance from the fore-grip (m), for the reload's zones
 constexpr float kReach = 0.08f;  // metres from the fore-grip a grip press takes hold (tight: the user's ask)
 std::string g_code = "?";  // the weapon it was made for
 
@@ -284,6 +285,9 @@ float g_rest[2][3];
 std::string g_rest_code;
 // the off hand aims a long gun along the line from the gun hand to it (set on the game thread)
 std::atomic<bool> g_two_aim{false};
+// a long gun (a fore-grip to hold) fired with the off hand off it (user 2026-11-26): more kick, the shots wander
+std::atomic<bool> g_long_gun{false};
+constexpr float kOneHandKick = 2.0f, kOneHandSpread = 4.0f;  // the kick times this; the shots within this (degrees)
 
 // the minimal rotation taking unit a to unit b, row-major
 void RotateOnto(const float* a, const float* b, float* R) {
@@ -354,7 +358,9 @@ bool HandInCamera(float yaw, float pitch, int hand, float* AC, float* hc, bool k
             std::memcpy(A, B, sizeof(B));
         }
     }
-    float deg = std::min(std::fabs(g_kick.load(std::memory_order_relaxed)), kKickMax);
+    const float one_hand = g_long_gun.load(std::memory_order_relaxed) && !g_left_on.load(std::memory_order_relaxed)
+                               ? kOneHandKick : 1.0f;
+    float deg = std::min(std::fabs(g_kick.load(std::memory_order_relaxed)) * one_hand, kKickMax * one_hand);
     if (kick && hand == 1 && deg > 0.01f) {
         // (the walther: its kick is the game's biggest, and tipping it up read as the gun rocking in the hand, user)
         const bool turn = !g_kick_no_turn.load(std::memory_order_relaxed);
@@ -970,7 +976,10 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
             for (int k = 3; k < 44; k++) rel[k] = Compose(inv, Bone(c, 3 * k));
             have = true;
         } else if (have) {
-            for (int k = 3; k < 44; k++) SetBone(c, 3 * k, Compose(hold, rel[k]));
+            // the free off hand keeps its own rest (user 2026-11-26: a shell taken, the hand turned 90°: the
+            // snapshot held it as it was on the fore-end)
+            for (int k = 3; k < 44; k++)
+                if (!free_left || 3 * k < rig[0].hand || 3 * k > rig[0].finger_hi) SetBone(c, 3 * k, Compose(hold, rel[k]));
         }
     }
     // the fingers, from the controllers, before anything moves the hands
@@ -1598,20 +1607,29 @@ StockMesh MakeSpasShell() {
 // seated in the barrel's back from z 0.200 round y 0.0055, its tip forward. Painted (PaintM433) in a strip of its own
 // below the stock's atlas: u round it (half the atlas's width), v from its base up
 constexpr float kM433Len = 0.1215f, kM433Z0 = 0.200f;
+constexpr int kM203CaseBone = 126;  // the spent case's (the BNS's skeleton ends at TopLead 102)
+std::atomic<int64_t> g_case_out_ms{0};  // when the m203's tube opened on a fired round
 constexpr uint32_t kM433TexW = 512, kM433TexH = 512;  // texels: round it, along it
-StockMesh MakeM203Grenade(float u_span, float v0, float v1, float z0 = kM433Z0, float kY = 0.0055f, int bone = 96) {
+StockMesh MakeM203Grenade(float u_span, float v0, float v1, float z0 = kM433Z0, float kY = 0.0055f, int bone = 96,
+                          bool case_only = false) {
     constexpr int kSides = 24;
     // the profile from the rim's back to the fuze's pin, millimetres: along it, radius
     std::vector<float> zs = {0, 0.8f, 6.6f, 7.4f, 7.4f, 60.0f, 60.0f, 61.0f, 61.0f, 93.0f, 93.0f};
     std::vector<float> rs = {20.3f, 20.8f, 20.8f, 20.2f, 20.0f, 20.0f, 19.2f, 19.2f, 19.6f, 19.6f, 19.4f};
-    // the ogive: a half ellipse 19.4 round, 28 up (its top a little flattened, as the photo's)
-    for (int i = 1; i <= 10; i++) {
-        float t = float(i) / 10 * 3.14159265f / 2;
-        zs.push_back(93.0f + 28.0f * std::sin(t));
-        rs.push_back(19.4f * std::cos(t) + (i == 10 ? 0.8f : 0.0f));
+    if (case_only) {
+        // the fired round's case alone (user: its brass half drops out of the tube): to 60 mm, its mouth shut dark
+        zs = {0, 0.8f, 6.6f, 7.4f, 7.4f, 60.0f, 60.0f};
+        rs = {20.3f, 20.8f, 20.8f, 20.2f, 20.0f, 20.0f, 0};
+    } else {
+        // the ogive: a half ellipse 19.4 round, 28 up (its top a little flattened, as the photo's)
+        for (int i = 1; i <= 10; i++) {
+            float t = float(i) / 10 * 3.14159265f / 2;
+            zs.push_back(93.0f + 28.0f * std::sin(t));
+            rs.push_back(19.4f * std::cos(t) + (i == 10 ? 0.8f : 0.0f));
+        }
+        zs.insert(zs.end(), {121.0f, 121.5f, 121.5f});  // the fuze's pin
+        rs.insert(rs.end(), {0.5f, 0.5f, 0});
     }
-    zs.insert(zs.end(), {121.0f, 121.5f, 121.5f});  // the fuze's pin
-    rs.insert(rs.end(), {0.5f, 0.5f, 0});
     const int rings = int(zs.size());
     std::vector<float> pos, nrm, uv;
     std::vector<uint16_t> idx;
@@ -1910,7 +1928,10 @@ const StockMesh* StockOf(const std::string& code) {
         for (size_t i = 1; i < uv.size(); i += 2) uv[i] *= h / all;
         StockMesh stock = MakeStock(kM16StockPos, kM16StockNrm, uv.data(), std::size(kM16StockPos) / 3, kM16StockIdx,
                                     std::size(kM16StockIdx), 75);
-        return Merge(stock, MakeM203Grenade(float(kM433TexW) / kM16StockAtlas[0], h / all, 1.0f));
+        StockMesh round = Merge(stock, MakeM203Grenade(float(kM433TexW) / kM16StockAtlas[0], h / all, 1.0f));
+        // the spent case (VrM203CaseOut) on a bone the m16's skeleton doesn't use
+        return Merge(round, MakeM203Grenade(float(kM433TexW) / kM16StockAtlas[0], h / all, 1.0f, kM433Z0, 0.0055f,
+                                            kM203CaseBone, true));
     }();
     if (code == "BNS") return &bns;
     // the grenade launcher's round: the M433 too (user), where its shell sits (its back at z 0.109 round y 0.018), on
@@ -2157,6 +2178,21 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
     // the M16's M203 while it's the rifle's turn (B203's is below): its grenade (ours) in it while loaded, the barrel
     // shut
     const int launch_root = VrLauncherRoot();
+    if (HeldGunCode() == "BNS") {
+        // the m203's spent case: out of the opened barrel's back, falling (the gun's down), gone in half a second
+        constexpr int kRoot = 75;
+        float t = float(SteadyMs() - g_case_out_ms.load(std::memory_order_relaxed)) / 1000;
+        Aff at{};
+        for (int i = 0; i < 3; i++) at.m[i * 4 + 3] = Bone(c, kRoot).m[i * 4 + 3];
+        if (t >= 0 && t < 0.5f) {
+            Aff fall = kIdentityAff;
+            fall.m[3] = 0.04f * t;                                // a little aside
+            fall.m[7] = -4.9f * t * t;                            // down
+            fall.m[11] = 0.13f - 0.6f * t;  // from the open barrel's back, rearward
+            at = Compose(Bone(c, kRoot), fall);
+        }
+        SetBone(c, kM203CaseBone, at);
+    }
     if (launch_root < 0 && HeldGunCode() == "BNS") {
         constexpr int kGrenade = 96, kRoot = 75;
         if (VrM203Loaded()) {
@@ -2902,6 +2938,7 @@ void LeftHold(const Frame& f) {
             d2 += (at - hc[i]) * (at - hc[i]);
         }
         near = d2 < kReach * kReach;
+        g_left_fore.store(std::sqrt(d2), std::memory_order_relaxed);
         float g = hand[0].grip;
         bool press = g > 0.6f && !was;
         was = g > 0.6f;
@@ -2917,8 +2954,12 @@ void LeftHold(const Frame& f) {
         if (fake_on) on = true;
     } else {
         on = false;
+        g_left_fore.store(1e9f, std::memory_order_relaxed);
     }
-    if (VrMagInHand() || VrRacking()) on = false, near = false;  // a magazine in the off hand: it can't hold the gun as well
+    // a magazine in the off hand, or the slide in it: it can't hold the gun as well. The reload's zones (the magazine,
+    // the chest) give way to the fore-grip within its reach (user 2026-11-26: after a reload, the magazine's zone took
+    // every grip at the AK's and shotguns' fore-ends)
+    if (VrMagInHand() || VrRackHeld() || (VrRacking() && !near)) on = false, near = false;
     g_left_on.store(on);
     g_two_aim.store(on && f.fore >= 0.05f);  // a pistol's hands are too close to aim by
     // the left grip isn't the game's white button while it holds or is about to take something
@@ -3001,6 +3042,7 @@ void VrGunFrame(X86Context& ctx) {
         }
     }
     LeftHold(f);
+    g_long_gun.store(f.fore >= 0.05f && code != "SMG" && code != "SM5");  // (the uzi's one-handed: user)
     VrReloadTick();
     // the recoil, and its strongest per gun in the log for tuning
     float kick = G<float>(Player() + kRecoilKick);
@@ -3052,6 +3094,12 @@ void VrToggleGunFingers() { g_gun_fingers_open.store(!g_gun_fingers_open.load())
 
 // the left hand holds the gun (any thread)
 bool VrLeftOnGun() { return g_left_on.load(std::memory_order_relaxed); }
+float VrLeftFore() { return g_left_fore.load(std::memory_order_relaxed); }
+// game thread: the m203's tube opened on a fired round: its case drops out (vr_reload.cpp)
+void VrM203CaseOut() {
+    g_case_out_ms.store(SteadyMs());
+    LOGR("vr gun: the m203's spent case out");
+}
 
 // a shot's buzz by gun: the light quick ones short and soft, the heavy ones long and hard (user: firing per weapon)
 struct Feel {
@@ -3145,6 +3193,20 @@ void VrFireShot(X86Context& ctx, uint8_t* base) {
         std::memcpy(d, HostPtr(dir), 12);  // the muzzle as the position (moved with the gun), the direction aimed
         std::memcpy(d + 12, m + 12, 12);
         if (VrGunMap(d, false) && VrGunAim(d)) {
+            if (g_long_gun.load() && !VrLeftOnGun()) {
+                // one-handed: the shot off the barrel's line, anywhere within kOneHandSpread, more toward the middle
+                static uint32_t seed = 12345;
+                auto rnd = [] { seed = seed * 1664525u + 1013904223u; return float(seed >> 8) / float(1 << 24); };
+                float a = rnd() * 6.2831853f, r = std::sqrt(rnd()) * kOneHandSpread * 3.14159265f / 180;
+                float up[3] = {0, 1, 0}, s1[3], s2[3];
+                if (std::fabs(d[1]) > 0.9f) up[0] = 1, up[1] = 0;
+                s1[0] = d[1] * up[2] - d[2] * up[1], s1[1] = d[2] * up[0] - d[0] * up[2], s1[2] = d[0] * up[1] - d[1] * up[0];
+                Normalize(s1);
+                s2[0] = d[1] * s1[2] - d[2] * s1[1], s2[1] = d[2] * s1[0] - d[0] * s1[2], s2[2] = d[0] * s1[1] - d[1] * s1[0];
+                float ca = std::cos(a) * std::sin(r), sa = std::sin(a) * std::sin(r), cr = std::cos(r);
+                for (int i = 0; i < 3; i++) d[i] = d[i] * cr + s1[i] * ca + s2[i] * sa;
+                Normalize(d);
+            }
             static uint32_t buf = mem::AllocSystem(32, 16);
             float o[8] = {d[12], d[13], d[14], G<float>(ctx.ecx + 12), d[0], d[1], d[2], G<float>(dir + 12)};
             std::memcpy(HostPtr(buf), o, sizeof(o));

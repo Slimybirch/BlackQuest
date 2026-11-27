@@ -120,7 +120,7 @@ const app::GameInfo app::kGame = {
                 {"vr_snap_turn", nullptr, &game::Opt().vr_snap_turn},
                 {"vr_grip_toggle", &game::Opt().vr_grip_toggle, nullptr},
                 {"vr_manual_reload", &game::Opt().vr_manual_reload, nullptr},
-                {"vr_totest", &game::Opt().vr_totest, nullptr},
+                {"vr_totest_on", &game::Opt().vr_totest, nullptr},
                 {"vr_gunstock", &game::Opt().vr_gunstock, nullptr},
                 {"vr_turn_speed", nullptr, &game::Opt().vr_turn_speed},
                 {"vr_view_height", nullptr, &game::Opt().vr_view_height},

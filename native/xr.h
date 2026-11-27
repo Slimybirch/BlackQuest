@@ -53,6 +53,11 @@ bool Hands(Hand& left, Hand& right, float head[3]);
 // the view's raise over the headset's own height (user: 15 cm was too much, 5 cm); shared by the renderer and the
 // gun in the hand, which must agree on where the room is
 constexpr float kEyeRaise = 0.05f;
+// the paused game's menu (user 2026-11-26): a window fixed in the room ahead of the head as the pause comes up,
+// whichever way the game has turned; 2.5 ft wide 5 ft away (user: half the 5 ft at 2.5 ft, twice as far)
+constexpr float kMenuDistance = 1.52f, kMenuHalfWidth = 0.381f;
+// the settings panel beside it stays where the 5 ft menu at 2.5 ft had it (user: the panel is fine)
+constexpr float kPanelMenuDistance = 0.76f, kPanelMenuHalfWidth = 0.762f;
 // game thread: the game's rumble on the controllers (left motor the left hand, right the right), 0..65535
 void Rumble(uint16_t left, uint16_t right);
 // any thread: a short buzz on a hand (0 left, 1 right), over the game's rumble: a shot's kick
@@ -106,6 +111,15 @@ struct MenuInput {
     bool trigger;
 };
 bool MenuControls(MenuInput& in);
+// the game's own menus by a laser (user 2026-11-26, as the settings panel's): the paused menu's plane in play (its
+// centre, its level forward x z, its half sizes; null: none), set by the renderer each frame it's up
+void SetMenuPlane(const float* centre, const float* fwd, float half_w, float half_h);
+// where the right aim ray meets the game's menu (the theater screen, or the paused menu's plane): 0..1 across and
+// down; theater: the 16:9 screen (the game's frame inside it), else the frame itself. false when it points at the
+// settings panel, or at neither
+bool GameMenuPointer(float& u, float& v, bool& theater, bool& trigger);
+// the laser's ends (local space) while a menu is up and the ray meets the game's menu plane or the settings panel
+bool PointerBeam(float* from, float* to);
 
 // the app quitting (sdl's thread): the session and instance handed back to the runtime first
 void Shutdown();

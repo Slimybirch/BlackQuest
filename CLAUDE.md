@@ -33,7 +33,8 @@ base port's guide, still accurate unless noted). The plan, phases and hard rules
 - Release (Phase 11): `VERSION` sets the app's version; `python -I tools/package.py` packs
   `out/release/BlackQuest-<VERSION>.zip` (the source, `BlackQuestBuilder.exe`, the recompiler prebuilt with a static
   C runtime from `out/build/prebuilt-tools` into `tools/bin`, which lets `build.bat` and the Builder skip Visual
-  Studio). No APK is ever published. The xbe check hashes with the cert's region/media patch undone
+  Studio). No APK is ever published. `NEXT_RELEASE.md` gathers the player-facing changes between releases (add a
+  `- ` line per change as it's committed; package.py makes it the notes' "What's Changed", empty it after the release). The xbe check hashes with the cert's region/media patch undone
   (`tools/xbe_sha1.py`, `CertSha1` in `native/game_files.cpp`).
 - The headset: ask before installing, launching or screenshotting over adb; never send the
   `com.oculus.vrpowermanager` broadcasts (the user controls the proximity sensor). Game data dumps stay in the

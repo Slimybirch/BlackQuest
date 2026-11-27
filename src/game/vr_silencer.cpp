@@ -124,17 +124,38 @@ void VrSilencerTick() {
     bool pressed = grip && !g_grip_was;
     g_grip_was = grip;
     int64_t now_ms = NowMs();
+    // a grip while the gun was busy (firing, a switch) waits up to a second for it to be free (user: at times the
+    // detach didn't start)
+    static int retry = -1;
+    static int64_t retry_until = 0;
+    if (retry >= 0 && now_ms < retry_until) {
+        if (weapons::RequestSuppressorAnim(retry == 1)) {
+            g_wait_until = now_ms + 3500;
+            xr::Pulse(0, 0.7f, 0.06f);
+            LOGR("vr silencer: the game's %s, after waiting for the gun", retry ? "attach" : "detach");
+            TestEvent(retry ? "silencer_on" : "silencer_off");
+            retry = -1;
+        }
+        return;
+    }
+    retry = -1;
     if (!pressed || now_ms < g_wait_until) return;
     float front[3];
     for (int i = 0; i < 3; i++) front[i] = muzzle[i] - A[i * 3 + 2] * kSilLength;  // (the barrel's forward: -z)
     if (on == 1 && SegDist(h.pos, muzzle, front) < kOnReach) {
-        if (!weapons::RequestSuppressorAnim(false)) return;
+        if (!weapons::RequestSuppressorAnim(false)) {
+            retry = 0, retry_until = now_ms + 1000;
+            return;
+        }
         g_wait_until = now_ms + 3500;
         xr::Pulse(0, 0.7f, 0.06f);
         LOGR("vr silencer: gripped: the game's detach");
         TestEvent("silencer_off");
     } else if (on == 0 && g_owned.count(weapon) && SegDist(h.pos, muzzle, muzzle) < kMuzzleReach) {
-        if (!weapons::RequestSuppressorAnim(true)) return;
+        if (!weapons::RequestSuppressorAnim(true)) {
+            retry = 1, retry_until = now_ms + 1000;
+            return;
+        }
         g_wait_until = now_ms + 3500;
         xr::Pulse(0, 0.7f, 0.06f);
         LOGR("vr silencer: the end of the barrel gripped: the game's attach");
@@ -162,14 +183,8 @@ bool VrSilencerPose(float* rear, float* front, float* radius) {
         for (int i = 0; i < 3; i++) wr[i] = at[i] - dir[i] * kSilLength * 0.5f, wf[i] = at[i] + dir[i] * kSilLength * 0.5f;
         return VrWorldToLocal(wr, rear) && VrWorldToLocal(wf, front);
     }
-    float A[9], muzzle[3];
-    if (!VrGunLocal(A, muzzle)) return false;
-    for (int i = 0; i < 3; i++) {
-        float fwd = -A[i * 3 + 2];
-        rear[i] = muzzle[i] - fwd * 0.012f;  // (screwed on: the collar inside)
-        front[i] = rear[i] + fwd * kSilLength;
-    }
-    return true;
+    // on the gun: the game draws its own (user 2026-11-26: ours was a second one on the AK and M16)
+    return false;
 }
 
 // any thread: a silencer laid on the ground 1.2 m ahead (VR SETTINGS, TESTING, SPAWN A SILENCER: user, for tests):

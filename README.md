@@ -60,6 +60,7 @@ or endorsed by them.
 | M16's M203 | Left trigger |
 | Silencer off | Reach to the silencer and grip it with your left hand |
 | Silencer on | Grip the end of the barrel with your left hand |
+| Menus | Point with the right controller (a laser), right trigger selects; or the left stick and A |
 | Pause / back | Menu button: tap to pause, hold for back |
 | Recentre | Hold the Meta button |
 

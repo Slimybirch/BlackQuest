@@ -73,6 +73,8 @@ int64_t VrGameCycledMs();                     // vr_gun.cpp: the game last cycle
 int VrModePresses();                          // vr_body.cpp: the fire-mode button's presses
 bool VrFireHeld();                            // vr_body.cpp: the fire trigger is held
 bool VrLeftOnGun();                           // vr_gun.cpp
+float VrLeftFore();                           // vr_gun.cpp: the off hand from the fore-grip (m)
+void VrM203CaseOut();                         // vr_gun.cpp: the m203's spent case falls out
 void TestEvent(const std::string& name);      // vr_totest.cpp: the test checklist
 bool VrGunAway();                             // vr_grenade.cpp: a grenade in the hand or empty
 bool VrLookAngles(float& yaw, float& pitch);  // vr_body.cpp
@@ -182,10 +184,11 @@ const GunParts kG36 = {.mag = 78, .slide = 81, .travel = 0.07f, .mid = {0, -0.05
                        .hold = 0.04f, .depth = 0.03f, .rack_out = {1, 0, 0}, .rack_len = kKnobLen,
                        .rack_reach = kKnobReach, .hold_open = true};
 // m16: magazine 78, its rounds 81, the T handle 84 at the receiver's rear: its zone runs back from the T
+// (user 2026-11-26: couldn't pull it back: the zone 1.5 cm higher, 10 cm back from the T, 7 cm round it)
 const GunParts kM16 = {.mag = 78, .slide = 84, .travel = 0.07f, .mid = {0, -0.010f, 0.077f}, .up = {0, 1, 0},
-                       .top = 0.056f, .bottom = -0.085f, .bullets = 81, .rack_bone = 84, .rack = {0, 0.095f, -0.100f},
-                       .hold = 0.035f, .depth = 0.05f, .rack_out = {0, 0, -1}, .rack_len = kKnobLen,
-                       .rack_reach = kKnobReach, .hold_open = true, .lock_bone = 90};
+                       .top = 0.056f, .bottom = -0.085f, .bullets = 81, .rack_bone = 84, .rack = {0, 0.110f, -0.100f},
+                       .hold = 0.035f, .depth = 0.05f, .rack_out = {0, 0, -1}, .rack_len = 0.10f,
+                       .rack_reach = 0.07f, .hold_open = true, .lock_bone = 90};
 GunParts M203() {  // the m16a2 + m203: the m16's, its magazine a little apart
     GunParts p = kM16;
     p.mid[1] = -0.012f, p.mid[2] = 0.078f, p.top = 0.057f, p.bottom = -0.083f;
@@ -769,15 +772,24 @@ void VrReloadTick() {
             G<uint16_t>(m.ammo + m.clip) = aclip = 1;
         }
         g_m203_loaded = bns && aclip > 0;
-        if (!bns) m203 = false;
-        else if (!m203 && g_state == 0 && !aclip && ares > 0 && !g_racking) m203 = true;
+        xr::Hand lh, rh;
+        float hd[3];
+        const bool hands = xr::Hands(lh, rh, hd);
+        // A with the m203 empty and shut: the rifle's magazine drops (user 2026-11-26: it couldn't be, the m203's
+        // parts had the gun till loaded); the m203's back once the rifle's reload is done
+        static bool a_prev = false, rifle_first = false, rifle_busy = false;
+        const bool a_press = hands && rh.primary && !a_prev;
+        a_prev = hands && rh.primary;
+        if (rifle_first && !m203 && g_state != 0) rifle_busy = true;
+        if (rifle_first && rifle_busy && g_state == 0) rifle_first = rifle_busy = false;
+        if (!bns) m203 = rifle_first = rifle_busy = false;
+        else if (m203 && a_press && g_state == 0 && g_slide < 0.01f) m203 = false, rifle_first = true;
+        else if (!m203 && !rifle_first && g_state == 0 && !aclip && ares > 0 && !g_racking) m203 = true;
         else if (m203 && g_state == 0 && aclip > 0 && g_slide < 0.01f) m203 = false;
         if (m203) now_code = "B203";
         // its trigger is the off hand's: it fires only with that hand gripping the gun, the grip held (user: in
         // toggle grip too, where the hand stays on the gun let go)
-        xr::Hand lh, rh;
-        float hd[3];
-        bool gripped = VrLeftOnGun() && xr::Hands(lh, rh, hd) && lh.grip > 0.6f;
+        bool gripped = VrLeftOnGun() && hands && lh.grip > 0.6f;
         static const bool dev_on = std::filesystem::exists(app::ExeDir() / "dev_lefton");  // dev hands: gripping
         // and never empty (a pull then is the game's own endless reload)
         g_m203_trigger = bns && (!(gripped || dev_on) || !aclip);
@@ -1040,7 +1052,8 @@ void VrReloadTick() {
     near_rack = near_rack && (state == 0 || state == 1) && !VrLeftOnGun() && !g_parts.shells;
     // at the magazine in the gun (its body, not the gun round it)
     bool near_mag = false;
-    if (state == 0 && g_bone >= 0 && !VrLeftOnGun()) {
+    // (not a shotgun's: there's nothing to pull; not within 5 cm of the fore-grip: that's the grip's, user)
+    if (state == 0 && g_bone >= 0 && !VrLeftOnGun() && !g_parts.shells && VrLeftFore() > 0.05f) {
         std::lock_guard lock(g_lock);
         if (g_well_ok) {
             float v[3] = {hc[0] - g_well[0], hc[1] - g_well[1], hc[2] - g_well[2]};
@@ -1125,7 +1138,8 @@ void VrReloadTick() {
     bool zone = g_parts.take == kTakeShoulder ? NearLeftShoulder(hand[0], head)
                 : g_parts.take == kTakeWaist  ? NearWaist(hand[0], head)
                                               : NearChest(hand[0], head);
-    bool chest = (state == 0 || state == 1) && reserve > 0 && room && !VrLeftOnGun() && !g_racking && zone;
+    bool chest = (state == 0 || state == 1) && reserve > 0 && room && !VrLeftOnGun() && !g_racking && zone &&
+                 VrLeftFore() > 0.08f;  // (the fore-grip's reach is the grip's)
     // the launchers' hints over the off hand (user)
     // (user: only until the first round ever goes into a launcher, then never again)
     if (!g_parts.launcher || reserve == 0 || state == 2 || Opt().vr_launcher_tips_done) SetTip("");
@@ -1532,9 +1546,14 @@ void VrReloadTick() {
         if (!pump_counted) g_rack_from = tube ? std::min(g_rack_from, along) : std::max(g_rack_from, along);
         float pull = std::clamp(dir * (g_rack_from - along) / stroke, 0.0f, 1.0f);
         g_slide = pull;
-        if (!pump_counted && pull >= 1.0f && dir * back_speed >= kPumpSpeed) {
+        // a tube opens with a pump's push (user 2026-11-26: the m203 took a 13 cm shove): kPumpStroke at kPumpSpeed,
+        // then it runs open the rest of its travel
+        const bool far_enough = tube ? dir * (g_rack_from - along) >= kPumpStroke : pull >= 1.0f;
+        if (!pump_counted && far_enough && dir * back_speed >= kPumpSpeed) {
             // open: a live round in the chamber is thrown out, the rest wait in the tube for it to close
             pump_counted = true;
+            if (tube) g_rack_from = along + dir * stroke, g_slide = 1;  // the hand's place now its open end
+            if (tube && code == "B203") VrM203CaseOut();  // the fired round's case drops out of the tube's back
             if (!g_spent && clip > 0) {
                 clip--;
                 TestEvent("pump_live_out");

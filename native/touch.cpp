@@ -35,6 +35,7 @@
 #include "common/translations.h"
 #include "core/log.h"
 #include "host.h"
+#include "xr.h"
 
 namespace input {
 
@@ -1720,6 +1721,22 @@ namespace input {
 bool CursorShown() { return g_menu && (g_keyboard || touch::g_cursor_touch); }
 
 bool Cursor(float& x, float& y, bool& down) {
+    // the headset: the right controller's laser on the game's menu, its trigger the click (user 2026-11-26: as the
+    // settings panel's; the panel beside the menu takes the ray when it's on it)
+    if (xr::Active()) {
+        float u, v;
+        bool theater;
+        if (!g_menu || !host::Foreground() || !xr::GameMenuPointer(u, v, theater, down)) return false;
+        if (!theater) {
+            x = u, y = v;
+            return true;
+        }
+        // the theater screen is 16:9, the game's frame in its middle
+        float aspect = game::Aspect(), fw = std::min(16.0f, 9.0f * aspect), fh = fw / aspect;
+        x = (u * 16 - (16 - fw) / 2) / fw;
+        y = (v * 9 - (9 - fh) / 2) / fh;
+        return true;
+    }
     if (!Active() || !CursorShown()) return false;
     int w, h;
     host::WindowPixels(w, h);
