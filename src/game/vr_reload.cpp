@@ -74,6 +74,8 @@ int VrModePresses();                          // vr_body.cpp: the fire-mode butt
 bool VrFireHeld();                            // vr_body.cpp: the fire trigger is held
 bool VrLeftOnGun();                           // vr_gun.cpp
 float VrLeftFore();                           // vr_gun.cpp: the off hand from the fore-grip (m)
+bool VrForeAt(float* c);                      // vr_gun.cpp: where the off hand takes the gun (C)
+bool VrLeftOnGun();
 void VrM203CaseOut();                         // vr_gun.cpp: the m203's spent case falls out
 void TestEvent(const std::string& name);      // vr_totest.cpp: the test checklist
 bool VrGunAway();                             // vr_grenade.cpp: a grenade in the hand or empty
@@ -753,6 +755,130 @@ std::string VrTip() {
 bool VrMagFromHand() { return g_from_hand.load(std::memory_order_relaxed); }
 
 // game thread, each gun frame: the hands' part of a reload
+// dev_reload in the app folder (with dev_fakehands; a gun with a magazine): the off hand's reload played through
+// the real code, the hands xr::SetDevHands gives: 6 s into the gun and every 16 s, A drops the magazine, the left
+// grip takes one at the chest and seats it in the well, the handle is gripped, pulled back and let go, then the
+// fore-grip is gripped and held; "vr reload: dev_reload" logs each step and whether the fore-grip took
+void DevReloadScript(const std::string& code, int state, float yaw, float pitch, const float* head, const float* fwd) {
+    static const bool on = std::filesystem::exists(app::ExeDir() / "dev_reload");
+    if (!on) return;
+    static std::string for_code;
+    static auto since = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    if (for_code != code) for_code = code, since = now;
+    float hy, hp;
+    if (g_parts.shells || g_parts.revolver || g_parts.launcher || g_bone < 0 || !xr::HeadAngles(hy, hp)) {
+        xr::SetDevHands(nullptr, nullptr);
+        return;
+    }
+    float t = std::chrono::duration<float>(now - since).count() - 6;
+    if (t < 0) return;
+    t = std::fmod(t, 16.0f);
+    // the head's turn (the fake hands' frame), and C to local: p = U c, less the eye's raise
+    float cy = std::cos(hy), sy = std::sin(hy), cp = std::cos(hp), sp = std::sin(hp);
+    const float r[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
+    float ly = std::cos(yaw), lsy = std::sin(yaw), lp = std::cos(pitch), lsp = std::sin(pitch);
+    const float U[9] = {ly, lsy * lsp, lsy * lp, 0, lp, -lsp, -lsy, ly * lsp, ly * lp};
+    auto to_local = [&](const float* c, float* p) {
+        for (int k = 0; k < 3; k++) p[k] = U[k * 3] * c[0] + U[k * 3 + 1] * c[1] + U[k * 3 + 2] * c[2];
+        p[1] -= xr::kEyeRaise + VrViewLift();
+    };
+    auto ahead = [&](float x, float y, float z, float* p) {
+        for (int i = 0; i < 3; i++) p[i] = head[i] + r[i * 3] * x + r[i * 3 + 1] * y + r[i * 3 + 2] * z;
+    };
+    xr::Hand h[2]{};
+    for (int k = 0; k < 2; k++) h[k].ok = true;
+    // the right: the fake gun hand's place, aimed as the head (Ry(yaw) Rx(pitch))
+    ahead(0.03f, -0.10f, -0.45f, h[1].pos);
+    h[1].aim_ok = true;
+    {
+        float c2 = std::cos(hy / 2), s2 = std::sin(hy / 2), cx = std::cos(hp / 2), sx = std::sin(hp / 2);
+        h[1].aim[0] = c2 * sx, h[1].aim[1] = s2 * cx, h[1].aim[2] = -s2 * sx, h[1].aim[3] = c2 * cx;
+    }
+    // the left (no aim: a held magazine is upright at the palm)
+    float c[3];
+    int step;
+    // dev_reload_carry: the grip held from the seated magazine straight onto the fore-grip (slid there along the gun
+    // over half a second), no rack
+    static const bool carry = std::filesystem::exists(app::ExeDir() / "dev_reload_carry");
+    if (carry && t >= 6.5f) step = t < 7 ? 11 : t < 10 ? 10 : 0;
+    else if (t < 1) step = 0;      // at rest
+    else if (t < 1.2f) step = 1;   // A: the magazine out
+    else if (t < 2) step = 0;
+    else if (t < 2.5f) step = 2;   // at the chest
+    else if (t < 3.5f) step = 3;   // gripped: one taken
+    else if (t < 6.5f) step = 4;   // at the well, held: seats
+    else if (t < 7) step = 5;      // let go, still there
+    else if (t < 7.5f) step = 6;   // at the handle
+    else if (t < 8.5f) step = 7;   // gripped, pulled back
+    else if (t < 9) step = 8;      // let go: racked
+    else if (t < 9.5f) step = 0;
+    else if (t < 10) step = 9;     // at the fore-grip
+    else if (t < 13) step = 10;    // gripped
+    else step = 0;
+    ahead(-0.10f, -0.14f, -0.55f, h[0].pos);
+    if (step == 1) h[1].primary = true;
+    if (step == 2 || step == 3) {
+        h[0].pos[0] = head[0] - sy * kChestAhead, h[0].pos[2] = head[2] - cy * kChestAhead;
+        h[0].pos[1] = head[1] - 0.5f * (kChestTop + kChestBottom);
+        h[0].grip = step == 3 ? 1.0f : 0.0f;
+    }
+    if (step == 4 || step == 5) {
+        std::lock_guard lock(g_lock);
+        if (g_well_ok) {
+            // the palm so the held magazine's top is 3 cm down the well's line (HeldMagOf without an aim: up is C's)
+            for (int i = 0; i < 3; i++) c[i] = g_well[i] + g_axis[i] * (g_mag_top - 0.03f) - (i == 1 ? g_mag_top : 0);
+            to_local(c, h[0].pos);
+        }
+        h[0].grip = step == 4 ? 1.0f : 0.0f;
+    }
+    if (step >= 6 && step <= 8) {
+        std::lock_guard lock(g_lock);
+        if (g_rack_ok) {
+            float back = step == 7 ? std::min((t - 7.5f) / 0.8f, 1.0f) * (kRackPull + 0.02f) : step == 8 ? kRackPull + 0.02f : 0;
+            for (int i = 0; i < 3; i++) c[i] = g_rack_at[i] - fwd[i] * back;
+            to_local(c, h[0].pos);
+        }
+        h[0].grip = step == 7 ? 1.0f : 0.0f;
+    }
+    if (step == 11) {
+        // from the well toward the fore-grip, the grip held
+        float w[3], f[3];
+        bool ok;
+        {
+            std::lock_guard lock(g_lock);
+            ok = g_well_ok;
+            for (int i = 0; i < 3; i++) w[i] = g_well[i] + g_axis[i] * (g_mag_top - 0.03f) - (i == 1 ? g_mag_top : 0);
+        }
+        if (ok && VrForeAt(f)) {
+            float k = std::clamp((t - 6.5f) / 0.5f, 0.0f, 1.0f);
+            for (int i = 0; i < 3; i++) c[i] = w[i] + (f[i] - w[i]) * k;
+            to_local(c, h[0].pos);
+        }
+        h[0].grip = 1;
+    }
+    if ((step == 9 || step == 10) && VrForeAt(c)) {
+        to_local(c, h[0].pos);
+        h[0].grip = step == 10 ? 1.0f : 0.0f;
+    }
+    xr::SetDevHands(&h[0], &h[1]);
+    static int was = -1;
+    static bool checked = false;
+    if (step != was) {
+        LOGR("vr reload: dev_reload %s t %.1f step %d (state %d, on the gun %d, fore %.3f, near a zone %d, racking %d)",
+             code.c_str(), t, step, state, int(VrLeftOnGun()), VrLeftFore(), int(g_near_rack.load()), int(g_racking));
+        was = step;
+        if (step == 10) checked = false;
+    }
+    if (step == 10 && t > (carry ? 9.5f : 12) && !checked) {
+        checked = true;
+        LOGR("vr reload: dev_reload %s: the fore-grip after the reload %s (fore %.3f, state %d, racking %d, near a "
+             "zone %d)", code.c_str(), VrLeftOnGun() ? "TOOK" : "DID NOT TAKE", VrLeftFore(), state, int(g_racking),
+             int(g_near_rack.load()));
+        if (VrLeftOnGun()) TestEvent("dev_reload_fore");
+    }
+}
+
 void VrReloadTick() {
     static std::string code;
     // the dev markers' timers and one-shots, from each gun's switch (dev_give cycles guns in one run)
@@ -1639,6 +1765,7 @@ void VrReloadTick() {
     if (state != 2) g_seating = false;
     g_state = state;
     last_clip = clip;
+    DevReloadScript(code, state, yaw, pitch, head, fwd);
 }
 
 // dev_modeflip in the app folder: the fire-mode button pressed for 0.2 s every 6 s, and the held weapon's words
@@ -1747,6 +1874,8 @@ bool VrGunParts(int& mag, int& slide, float& travel, float* mid, float* up, bool
 bool VrRacking() { return g_near_rack.load(std::memory_order_relaxed); }
 // the off hand holds the slide or handle (its fingers close on it)
 bool VrRackHeld() { return g_rack_held.load(std::memory_order_relaxed); }
+// game thread: the slide or handle in the off hand (not a pump or tube: those are worked from the fore-grip)
+bool VrSlideHeld() { return g_racking; }
 // render thread: the held gun's rack point (a bone and a point in the mesh), and where it is this frame (C)
 bool VrRackPart(int& bone, float* pt, float* to) {
     std::lock_guard lock(g_lock);

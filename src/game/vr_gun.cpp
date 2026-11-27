@@ -59,6 +59,7 @@ bool VrGunParts(int& mag, int& slide, float& travel, float* mid, float* up, bool
                 int& bullets);
 bool VrRacking();
 bool VrRackHeld();
+bool VrSlideHeld();
 float VrMagOutSeconds();
 void VrMagWell(const float* c, const float* axis, float top, float bottom);
 bool VrRackPart(int& bone, float* pt, float* to);
@@ -251,11 +252,45 @@ bool HandPose(int h, float* A, float* pos) {
                 }
             std::memcpy(A, O, sizeof(O));
         }
+        // dev_fakeleft_<roll>_<yaw> in the app folder (its name: the app can't read files adb's shell writes there),
+        // degrees for the left controller: rolled clockwise as seen down it (from behind), then turned to its right
+        // by yaw (90: pointing right across the view, seen side on): the free off hand's pose without the controllers
+        static float fl_roll = 0, fl_yaw = 0;
+        static bool fl_read = false;
+        if (!fl_read) {
+            fl_read = true;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::directory_iterator(app::ExeDir(), ec)) {
+                const std::string n = e.path().filename().string();
+                if (n.rfind("dev_fakeleft_", 0) != 0 || n == "dev_fakeleft_low") continue;
+                if (std::sscanf(n.c_str() + 13, "%f_%f", &fl_roll, &fl_yaw) < 1) fl_roll = fl_yaw = 0;
+                LOGR("vr gun: %s: roll %.0f yaw %.0f", n.c_str(), fl_roll, fl_yaw);
+            }
+        }
+        if (h == 0 && fl_yaw != 0) {
+            // A · Ry(-yaw): a turn to the right is negative about +y
+            float ry = -fl_yaw * 3.14159265f / 180, cy = std::cos(ry), sy = std::sin(ry);
+            for (int i = 0; i < 3; i++) {
+                float x = A[i * 3], z = A[i * 3 + 2];
+                A[i * 3] = x * cy - z * sy, A[i * 3 + 2] = x * sy + z * cy;
+            }
+        }
+        if (h == 0 && fl_roll != 0) {
+            // A · Rz(-roll): clockwise down the aim's -z is a negative turn about +z
+            float rz = -fl_roll * 3.14159265f / 180, cz = std::cos(rz), sz = std::sin(rz);
+            for (int i = 0; i < 3; i++) {
+                float x = A[i * 3], y = A[i * 3 + 1];
+                A[i * 3] = x * cz + y * sz, A[i * 3 + 1] = -x * sz + y * cz;
+            }
+        }
         // dev_fakeleft_low: the left hand down by the hip, off the gun
         static const bool low = std::filesystem::exists(app::ExeDir() / "dev_fakeleft_low");
         const float off[2][3] = {{low ? -0.30f : -0.10f, low ? -0.50f : -0.14f, low ? -0.20f : -0.55f},
                                  {side ? 0.10f : 0.03f, -0.10f, -0.45f}};
         for (int i = 0; i < 3; i++) pos[i] = head[i] + r[i * 3] * off[h][0] + r[i * 3 + 1] * off[h][1] + r[i * 3 + 2] * off[h][2];
+        // dev_reload: the left hand where the script puts it (xr::SetDevHands, vr_reload.cpp)
+        static const bool script = std::filesystem::exists(app::ExeDir() / "dev_reload");
+        if (script && h == 0 && hand[0].ok) std::memcpy(pos, hand[0].pos, sizeof(hand[0].pos));
         return true;
     }
     const xr::Hand& o = hand[h];
@@ -454,8 +489,11 @@ ArmRig RigOf(const std::string& code, int h) {
     }
     return a;
 }
-// the free off hand's roll about its controller's pointing axis (user: 45° clockwise as seen down the arm)
-constexpr float kFreeHandRoll = -45.0f * 3.14159265f / 180;
+// the free off hand's roll about its controller's pointing axis, clockwise as seen down the arm (user: 45°; then
+// 2026-11-26, the thumb down on an upright controller: dev_fakehands measured it 72° below the controller's right,
+// and the user's check, the controller turned 90° clockwise showing the thumb on top and the fingers out to the
+// right, puts it on the controller's left side: 108° more)
+constexpr float kFreeHandRoll = -153.0f * 3.14159265f / 180;
 constexpr int kBone0 = 96 - 36;     // the constant (hardware order) of bone offset 0
 constexpr float kUpperArm = 0.28f;  // shoulder to elbow (the mesh only has the lower half of the upper arm)
 constexpr float kShoulderOut = 0.17f, kShoulderDown = 0.24f, kShoulderBack = 0.06f;  // from the head's middle
@@ -1164,6 +1202,34 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
         Aff hand_b = Compose(Dinv, hand_delta);
         SetBone(c, a.hand, Compose(hand_b, hd));
         for (int fb = a.finger_lo; fb <= a.finger_hi; fb += 3) SetBone(c, fb, Compose(hand_b, Compose(D, Bone(c, fb))));
+    }
+    // dev_fakehands: the free off hand's thumb and fingers in its controller's axes (x right, y its top, z back),
+    // the wrist to the thumb's last joint and to the middle finger's knuckle: to set its roll by
+    static const bool dev_hands = std::filesystem::exists(app::ExeDir() / "dev_fakehands");
+    static int64_t told_ms = 0;
+    if (dev_hands && !g_left_on.load(std::memory_order_relaxed) && found != g_fingers.end() && found->second[0].ok &&
+        SteadyMs() - told_ms > 3000) {
+        told_ms = SteadyMs();
+        float AC[9], hc[3];
+        if (HandInCamera(yaw, pitch, 0, AC, hc, false)) {
+            const HandFingers& hf = found->second[0];
+            const Finger &th = hf.f[0], &mid = hf.f[2];
+            float w[3], t[3], m[3];
+            Apply(Compose(D, Bone(c, rig[0].hand)), rig[0].wrist, w);
+            Apply(Compose(D, Bone(c, th.bone[th.n - 1])), th.pivot[th.n - 1], t);
+            Apply(Compose(D, Bone(c, mid.bone[0])), mid.pivot[0], m);
+            float tc[3], mc[3];
+            for (int j = 0; j < 3; j++) {
+                tc[j] = mc[j] = 0;
+                for (int i = 0; i < 3; i++) tc[j] += AC[i * 3 + j] * (t[i] - w[i]), mc[j] += AC[i * 3 + j] * (m[i] - w[i]);
+            }
+            Normalize(tc);
+            Normalize(mc);
+            float tv[3] = {t[0] - w[0], t[1] - w[1], t[2] - w[2]};  // in the view (x right, y up, z back)
+            Normalize(tv);
+            LOGR("vr arms: free left in its controller: thumb %.2f %.2f %.2f, fingers %.2f %.2f %.2f; thumb in the "
+                 "view %.2f %.2f %.2f", tc[0], tc[1], tc[2], mc[0], mc[1], mc[2], tv[0], tv[1], tv[2]);
+        }
     }
     return true;
 }
@@ -2922,6 +2988,8 @@ bool VrHandMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
 // game thread: take or let go of the gun with the off hand: a grip press within reach of where it holds the gun
 // takes hold; letting go of the grip lets go, or with toggle grip the next press. On a long gun, holding it aims the
 // barrel along the line between the hands
+float g_fore_at[3];  // where the off hand takes the gun, C (game thread; dev_reload goes there)
+bool g_fore_ok = false;
 void LeftHold(const Frame& f) {
     float yaw, pitch, rot[9], pos[3], AC[9], hc[3];
     xr::Hand hand[2];
@@ -2936,18 +3004,27 @@ void LeftHold(const Frame& f) {
         for (int i = 0; i < 3; i++) {
             float at = rot[i * 3] * fore[0] + rot[i * 3 + 1] * fore[1] + rot[i * 3 + 2] * fore[2] + pos[i];
             d2 += (at - hc[i]) * (at - hc[i]);
+            g_fore_at[i] = at;
         }
+        g_fore_ok = true;
         near = d2 < kReach * kReach;
         g_left_fore.store(std::sqrt(d2), std::memory_order_relaxed);
         float g = hand[0].grip;
         bool press = g > 0.6f && !was;
         was = g > 0.6f;
+        // a grip still held from a magazine seated or a handle let go of takes the fore-grip as the hand gets there
+        // (user 2026-11-26: after a load the off hand couldn't grip; it took a fresh press)
+        static bool carry = false;
+        if (g < 0.4f) carry = false;
+        else if (VrMagInHand() || VrSlideHeld()) carry = true;
+        static const bool no_carry = std::filesystem::exists(app::ExeDir() / "dev_nocarry");  // (the fix's test)
+        const bool take = press || (carry && !no_carry && !VrMagInHand() && !VrSlideHeld());
         // hold (the default): held while the grip is; toggle (VR settings): the next press lets go
         bool toggle = Opt().vr_grip_toggle;
         if (on && (toggle ? press : g < 0.4f)) {
             on = false;
-        } else if (!on && press && near) {
-            on = true;
+        } else if (!on && take && near) {
+            on = true, carry = false;
             xr::Pulse(0, 0.5f, 0.04f);
         }
         static const bool fake_on = std::filesystem::exists(app::ExeDir() / "dev_lefton");  // held on, no hands
@@ -2958,8 +3035,19 @@ void LeftHold(const Frame& f) {
     }
     // a magazine in the off hand, or the slide in it: it can't hold the gun as well. The reload's zones (the magazine,
     // the chest) give way to the fore-grip within its reach (user 2026-11-26: after a reload, the magazine's zone took
-    // every grip at the AK's and shotguns' fore-ends)
-    if (VrMagInHand() || VrRackHeld() || (VrRacking() && !near)) on = false, near = false;
+    // every grip at the AK's and shotguns' fore-ends). A pump or the M203's tube is worked from the fore-grip, held:
+    // only the slide or handle in the hand counts (user 2026-11-26: VrRackHeld, the pump's too, let go of every
+    // fore-grip taken on a shotgun waiting for its pump, after any shot or a shell loaded)
+    const bool was_on = on;
+    const char* why = VrMagInHand() ? "a magazine or round in the hand" : VrSlideHeld() ? "the slide in the hand"
+                                                                        : VrRacking() && !near ? "a reload zone" : nullptr;
+    if (why) on = false, near = false;
+    {
+        static bool told_on = false;
+        if (on != told_on) LOGR("vr gun: off hand %s the gun%s%s", on ? "on" : "off", why && was_on ? ": " : "",
+                                why && was_on ? why : "");
+        told_on = on;
+    }
     g_left_on.store(on);
     g_two_aim.store(on && f.fore >= 0.05f);  // a pistol's hands are too close to aim by
     // the left grip isn't the game's white button while it holds or is about to take something
@@ -3095,6 +3183,11 @@ void VrToggleGunFingers() { g_gun_fingers_open.store(!g_gun_fingers_open.load())
 // the left hand holds the gun (any thread)
 bool VrLeftOnGun() { return g_left_on.load(std::memory_order_relaxed); }
 float VrLeftFore() { return g_left_fore.load(std::memory_order_relaxed); }
+// game thread: where the off hand takes the gun (C); false before the first gun frame
+bool VrForeAt(float* c) {
+    std::memcpy(c, g_fore_at, sizeof(g_fore_at));
+    return g_fore_ok;
+}
 // game thread: the m203's tube opened on a fired round: its case drops out (vr_reload.cpp)
 void VrM203CaseOut() {
     g_case_out_ms.store(SteadyMs());

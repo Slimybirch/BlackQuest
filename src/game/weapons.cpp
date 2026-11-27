@@ -1079,6 +1079,13 @@ void DevGive(X86Context& ctx) {
         std::ifstream f(app::ExeDir() / "dev_give");
         std::vector<std::string> v;
         for (std::string c; f >> c;) v.push_back(c);
+        // dev_give_<CODE> (the name: the app can't read the files adb's shell writes in its folder)
+        std::error_code ec;
+        if (v.empty())
+            for (const auto& e : std::filesystem::directory_iterator(app::ExeDir(), ec)) {
+                const std::string n = e.path().filename().string();
+                if (n.rfind("dev_give_", 0) == 0 && n.size() > 9) v.push_back(n.substr(9));
+            }
         return v;
     }();
     static double since = 0, last = 0, got = 0;

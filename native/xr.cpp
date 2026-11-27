@@ -638,11 +638,27 @@ bool CreateSession(VkInstance instance, VkPhysicalDevice pd, VkDevice dev, uint3
 const std::vector<VkImage>& ScreenImages() { return g_images; }
 VkFormat ScreenViewFormat() { return g_view_format; }
 bool Stereo() { return g_eye_images != 0; }
+bool g_dev_hands_on = false;  // under g_controls_lock
+Hand g_dev_hands[2];
+void SetDevHands(const Hand* left, const Hand* right) {
+    std::lock_guard lock(g_controls_lock);
+    g_dev_hands_on = left && right;
+    if (g_dev_hands_on) g_dev_hands[0] = *left, g_dev_hands[1] = *right;
+}
 bool Hands(Hand& left, Hand& right, float head[3]) {
     Controls c;
+    bool dev;
+    Hand dh[2];
     {
         std::lock_guard lock(g_controls_lock);
         c = g_controls;
+        dev = g_dev_hands_on;
+        if (dev) dh[0] = g_dev_hands[0], dh[1] = g_dev_hands[1];
+    }
+    if (dev && c.head_ok) {
+        left = dh[0], right = dh[1];
+        std::memcpy(head, c.head, sizeof(c.head));
+        return true;
     }
     if (!c.live || !c.head_ok) return false;
     Hand* out[2] = {&left, &right};
@@ -1245,8 +1261,11 @@ void ApplyPad(int port, input::Pad& p) {
     p.ly = further(p.ly, axis(c.stick[0][1]));
     p.rx = further(p.rx, axis(c.stick[1][0]));
     p.ry = further(p.ry, axis(c.stick[1][1]));
+    // Y is the game's fire mode in play (user 2026-11-26: not on Y, its animation played; the right stick's up is
+    // it), kept for the menus (the theater screen)
+    const bool y = c.y && LastTheater();
     const uint8_t a[8] = {uint8_t(c.a ? 255 : 0), uint8_t(c.b ? 255 : 0), uint8_t(c.x ? 255 : 0),
-                          uint8_t(c.y ? 255 : 0), analog(c.grip[1]),
+                          uint8_t(y ? 255 : 0), analog(c.grip[1]),
                           analog(g_left_grip_taken.load(std::memory_order_relaxed) ? 0.0f : c.grip[0]),
                           analog(g_left_trigger_taken.load(std::memory_order_relaxed) ? 0.0f : c.trigger[0]),
                           analog(c.trigger[1])};

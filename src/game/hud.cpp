@@ -51,7 +51,9 @@ float g_width = 640;
 // (user: in 35-50% of the way; across, the top corners' items meet sooner: 0.72 had health and ammo touching)
 // (2026-11-26: 0.78, 0.55 too close in; out 25%)
 constexpr float kVrPullX = 0.975f, kVrPullY = 0.69f, kVrGrow = 1.25f;  // (x 0.7: health under ammo, shot)
-constexpr float kVrGrowMiddle = kVrGrow * 0.6f;  // the middle's texts (HudItem)
+constexpr float kVrGrowMiddle = kVrGrow * 0.6f;  // the middle's crosshair and title fade (HudItem)
+// the middle's texts: the objectives, the mission's, the fire mode's (user 2026-11-26: half again, in the way)
+constexpr float kVrGrowText = kVrGrowMiddle * 0.5f;
 float g_vr_ax = -1, g_vr_ay = -1, g_vr_grow = kVrGrow;
 uint32_t g_hud = 0;  // the player's HUD while its list draws
 bool g_overlay = false;  // a 2d layer over the whole screen is open: its draws go on the vr hud plane
@@ -330,12 +332,13 @@ bool HudItem(X86Context& ctx, uint8_t*) {
     bool on_screen = R32(kDisplay) && g_width == float(R32(R32(kDisplay)));
     if (g_hud && xr::Active() && on_screen) g_vr_ax = std::clamp(anchor, 0.0f, 1.0f), g_vr_ay = std::clamp(anchor_y, 0.0f, 1.0f);
     else g_vr_ax = g_vr_ay = -1;
-    // the middle's items (the objective and mission texts) their own size, apart from the corners' (user
-    // 2026-11-26: they followed the hud's growth; 40% smaller)
-    g_vr_grow = g_vr_ax == kCentre && g_vr_ay > 0.2f && g_vr_ay < 0.8f ? kVrGrowMiddle : kVrGrow;
+    // the middle's items (the objective, mission and fire mode texts) their own size, apart from the corners' (user
+    // 2026-11-26: they followed the hud's growth; 40% smaller, then half that)
+    const uint32_t cb = R32(ctx.ebx + kItemCallback);
+    const bool middle = g_vr_ax == kCentre && g_vr_ay > 0.2f && g_vr_ay < 0.8f;
+    g_vr_grow = !middle ? kVrGrow : cb == kCrosshair || cb == kTitleFade ? kVrGrowMiddle : kVrGrowText;
     {
         static std::set<std::pair<uint32_t, int>> told;
-        uint32_t cb = R32(ctx.ebx + kItemCallback);
         if (g_vr_ax >= 0 && told.size() < 40 && told.insert({cb, int(g_vr_ay * 100)}).second)
             LOGR("hud: item 0x%X anchor %.2f %.2f, grown %.2f", cb, g_vr_ax, g_vr_ay, g_vr_grow);
     }

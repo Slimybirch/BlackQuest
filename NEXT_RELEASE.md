@@ -1,25 +1,5 @@
-- The silencer works as the game does it again: grip it with your left hand to take it off, grip the end of the barrel to put it back on, with the game's own animation
-- Shotgun shells sit lower in the hand and load anywhere close around and under the loading port (not from over the gun)
-- Rockets come out of the launcher's tube
-- AK rounds no longer show above the magazine
-- The SPAS no longer tilts after switching from another gun
-- The off hand rests level, thumb up, like holding the pistol
-- Wider, longer grab zones for charging handles
-- The launcher's loading tips show only the first time
-- No cocking animation when picking up or switching weapons
-- Pickup prompts read "Press right grip to pick up ..."
-- The HUD is 25% bigger and nearer the middle of the view
-- Grenades go as far as you throw them: a hard throw really lobs them
-- HD textures: many more matched to the HD pack, and the rest upscaled
-- A shotgun shell in the off hand no longer turns the hand sideways
-- The silencer is drawn once, by the game (no second one on the AK and M16)
-- M16 with M203: no reload animation after a grenade, and the rifle's magazine drops even with the M203 empty
-- The silencer's grip works even while firing
-- Objective and mission texts are smaller than the HUD
-- The test checklist on the wrist is off by default
-- The pause menu is a window fixed in front of you (2.5 ft wide, 5 ft away); the VR settings panel is bigger and no longer cut off
-- A laser pointer for the game's own menus and the VR settings: point and pull the right trigger
-- Loading a magazine or shells no longer stops your off hand taking the fore-grip
-- Long guns fired one-handed kick harder and are inaccurate
-- A bigger grab zone for the M16's charging handle
-- The M203 opens with a pump-like push after a shot, and its spent case drops out
+- The free off hand turned 90 degrees to sit right on the controller (thumb no longer down)
+- Fixed: the off hand couldn't hold a shotgun's fore-end after loading a shell or firing, or a rifle's after a reload while the grip was still held from seating the magazine
+- Pause menu 30% bigger
+- Objective, mission and fire mode texts half the size
+- Y no longer changes the fire mode in play (the right stick's up does)

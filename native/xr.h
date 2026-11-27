@@ -50,12 +50,16 @@ struct Hand {
     bool primary;        // A (right) or X (left)
 };
 bool Hands(Hand& left, Hand& right, float head[3]);
+// dev (dev_reload's script, game thread): hands Hands gives in place of the controllers' (positions, aims, buttons);
+// null: the controllers again
+void SetDevHands(const Hand* left, const Hand* right);
 // the view's raise over the headset's own height (user: 15 cm was too much, 5 cm); shared by the renderer and the
 // gun in the hand, which must agree on where the room is
 constexpr float kEyeRaise = 0.05f;
 // the paused game's menu (user 2026-11-26): a window fixed in the room ahead of the head as the pause comes up,
-// whichever way the game has turned; 2.5 ft wide 5 ft away (user: half the 5 ft at 2.5 ft, twice as far)
-constexpr float kMenuDistance = 1.52f, kMenuHalfWidth = 0.381f;
+// whichever way the game has turned; 2.5 ft wide 5 ft away (user: half the 5 ft at 2.5 ft, twice as far), then 30%
+// bigger (user 2026-11-26)
+constexpr float kMenuDistance = 1.52f, kMenuHalfWidth = 0.381f * 1.3f;
 // the settings panel beside it stays where the 5 ft menu at 2.5 ft had it (user: the panel is fine)
 constexpr float kPanelMenuDistance = 0.76f, kPanelMenuHalfWidth = 0.762f;
 // game thread: the game's rumble on the controllers (left motor the left hand, right the right), 0..65535

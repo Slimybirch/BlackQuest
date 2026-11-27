@@ -2379,3 +2379,44 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
 - M203 (B203 tube): opens on kPumpStroke (7 cm) at kPumpSpeed after a shot (was the whole 13 cm travel); its zero
   then reset so it's fully open. Spent case: a case-only M433 (to 60 mm) merged into the BNS's extra mesh on bone
   126, out of the barrel's back and falling 0.5 s (VrM203CaseOut).
+
+## 2026-11-26: watched play on v0.2.0 (49 screencaps; notes only, nothing changed)
+- Asked for one every 2 s; full 4128x2208 screencaps over wi-fi adb take ~7-8 s each, so 49 in 6 min.
+- Played: SHG picked up (no shells loaded, so the fore-grip after shells is still untested), AK1 and PST. AK1 drop,
+  insert and rack worked three times (one "racked loaded: a round out"); PST reloads worked.
+- The pause menu reads right now (not mirrored), smaller and further out; the laser and dot hit it. The user then
+  quit to the title and out ("quit: ConfirmWarning, FEAudio failed" logged at the quit, harmless so far).
+- Long guns mostly held one-handed. The free off hand showed palm up and open in two shots (the "upside down" look?).
+- Pacing in play: 250-300 of 360 frames per 5 s (~50-60 of 72 Hz), 20-100 gaps over 21 ms; the menus held 72.
+
+## 2026-11-27: off hand turned, the fore-grip after loads, pause menu, middle texts, Y (installed, dev-tested)
+- Free off hand: dev_fakehands now logs it in its controller's axes ("vr arms: free left in its controller"; the
+  wrist to the thumb's last joint, to the middle knuckle). At kFreeHandRoll -45 the thumb was 72 degrees below the
+  controller's right (the user's thumb down). The user's check, the controller turned 90 degrees clockwise showing
+  the thumb on top and the fingers out to the right, puts it on the controller's left: kFreeHandRoll -153. Measured
+  after: thumb in the view 0.00 0.67 -0.74 (up) at that turn, and seen so in a shot.
+- dev_fakeleft_<roll>_<yaw> (the marker's name carries the degrees): the fake left controller rolled clockwise and
+  turned right. The app can't read files adb's shell writes in its folder (exists works, open fails: dev_give and
+  dev_fakegun's contents were never read this way); names only.
+- Fore-grip lockout: LeftHold let go whenever VrRackHeld(), which (vr_reload.cpp) is also the pump's or M203 tube's
+  pump_mode, entered from the fore-grip itself whenever the gun waits for a pump (any shot, or a shell loaded into an
+  empty gun): taken, then dropped the next frame, for good until a fresh press. Now only VrSlideHeld() (g_racking,
+  the slide or handle in the hand). And a grip still held from a magazine in the hand ("carry") takes the fore-grip
+  as the hand reaches it, without a fresh press. "vr gun: off hand on/off the gun[: why]" logs each change.
+- Pause menu: kMenuHalfWidth x1.3 (0.495). Middle texts (anchor 0.5, 0.2-0.8, not the crosshair 0xD9480 or the
+  title fade 0xD71A0): kVrGrowText 0.375 (half of 0.75).
+- Y: kept from the pad in play (xr.cpp ApplyPad), passed only while the theater screen shows (menus): in play it
+  changed the fire mode by a path FireModeAnim doesn't cover, with the animation. The right stick's up (the d-pad's)
+  stays the fire mode.
+- Dev runs: the headset on the desk looks up; the pause menu is placed level ahead, out of the shot (seen in the
+  log: "the hud plane fixed in the room").
+- dev_reload (with dev_fakehands; a magazine gun, e.g. dev_give_AK1): a scripted reload through the real code.
+  xr::SetDevHands gives Hands' consumers the script's hands (the left at the targets in C: the chest, the well, the
+  rack zone, the fore-grip point LeftHold measures, VrForeAt; the right aimed as the head), and HandPose's fake left
+  takes its position. 6 s into the gun and every 16 s: A, chest grip, seat, let go, handle gripped and pulled 8 cm,
+  let go, fore-grip gripped: "vr reload: dev_reload ... the fore-grip after the reload TOOK / DID NOT TAKE".
+  dev_reload_carry: the grip held from the seat straight onto the fore-grip instead (no rack). dev_nocarry turns
+  the carry fix off. dev_give_<CODE> gives a gun by the marker's name.
+- AK results (2026-11-27): the full reload then a fresh press at the fore-grip took (twice). The grip held from the
+  seat: without the carry fix DID NOT TAKE (twice, the hand within 2 mm of the point), with it TOOK (twice): the
+  AK's lockout after a reload was the held grip needing a fresh press.
