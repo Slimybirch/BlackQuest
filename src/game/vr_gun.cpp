@@ -2659,13 +2659,12 @@ int VrStockBakeTake(uint32_t key, std::vector<uint8_t>& out, uint32_t& w, uint32
 // the M249's right side (tools/m249stock.py, the stock's mesh): each panel triangle's uvs onto the game's own
 // texels where the left has the same surface, mirrored (the game's way: every gun's right side is drawn from its
 // left's texels): the left triangle under its middle's (z, y), the nearest the mirrored wall; its uv map carried on
-// to the panel's corners, into the copy of the game's texture under the stock's rows (BakeStock). Option A: every
-// panel; option B (dev_right_b): only the handguard (material 7), the receiver's parts keep their own baked cells.
+// to the panel's corners, into the copy of the game's texture under the stock's rows (BakeStock): every panel (the
+// user's option A; B, the receiver's own baked cells, is gone).
 // Once, from the game's draw (its strip's or list's triangles)
 StockMesh M249RightSide(const StockMesh& base, const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* indices,
                         bool index16, uint32_t count, int32_t base_v, bool strip) {
     StockMesh m = base;
-    static const bool option_b = std::filesystem::exists(app::ExeDir() / "dev_right_b");
     struct Left {
         float z[3], y[3], u[3], v[3], x;
     };
@@ -2708,7 +2707,7 @@ StockMesh M249RightSide(const StockMesh& base, const uint8_t* vb, uint32_t strid
     int done = 0, missed = 0;
     for (size_t t = 0; t < tris; t++) {
         uint8_t mt = kM249StockMat[t];
-        if (mt != 7 && (mt < 10 || option_b)) continue;
+        if (mt != 7 && mt < 10) continue;
         float c[3] = {};
         for (int j = 0; j < 3; j++)
             for (int k = 0; k < 3; k++) c[k] += kM249StockPos[(t * 3 + j) * 3 + k] / 3;
@@ -2739,8 +2738,8 @@ StockMesh M249RightSide(const StockMesh& base, const uint8_t* vb, uint32_t strid
         }
         done++;
     }
-    LOGR("vr gun: M249 right side: %d panel triangles on the left's texels (%d none), %zu left faces, option %s", done,
-         missed, left.size(), option_b ? "B" : "A");
+    LOGR("vr gun: M249 right side: %d panel triangles on the left's texels (%d none), %zu left faces", done, missed,
+         left.size());
     return m;
 }
 

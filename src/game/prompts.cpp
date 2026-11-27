@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 
+#include "app/app.h"
 #include "common/mouse_keyboard.h"
 #include "common/translations.h"
 #include "core/log.h"
@@ -70,6 +72,46 @@ void Replace(std::string& text, std::string_view from, std::string_view to) {
 
 bool PressStart(uint32_t id) { return std::find(std::begin(kPressStart), std::end(kPressStart), id) != std::end(kPressStart); }
 
+// the headset: a hint is the pad button's glyph (the game expands it into kButtons' "PRESS (Y) :", worded below as
+// the headset's control) and its action (" to switch weapons"). The glyph stays (a hint with none didn't show, headset
+// 2026-11-27); where the control does more than press (README's table) the action says the rest (user 2026-11-27:
+// the tips with the right controls). Those the button says right alone (fire, fire modes, health, weapon switch) stay
+struct VrHint {
+    const char* action;
+    const char* says;
+};
+constexpr VrHint kVrHints[] = {
+    {" to reload your weapon", " to drop the magazine, then LEFT GRIP at your chest for a fresh one"},
+    {" to throw grenade", " for a grenade, let go as you throw"},
+    {" to aim", " to aim: point the gun, LEFT GRIP on its fore-end for both hands"},
+    {" to crouch", " to crouch, or crouch down for real"},
+    {" to aim sniper rifle", " to aim: bring the scope up to your eye"},
+    {" to use suppressor", " to use suppressor: LEFT GRIP at the end of the barrel"},
+};
+
+// the action's text after its button: the font's private glyph for the pad's button (U+F0xx, the game expands it into
+// the button's "PRESS (..) :" string) and the line breaks before it skipped
+std::string VrHintText(const std::string& text) {
+    size_t at = 0;
+    while (at < text.size() && (text[at] == 10 || text[at] == 13)) at++;  // line breaks
+    if (text.size() >= at + 3 && uint8_t(text[at]) == 0xEF && (uint8_t(text[at + 1]) & 0xFC) == 0x80) at += 3;
+    for (const VrHint& h : kVrHints)
+        if (strcasecmp(text.c_str() + at, h.action) == 0) return text.substr(0, at) + h.says;
+    return {};
+}
+
+// the pad's buttons as the headset's controls do them (README's table; xr.cpp ApplyPad, vr_body.cpp VrControls), for
+// a hint's button the game expands (kButtons' order); null: the game's own. At most kHintSize - 1 characters
+constexpr const char* kVrButtons[] = {
+    "PRESS A :", "SWING A CONTROLLER :", "PRESS RIGHT GRIP :", "PRESS Y :",
+    "PRESS RIGHT GRIP :", "PRESS LEFT GRIP :",
+    "GRIP AT YOUR WAIST, THROW :",  // LT, the game's grenade: the grenade at the waist (vr_grenade.cpp)
+    "PRESS RIGHT TRIGGER :",
+    "RIGHT STICK UP :", "RIGHT STICK DOWN :", nullptr,
+    "GRIP BEHIND RIGHT SHOULDER :",  // the d-pad's right, the weapon switch
+    "PRESS MENU :", nullptr, "CLICK LEFT STICK :", "CLICK RIGHT STICK :"};
+static_assert(std::size(kVrButtons) == std::size(kButtons));
+
 // a string as this PC words it, on the keyboard with its keys, on the touch screen with its touches; empty when it
 // stays. In the menus a drag moves the focus, a tap confirms, the touch controls' back button (an arrow) backs out.
 std::string Wording(uint32_t id, const std::string& pad, bool keyboard, bool touch) {
@@ -84,6 +126,12 @@ std::string Wording(uint32_t id, const std::string& pad, bool keyboard, bool tou
             Replace(text, "START", "A");
             Replace(text, "Start", "A");
             Replace(text, "start", "A");
+        }
+        if (std::string says = VrHintText(text); !says.empty()) text = says;
+        // "hold (X) to swap" too: the grip's press swaps (as the pickup's)
+        if (text.find("TO SWAP") != std::string::npos || text.find("to swap") != std::string::npos) {
+            Replace(text, "HOLD", "PRESS");
+            Replace(text, "hold", "press");
         }
         // the pickup's hint (user: "Press right grip to pick up <the weapon>"): its button glyph is the right grip
         // (MenuPrompts), its "hold" a press (the grip held is the game's held X)
@@ -182,14 +230,24 @@ X86_FUNC(sub_001F3A80) {
     }
     auto [it, fresh] = g_wordings.try_emplace(uint64_t(id) << 2 | uint64_t(touch) << 1 | keyboard, 0);
     const uint32_t* button = std::find(std::begin(kButtons), std::end(kButtons), id);
-    if ((keyboard || touch) && button != std::end(kButtons)) {
+    if (xr::Active() && button != std::end(kButtons)) {
+        // the headset: the controls' names, not the touch screen's (it counts as touched there)
+        const char* vr = kVrButtons[button - kButtons];
+        if (!vr || (!it->second && !(it->second = GuestString("", 1)))) return;
+        std::snprintf(static_cast<char*>(HostPtr(it->second)), kHintSize, "%s", vr);
+    } else if ((keyboard || touch) && button != std::end(kButtons)) {
         // follows the bindings and the layout: worded at every ask
         int b = int(button - kButtons);
+        static const bool dev_log = std::filesystem::exists(app::ExeDir() / "dev_strlog");
+        if (dev_log) LOGR("dev_strlog: button %d from %08X", b, R32(ctx.esp));
         std::string key = keyboard ? input::ButtonKey(b) : input::TouchName(b);
         if (key.empty() || (!it->second && !(it->second = GuestString("", 1)))) return;
         std::string press = game::Translated() ? app::Ui("PRESS") : "PRESS";
         std::snprintf(static_cast<char*>(HostPtr(it->second)), kHintSize, "%s %s :", press.c_str(), key.c_str());
     } else if (fresh) {
+        // dev_strlog: every string as first asked for (which button's "PRESS (..) :" goes before which action)
+        static const bool dev_log = std::filesystem::exists(app::ExeDir() / "dev_strlog");
+        if (dev_log) LOGR("dev_strlog: %08X \"%s\" from %08X", id, ReadCString(ctx.eax, 200).c_str(), R32(ctx.esp));
         std::string text = Wording(id, ReadCString(ctx.eax, 1024), keyboard, touch);
         if (!text.empty()) it->second = GuestString(text.c_str(), text.size() + 1);
     }

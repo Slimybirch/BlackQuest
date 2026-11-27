@@ -2435,3 +2435,48 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
   (VrHandMag; dev_fakehands logs "the held part's middle ... from the palm": 0.020 m).
 - Headset screencaps (adb) land a second or more from when they're asked for and take ~5 s each on the device:
   pictures of short steps can show the step before; the log is the timing.
+
+## 2026-11-27: level 1's start and tips (blur, title card, look, hands, wording; headset runs with dev hands)
+
+- **Driving the player from the PC**: `dev_control` (a marker by name, adb's files are closed to the app) opens the
+  co-op test channel (coop_control.cpp) on the headset at 127.0.0.1:45500; from adb: `echo state | nc -u -w2 -q2
+  127.0.0.1 45500` (teleport, stand <trigger>, turn, triggers...). The `stick` command doesn't move the player in VR
+  (the pad's left stick is the controllers'); teleport is the noclip. Level 1's route: teleport -5.0 -0.33 63.0 (out
+  past the shotgun door), `stand 0.1` (trigger 72AE2D2C5038CB6E at -10.1 0.4 69.0): the street's first enemy shoots
+  from there after 5-50 s (or never: rerun).
+- **The blurs**: the post controller's mode (`*0x2D1990 + 0x830D4`): 1 from 30.2 s to 34.4 s as the title card
+  fades and the objective comes up (not through the reload hook: 0x17B380's path), 2 at each pausing tip (0x20DFB2;
+  level 1: "red hit ring indicates attack direction" after the first hit, "heartbeat indicates health is low"),
+  grey and blurred (screenshots). vr_body.cpp VrNoBlur puts 1 and 2 back to 0 as the game's reset does (0x2035DF:
+  mode 0, 0x830A0 = 16 bytes from 0x2AD690, 0x830B0 = 0), from VrLook (play) and hud.cpp HudItem (a hint's pause
+  stops the look's tick). Checked: mode 2 gone within one frame at both tips. Damage's 3/7, low health's 8 and a
+  zoom's 9 kept.
+- **The title card's black box**: the HUD item kTitleFade (0xD71A0, "the title card's full screen rectangle") is a
+  black square on the head-locked plane over the world in VR; hidden in VR (HudItem). It draws all through play
+  (clear after the card), so it's hidden always. Seen: "4 days earlier" / "veblensk city street 07:36hrs" alone.
+- **The start's look** (user: "the controls are flipped right at the start"): two things. The pitch sign began at 1
+  and every run's log turned it to -1 on the first frame looked 14° up or down: until then up was down. Now -1 from
+  the start, and turned only after half a second of disagreeing (a death's camera flipped it every frame). And as the
+  card ends the game sets its look back to the level's start yaw (`dev_headsweep`'s log: the game's own turn 24.4°
+  in one frame at 34.47 s), which VrLook took into the body: the view snapped round so the way the head faced
+  became the start's. A game turn over 10° in a frame (kLookReset) isn't taken now (logged "the game set its look
+  N degrees round, not taken"; a death's camera turns 22-27° a frame, also not taken). The camera follows the look
+  during the card (its forward row always the yaw written); dev_headsweep's sweep cancels in the eyes, so shots
+  can't show it.
+- **The hands at a tip's pause** (user: the arms dropped and let go of the gun): the pause stops the game's logic and
+  VrLook, so VrLookAngles failed after 250 ms; LeftHold then let go (`off hand off the gun` 280 ms into each tip,
+  dev_lefton) and the arms lost their pose. VrLookAngles keeps the last angles while the logic is stopped (100 ms).
+  The tip's pause also counted as the pause menu (settings panel out, the hud fixed in the room): VrMenuOverPlay now
+  needs a menu page up or the hud gone; VrLookAngles asks with hints. Checked (dev_lefton, two tips): no let go, no
+  panel. dev_pause still shows the panel and the room-fixed menu on PauseMenu; 1.7 s on its page goes "" with the
+  hud drawn (the known dev_pause quirk: no menu draws then either) and that now counts as not a menu.
+- **The tips' wording**: a hint's string is the pad button's private-use glyph (U+F0xx, e.g. U+F009 before " to fire
+  weapon", U+F00B before " to continue") and its action; the game expands the glyph by asking for kButtons' string.
+  In VR the touch screen counts as active, so it got the touch names ("PRESS FIRE"). prompts.cpp kVrButtons names the
+  headset's controls (README's table, ApplyPad / VrControls: RIGHT TRIGGER, A, RIGHT GRIP, SWING A CONTROLLER, RIGHT
+  STICK UP/DOWN, GRIP BEHIND RIGHT SHOULDER, GRIP AT YOUR WAIST, THROW for the game's LT grenade...), kVrHints adds to
+  actions the button doesn't say (reload, grenade, aim, crouch, sniper, suppressor). A hint with its glyph taken out
+  didn't show at all: the glyph stays. Seen: "PRESS RIGHT TRIGGER  TO FIRE WEAPON" (the font has no colon). dev_strlog
+  logs each string as first asked for. README says the right stick's click crouches; the game's crouch is the left
+  stick's (vr_body.cpp kThumbL): the crouch tip says CLICK LEFT STICK (to check).
+- The M249's option B and dev_right_b removed (user: A).

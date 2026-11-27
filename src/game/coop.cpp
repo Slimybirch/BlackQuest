@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <random>
 #include <string>
@@ -1225,6 +1226,9 @@ void Init() {
     if (net::Arg("--coop-control", v)) {
         int port = std::atoi(v.c_str());
         control::Init(uint16_t(port > 0 ? port : 45500 + app::Instance()));
+    } else if (std::filesystem::exists(app::ExeDir() / "dev_control")) {
+        // the headset (adb's files are closed to the app, so a marker by name): nc -u 127.0.0.1 45500 on the device
+        control::Init(45500);
     }
     shots::SetMode(false, g_cfg.echo);
     world::SetMode(false, 0);

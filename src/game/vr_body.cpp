@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -33,6 +34,7 @@ void SetMenuOpen(bool open);  // src/common/menu.cpp
 }
 
 namespace game {
+bool HudShown();  // hud.cpp: the player's hud drew in the last quarter second (a hint's pause too)
 bool VrDevModePress();  // vr_reload.cpp: dev_modeflip's press of the fire-mode button now
 void TestEvent(const std::string& name);  // vr_totest.cpp: the test checklist
 bool VrM203TriggerTaken();  // vr_reload.cpp: the M203's trigger (the off hand's) kept from the game
@@ -69,7 +71,9 @@ struct Body {
     bool look = false;
     float body = 0;          // degrees
     float written = 0;       // the yaw last written, to find what the game turned since (smooth turning)
-    float pitch_sign = 1;    // the game's pitch against the head's, checked on its built view
+    // the game's pitch against the head's, checked on its built view: -1 in every run so far (2026-11-27 logs); it
+    // started at 1, so a level began with the look up and down the wrong way till a big enough look turned it
+    float pitch_sign = -1;
     float last_pitch = 0;    // the head's pitch last written, radians
     float last_yaw = 0;
     int64_t play_ms = 0;     // the player's view was last built (play, not menus or films)
@@ -89,9 +93,14 @@ struct Body {
 bool VrMeleeHidden() { return NowMs() < g.melee_hide_until; }
 void VrToggleGunFingers();  // vr_gun.cpp
 
-// the head angles (radians) the player's camera was last built from, while in play
+bool VrMenuOverPlay(bool hints = false);
+extern std::atomic<int64_t> g_logic_ms;  // the weapons' logic last ran (below)
+// the head angles (radians) the player's camera was last built from, while in play, and kept while the game pauses over
+// it (user 2026-11-27: a hint's pause dropped the arms and the fore-grip: the hands lost the look and let go)
 bool VrLookAngles(float& yaw, float& pitch) {
-    if (!g.look || NowMs() - g.play_ms > 250) return false;
+    int64_t logic = g_logic_ms.load(std::memory_order_relaxed);
+    bool stopped = logic && NowMs() - logic > 100;  // the game's logic paused (a hint, the pause menu)
+    if (!g.look || (NowMs() - g.play_ms > 250 && !stopped)) return false;
     yaw = g.last_yaw;
     pitch = g.last_pitch;
     return true;
@@ -129,10 +138,26 @@ constexpr float kShoulderRight = 0.15f, kShoulderBack = 0.08f, kShoulderUp = -0.
 // while (the title card and the hud's pages don't stop it). The renderer fixes the hud plane in the room then
 // (vulkan.cpp HudMatrix)
 std::atomic<int64_t> g_logic_ms{0};
+// the game's screen blurs off in the headset (a full view blur there is sickening): post mode 1, the reload's and the
+// one as a level's title card fades (2026-11-27 log), and 2, a hint's pause (level 1's tips). Put back as the game's
+// own reset does (0x2035DF): mode 0, its values from 0x2AD690. Damage's (3, 7), low health's (8), a zoom's (9) kept
+void VrNoBlur() {
+    uint32_t post = R32(0x2D1990);
+    if (!post || !xr::Active()) return;
+    uint32_t mode = R32(post + 0x830D4);
+    if (mode != 1 && mode != 2) return;
+    W32(post + 0x830D4, 0);
+    std::memcpy(HostPtr(post + 0x830A0), HostPtr(0x2AD690), 16);
+    G<float>(post + 0x830B0) = 0;
+}
+
 void VrLogicTick() { g_logic_ms.store(NowMs(), std::memory_order_relaxed); }
-bool VrMenuOverPlay() {
+// hints too: the game pauses for some (level 1's "red hit ring indicates attack direction"), its hud still up and no
+// menu page; not a menu (no settings panel, the hud kept head-locked) unless asked for
+std::atomic<bool> g_page_up{false};  // a menu page is up (VrPad, game thread)
+bool VrMenuOverPlay(bool hints) {
     int64_t t = g_logic_ms.load(std::memory_order_relaxed);
-    return t && NowMs() - t > 300;
+    return t && NowMs() - t > 300 && (hints || g_page_up.load(std::memory_order_relaxed) || !HudShown());
 }
 
 void VrControls(input::Pad& pad) {
@@ -284,6 +309,7 @@ void VrPad(input::Pad& pad) {
         static const std::string kNotMenus[] = {"", "FMVPlayer", "BootSequence", "IntroCredits", "BlackIntroSequence",
                                                 "memcardmessage"};
         std::string page = PageName();
+        g_page_up.store(!page.empty(), std::memory_order_relaxed);
         bool title_menu = xr::LastTheater() && std::find(std::begin(kNotMenus), std::end(kNotMenus), page) ==
                                                    std::end(kNotMenus);
         bool paused = VrMenuOverPlay() && !xr::LastTheater();
@@ -400,18 +426,43 @@ void VrLook(X86Context& ctx, uint8_t*) {
     if (!look) return;
     float& game_yaw = G<float>(look + kYaw);
     float& game_pitch = G<float>(look + kPitch);
+    VrNoBlur();
+    // dev_headsweep: the head's yaw swept ±20° every 4 s for the game (the eyes cancel it), logged (dev_looklog's
+    // lines): what the game does to the look at a level's start
+    static const bool sweep = std::filesystem::exists(app::ExeDir() / "dev_headsweep");
+    if (sweep) yaw += 0.35f * std::sin(float(NowMs() % 4000) * 6.2831853f / 4000.0f);
+    if (sweep && g.look) {
+        static int64_t next = 0;
+        float d = game_yaw - g.written;
+        if (NowMs() >= next || std::fabs(d) > 0.5f) {
+            next = NowMs() + 250;
+            LOGR("dev_looklog: head %.1f, the game's %.1f written %.1f (its own turn %.2f), body %.1f", yaw * kDeg,
+                 game_yaw, g.written, d, g.body);
+        }
+    }
     if (!g.look) {
         g.body = game_yaw - yaw * kDeg;
         g.look = true;
     } else {
-        // the game's own turn since the last write (smooth turning, scripted turns), wrapped
+        // the game's own turn since the last write (smooth turning, scripted turns), wrapped. Not a jump of more than
+        // kLookReset in a frame: the game setting the look outright (as a level's title card ends it goes back to
+        // the level's start, 24° in a 2026-11-27 log): taken, the view snapped round so the way the head faced became
+        // the start's (user: disorienting at the start). Smooth turning is a few degrees a frame
+        constexpr float kLookReset = 10.0f;
         float d = game_yaw - g.written;
         d -= 360.0f * std::floor((d + 180.0f) / 360.0f);
-        g.body += d;
+        static int told = 0;
+        if (std::fabs(d) <= kLookReset) g.body += d;
+        else if (told++ < 8) LOGR("vr look: the game set its look %.1f degrees round, not taken", d);
     }
     // the sign of the game's pitch, from the view it built last time: its forward row's height against the head's
     float fy = G<float>(ctx.ebx + kForward + 4);
-    if (std::fabs(g.last_pitch) > 0.25f && std::fabs(fy) > 0.15f && (fy > 0) != (g.last_pitch > 0)) {
+    // (for half a second on end: a death's camera turns on its own, and flipped the sign every frame)
+    static int against = 0;
+    if (std::fabs(g.last_pitch) > 0.25f && std::fabs(fy) > 0.15f && (fy > 0) != (g.last_pitch > 0)) against++;
+    else against = 0;
+    if (against > 36) {
+        against = 0;
         g.pitch_sign = -g.pitch_sign;
         LOGR("vr look: the game's pitch runs the other way, sign %.0f", g.pitch_sign);
     }

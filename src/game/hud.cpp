@@ -291,12 +291,18 @@ int64_t NowMs() {
 }  // namespace
 
 namespace game {
+void VrNoBlur();  // vr_body.cpp: the screen blur off in the headset
 // native/touch.cpp: the touch controls stay up over a hint's pause, which stops the look as a cutscene does
 bool HudShown() { return NowMs() - g_hud_ms.load(std::memory_order_relaxed) < 250; }
 }  // namespace game
 
 // A list's item before it draws, ebx. Hidden, the HUD draws only the title card's fade: false skips the callback
 bool HudItem(X86Context& ctx, uint8_t*) {
+    // the level's title card in the headset: its letters only, not the black square it draws behind them over the
+    // world (user 2026-11-27; the rect draws all through play, clear after the card)
+    if (xr::Active() && R32(ctx.ebx + kItemCallback) == kTitleFade) return false;
+    // and no blur while a hint pauses the game (the look's tick, which clears it in play, doesn't run then)
+    if (xr::Active() && g_hud) game::VrNoBlur();
     if (g_hud && R32(ctx.ebx + kItemCallback) != kTitleFade) g_hud_ms.store(NowMs(), std::memory_order_relaxed);
     if (g_hud && game::g_hide_hud && R32(ctx.ebx + kItemCallback) != kTitleFade) return false;
     if (g_hud && xr::Active()) {

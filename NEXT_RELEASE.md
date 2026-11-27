@@ -4,3 +4,7 @@
 - Objective, mission and fire mode texts half the size
 - Y no longer changes the fire mode in play (the right stick's up does)
 - Fixed: a dark, gun-like shape stretched from the off hand while it held a shotgun shell
+- The level's title card shows its letters only, without the black box or the blur after it
+- Fixed: looking up and down was the wrong way round at a level's start, and the view snapped round as the title card ended
+- Tips no longer blur the view or make the hands let go of the gun
+- Tips name the Quest's controls

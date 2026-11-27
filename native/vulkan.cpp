@@ -62,7 +62,7 @@ bool VrMirror(const uint8_t* vb, uint32_t stride, uint32_t vbytes, const void* i
               int32_t base, bool strip, const uint8_t*& verts, uint32_t& vbytes_out, const void*& idx,
               uint32_t& icount);  // vr_gun.cpp
 void VrDumpGunTexture(uint32_t key, const uint8_t* px, uint32_t pitch, uint32_t w, uint32_t h);  // vr_gun.cpp
-bool VrMenuOverPlay();  // vr_body.cpp: the game paused over play (its pause menu)
+bool VrMenuOverPlay(bool hints = false);  // vr_body.cpp: the game paused over play (its pause menu)
 float VrVignette();     // vr_body.cpp: the comfort vignette's darkening now, 0..1
 bool VrScopeWanted();                    // vr_gun.cpp: a scoped gun held up near the eye
 bool VrScopeEye(xr::EyeView& ev);        // vr_gun.cpp: the scope's view (its camera at the eyepiece, down the barrel)

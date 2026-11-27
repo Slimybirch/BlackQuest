@@ -188,3 +188,8 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] Y does nothing in play (no fire mode change, no animation); the right stick's up still changes it (confirm)
 - [ ] AK (and every magazine gun): drop, take a fresh one, seat it, rack, then the fore-grip takes; also holding the grip from seating straight onto the fore-end (auto: fore_grip:AK1) (confirm)
 - [ ] SPAS: holding a shell, no dark gun-like shape stretched from the off hand; the shell sits in the fingers (confirm)
+- [ ] level 1's title card: only its letters, no black box, and no blur as it fades (confirm)
+- [ ] level 1's start: looking up and down the right way from the first moment; no snap round as the title card ends (confirm)
+- [ ] level 1's tips ("red hit ring...", "heartbeat..."): no grey blur; the off hand stays on the gun and the arms where they were; no settings panel (confirm)
+- [ ] tips name the Quest's controls (e.g. "PRESS RIGHT TRIGGER TO FIRE WEAPON"); the crouch tip says CLICK LEFT STICK: is that the click that crouches? (confirm)
+- [ ] the pause menu (menu button) still has the settings panel beside it and stays fixed in the room while open (confirm)

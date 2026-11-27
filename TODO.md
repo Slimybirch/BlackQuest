@@ -2,8 +2,7 @@
 
 ## To test by hand
 - The user's hand checks live in TOTEST.md (also shown in the headset, one at a time: VR SETTINGS > TEST CHECKLIST).
-- [ ] Install the in-game checklist build (vr_totest.cpp, built 2026-11-23, waiting for the user's go-ahead), then check
-  the wrist card's place, its readability and the PASS / SKIP pointing in the headset.
+- [x] the in-game checklist (vr_totest.cpp) installed and in use
 
 ## Phase 0
 - [x] install the Android toolchain (SDK 34, NDK 28.2.13676358, CMake 3.31.6, JDK 17) → `toolchain/`
@@ -20,12 +19,12 @@
 - [x] exit: events read while paused, session destroyed on quit (checked with Home on the headset)
 - [ ] headset off/on resume (untested: proximity sensor off in dev mode)
 - [x] commit (user go 2026-11-19)
-- [ ] Android dialogs (storage, update) → virtual screen (Phase 7); `appops` for now
+- [x] Android dialogs (storage, update): before VR shown as a 2D window, the update notice on the panel (Phase 7)
 
 ## Later
-- [ ] touch overlay hidden under XR (done in RenderUi); "PRESS ANYWHERE" text is the touch port's (Phase 7)
+- [x] touch overlay hidden under XR; the title says PRESS A (Phase 7)
 - [x] (2026-11-25) xbe check: normalise the dump tool's region/media cert patch before hashing (game_files.cpp, Builder)
-- [ ] find the fire ray builder (Phase 4) and the grenade spawn (Phase 6)
+- [x] the fire ray (0x1DB7B0, Phase 4) and the grenade spawn (FUN_001DD000, Phase 6)
 - [ ] `EnsureBackend`: stop cleanly when the renderer can't start instead of crashing in vkCreateImage
 
 ## Phase 2 (design in NOTES, "Phase 2 (true stereo): design"; double replay chosen by the user)
@@ -74,7 +73,7 @@
 - [x] free off hand rolled 45°, forearm twist, OFF-HAND GRIP hold/toggle row (built, not yet seen)
 - [ ] own hands: an open pose for the free off hand (the game's is closed on a fore-grip): needs a finger pose
       from somewhere (another animation's bones, or curl the finger bones ourselves)
-- [ ] own hands (user, 2026-11-21): the game's arms mesh posed by our bones (it is GPU-skinned, bones from c-36):
+- [x] own hands (user, 2026-11-21): the game's arms mesh posed by our bones (it is GPU-skinned, bones from c-36):
       each hand on its controller, two-bone IK for the elbows, the game's finger poses kept. Grabbing a gun snaps
       the gun hand to its grip and the off hand to the game's own fore-grip hold, wherever the controller is (the
       game's hand bones on the gun give both, so no per-weapon grip table or GRIP rows once this works)
@@ -82,11 +81,12 @@
       have them on the right. Possible: draw the AK mirrored across its barrel's vertical plane (a reflection in
       its K; flip the cull winding for that draw), and send its casings out of the right side. Check which other
       guns are modelled mirrored, and that the sights and markings still read right
-- [ ] projectiles: RPG and grenade launcher from the gun
-- [ ] hide the head-locked crosshair; aiming in (LT) in vr: zoom off, gun stays in the hand
+- [x] projectiles: RPG and grenade launcher from the gun (launchers by hand, Phase 5)
+- [x] the head-locked crosshair hidden (the barrel reticle)
+- [ ] aiming in (LT) in vr: zoom off, gun stays in the hand
 - [ ] arms: forearms trailing the hands look odd (trim/hide option); the hand lets go briefly in melee; left-handed option
-- [ ] two handed: the left arm only follows the left controller; aiming by the line between the hands still to do
-- [ ] two-handed weapons (key, user 2026-11-20), pistols included. Long guns (rifles, shotguns, launchers): the
+- [x] two handed: aiming by the line between the hands (g_two_aim)
+- [x] two-handed weapons (key, user 2026-11-20), pistols included (the pistol cup and Uzi/Mac-10: see Phase 7). Long guns (rifles, shotguns, launchers): the
       off hand grips the fore-grip (grip button near it) and the gun aims along the line between the hands (gun
       hand the pivot, its roll kept). Pistols: the off hand cups the gun hand (grip near it); the hands are too
       close for a line to aim by, so the hold steadies the gun instead (less jitter, smoothed aim) and the off
@@ -96,7 +96,7 @@
       it to take it, instead of standing on it and pressing X. Needs the pickups' positions (world weapon list
       / the pickup test behind X) and a grab radius (~20 cm) around the hand; the grab then fires the game's own
       pickup for that item. Highlight in reach. X stays as a fallback
-- [ ] scope as a lens (Wishlist); recoil kick on the hand model
+- [x] scope as a lens (Wishlist); recoil kick on the hand model
 
 
 ## VR controls (user, 2026-11-19)
@@ -119,11 +119,9 @@
       silencer the player has (seen on it, or put on), grip there takes it, within 4 cm of the muzzle along the barrel
       it lines up, one ~60 degree clockwise twist locks it (weapon+0x108 on), grip at the muzzle and the reverse
       twist takes it off into the hand, let go anywhere else: back to the holster
-- [ ] silencer, with the headset: the dumps show no silencer part in the gun's model (PST plain and suppressed:
-      the same mesh, no other draw), so either our own silencer mesh (drawn on the muzzle and in the off hand), or
-      find how the game attaches its own (the pickup's animation, inventory busy 0x13) and play its tail; the sound
-      at once (now at the next weapon switch); the hip's place
-- [ ] the user's plan (2026-11-24): our own silencer model (a plain matte tube, from their photo: thread collar at
+- [x] (user 2026-11-27: our own silencer model is no longer used, only the game's) silencer, with the headset: the
+      game's own attach and detach, run by the twist (below)
+- [x] (dropped: our model) the user's plan (2026-11-24): our own silencer model (a plain matte tube, from their photo: thread collar at
       the back, two grooves, a vent hole; no markings), a silencer pickup spawned at the start that goes to the
       inventory instead of on the gun, a white silencer icon under the ammo and grenades while carried, and the
       game's own suppressor apply called when the twist locks (its animation and sound). Pickup records and the
@@ -140,18 +138,17 @@
 - [x] (2026-11-25, headset) the levels' own suppressors go into the inventory instead of onto the gun (the game's
       attach called off, mission 2's start tested); the icon dark without one, glowing with one
 - [ ] a level's placed suppressor pickup walked over (not mission 2's scripted one): check it lands in the inventory
-- [ ] our silencer has no depth test: check it in the hand (over the fingers?) and at the hip
 - [x] (built 2026-11-24, headset shots with test hands) the WA2000's scope as a lens: a third replay from the
       scope, its picture on the eyepiece with a reticle (NOTES "scopes"). Still: the user's own check that it's
       sharp, aligned and smooth at the eye; the frame rate while scoped; X2/X5 zoom levels (now about 4x)
-- [ ] scoped weapons (Phase 4, with the gun in the hand): the scope as a lens. The zoomed view is rendered to a
+- [x] scoped weapons (Phase 4, with the gun in the hand): the scope as a lens (the WA2000's, above). The zoomed view is rendered to a
       small target and drawn on the scope's glass, so aiming means bringing the scope up to your eye; never zoom
       the whole headset view. The game's own scope overlay and zoom are off in VR.
 - [x] first cut (2026-11-20): left grip + menu opens a panel with the cheats and TURNING, title and play (NOTES)
 - [x] user: couldn't move through it (imgui's gamepad nav was never enabled); now also the right controller's
       pointer, trigger clicks
 - [ ] user: pointer, stick navigation, panel placement/readability, cheats from the title
-- [ ] VR Settings window (Phase 7; replaces the planned VR options page): its own window on the virtual screen,
+- [x] VR Settings window (Phase 7: the panel beside the menus; render scale, refresh rate, foveation and space warp still open): its own window on the virtual screen,
       opened from the pause menu and from beside the main menu (the same window). Settings that only apply in
       play (cheats, for one) are shown greyed out outside a level. Laser pointer and stick navigation. Pages:
       - cheats: the android port's cheats panel (menu.cpp rows), same options and toml
@@ -165,16 +162,16 @@
 
 ## Ideas from other VR mods and reviews (2026-11-20)
 CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
-- [ ] manual reload (Phase 5), shaped like CoD4 VR's: steps ready → holding the loaded mag → ejected → holding a
+- [x] manual reload (Phase 5), shaped like CoD4 VR's: steps ready → holding the loaded mag → ejected → holding a
       fresh one. Eject by a button or by pulling the mag out (option). The fresh mag comes from a pouch on the off
       hand's hip (option: left / right / off hand). Insert on letting go near the magazine well, or on touching it
       (option, ~15 cm radius). Then a rack/chamber step only when the gun was emptied (Black's empty reload).
       The game's reload runs when the mag goes in, with its animation hidden; the reload button stays as an option
-- [ ] two-handed aiming: see Phase 4
+- [x] two-handed aiming: see Phase 4
 - [x] haptics: firing by weapon (ShotFeel), the launchers, reload touches, pickups; hits left out (user); a strength slider still open
 - [x] gun against walls: pulled back along the barrel (the game's line test), HANDS > GUN AT WALLS: PULLED BACK / THROUGH; user to try
-- [ ] grenades from a belt (Phase 6): grab one from the chest/hip with the off hand, pull, throw
-- [ ] grenades, the user's design (2026-11-21): an empty weapon slot to switch to (no gun in the hand); there the
+- [x] grenades from a belt (Phase 6): grab one from the chest/hip with the off hand, pull, throw
+- [x] grenades (superseded by Phase 6's design), the user's design (2026-11-21): an empty weapon slot to switch to (no gun in the hand); there the
       off hand's trigger at the chest (where the magazines are) takes a grenade, throw it and let go of the
       trigger to release it. The off hand's trigger otherwise fires the M16's under-barrel grenade launcher. The
       grip stays the reload's (magazines, slide, handle)
@@ -278,9 +275,9 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] the elbow rolls over counter-clockwise when the hand reaches to the chest (the IK's pole)
 - [ ] the magazine in the hand held vertical (it sits sideways now): turn HandMag's pose so its up runs along the
       hand's fingers-to-wrist line, top toward the thumb
-- [ ] No blur when objectives or tips come up (user)
-- [ ] Title cards (the time and place at a level's start): the text only, no black box behind it; and the player's
-  view set up so the head doesn't move opposite to the player's own in those first seconds (user)
+- [x] (2026-11-27, headset runs) No blur when objectives or tips come up (user)
+- [x] (2026-11-27) Title cards: the text only; the start's pitch sign and the card's look reset fixed (user)
+- [x] (2026-11-27) tips: the hands keep their state through a tip's pause; the tips name the Quest's controls
 
 ## Phase 6 (grenade throwing; user, 2026-11-23: in pieces, low usage, no test or install without the user's say)
 - The user's design: a grip low across the waist (below and in line with the headset; never reached crouching by
@@ -322,7 +319,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       the WA2000 lack right-side geometry
 - [x] the M249's para stock: two bars one over the other, an oval butt dished for the shoulder
 - [x] the M249's right side: options A and B built and shown (dev_right_b switches to B)
-- [x] the user picked A for the M249 (its upper band fixed); B's switch (dev_right_b) to go once A's confirmed
+- [x] the user picked A for the M249 (its upper band fixed); B and its dev_right_b switch removed (2026-11-27)
 - [x] the WA2000's right side (A: its missing left faces copied across)
 - [x] the Walther's rock after a shot (its frame held at rest too), its magazine's catch from the well's bottom, its
       off hand 6 cm nearer the trigger (and the GRL's 8 cm out: both had been moved the wrong way)
@@ -411,7 +408,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       stages as progress, adb install, the disc copied to the app's files/assets on the headset
 - [x] the user's run (2026-11-24): BlackQuest uninstalled, then the Builder (no window, --build --hd --device) built,
       installed and copied the disc over Wi-Fi in 41 s (the build was already up to date; the disc 28 s at 58 MB/s)
-- [ ] the disc is copied to the app's folder even when the headset has it in /storage/emulated/0/Black already
+- [x] the disc is copied to the app's folder even when the headset has it in /storage/emulated/0/Black already
       (1.7 GB twice): look there first (adb can read it), or ask
 - [ ] black window and teal buttons (the game's menu colour): the user's look, check it on their screen
 - [ ] on a clean PC (no toolchain/, no VS): the downloads and the VS installer step
