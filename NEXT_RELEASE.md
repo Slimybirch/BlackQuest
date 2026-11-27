@@ -8,3 +8,9 @@
 - Fixed: looking up and down was the wrong way round at a level's start, and the view snapped round as the title card ended
 - Tips no longer blur the view or make the hands let go of the gun
 - Tips name the Quest's controls
+- Firing never moves the view (the gun still kicks in the hand)
+- The free off hand sits on the controller the right way round: thumb on top
+- The fore-grip takes anywhere along the gun's handguard; gripping near an AK's fore-end no longer pulls its magazine
+- Fixed: a crash when the game was launched with the headset asleep (the renderer's start is tried again)
+- Menus name the Quest's buttons, plainly: (RT/A) confirm, (B) back
+- Fixed: the elbow rolling over as a hand reached to the chest; turning a wrist turns the forearm instead of wringing it

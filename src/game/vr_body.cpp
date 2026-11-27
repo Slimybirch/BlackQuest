@@ -467,7 +467,32 @@ void VrLook(X86Context& ctx, uint8_t*) {
         LOGR("vr look: the game's pitch runs the other way, sign %.0f", g.pitch_sign);
     }
     game_yaw = g.body + yaw * kDeg;
+    // (the shot's view kick, player +0x4C4: the game takes it off the pitch before this hook and puts it back after
+    // (0x1E5FCD / 0x1E5FF1), so writing the head's pitch here leaves the view without it. 2026-11-27: taking it off
+    // here as well put a full kick into the view, the other way round (dev_camlog); the gun in the hand keeps it)
+    constexpr uint32_t kViewKick = 0x4C4;
     game_pitch = g.pitch_sign * pitch * kDeg;
+    // dev_camlog: the look's other angles (+0xCC roll, +0xDC), its eye against the feet, the kick, as they change:
+    // where the game's shakes and bob are
+    static const bool camlog = std::filesystem::exists(app::ExeDir() / "dev_camlog");
+    if (camlog) {
+        // the view built last frame (rows +0xD0.., its position +0x100) against the look written then and the feet
+        const float fx = G<float>(ctx.ebx + kForward), fy = G<float>(ctx.ebx + kForward + 4),
+                    fz = G<float>(ctx.ebx + kForward + 8);
+        const float ry = G<float>(ctx.ebx + 0xD0 + 4);  // the right row's height: a roll
+        float now[6] = {std::atan2(fx, fz) * kDeg - g.written, std::asin(std::clamp(fy, -1.0f, 1.0f)) * kDeg,
+                        ry, G<float>(ctx.ebx + 0x104) - G<float>(ctx.ebx + 0xA4),
+                        std::hypot(G<float>(ctx.ebx + 0x100) - G<float>(ctx.ebx + 0xA0),
+                                   G<float>(ctx.ebx + 0x108) - G<float>(ctx.ebx + 0xA8)),
+                        G<float>(ctx.ebx + kViewKick)};
+        static float last[6] = {};
+        bool moved = false;
+        for (int i = 0; i < 6; i++) moved |= std::fabs(now[i] - last[i]) > 0.01f, last[i] = now[i];
+        static int64_t next = 0;
+        if (moved || NowMs() >= next)
+            LOGR("dev_camlog: built yaw off %.2f pitch %.2f roll row %.3f, eye over feet %.3f out %.3f, kick %.2f",
+                 now[0], now[1], now[2], now[3], now[4], now[5]), next = NowMs() + 1000;
+    }
     g.written = game_yaw;
     g.last_pitch = pitch;
     g.last_yaw = yaw;

@@ -2480,3 +2480,82 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
   logs each string as first asked for. README says the right stick's click crouches; the game's crouch is the left
   stick's (vr_body.cpp kThumbL): the crouch tip says CLICK LEFT STICK (to check).
 - The M249's option B and dev_right_b removed (user: A).
+
+## 2026-11-27: the renderer's start, the HD gate, the camera's motion (built; not run: no install go-ahead)
+
+- **EnsureBackend** (d3d8.cpp): a failed Init (the headset asleep at launch: no surface; see "Baseline on the Quest
+  3") carried on with a dead backend into vkCreateImage's crash. Now a new backend and Init again every 500 ms, 20
+  tries, then `kernel::Shutdown(1)` with "renderer init failed 20 times, quitting" logged. Not run.
+- **HD pack gate**: vulkan.cpp `hd::On()` (TEXTURES: HD PACK, or dev_hdtex) gates both the texture lookup (3632)
+  and the bind's swap (3691); the default is ORIGINAL (options.h vr_hd_textures false). Nothing loads when off, as
+  the user saw.
+- **The camera's motion** (FUN_001E5FA0, the player's view): the view matrix (player +0xD0) comes from 0x1D2F20,
+  built from the look ([player+0x324]): rotations by +0xCC (a roll), +0x1C (pitch), +0xDC, +0x18 (yaw), and +0xA0 its
+  position (the eye). Before the look hook (0x1E5FE1) the game takes the shot's view kick (player +0x4C4, dying by
+  +0x4C8 a frame) off the pitch and adds it back after (0x1E5FF1): every shot tipped the whole view up in the
+  headset. VrLook now writes the pitch less the kick's unwanted share. New VR setting COMFORT > CAMERA SHAKE (OFF
+  default / A LITTLE: a quarter / FULL; vr_camera_motion). The gun in the hand keeps the kick (vr_gun.cpp reads
+  +0x4C4 itself). Still to find: whatever writes +0xCC / +0xDC (shakes?) and moves the eye against the feet (the
+  walk's bob): `dev_camlog` logs the roll, +0xDC, the eye's height and offset over the feet and the kick as they
+  change (a run with dev_autofire and level 1's enemy: teleport -5.0 -0.33 63.0, stand 0.1).
+- **Headset runs (dev_camlog, the go-ahead given)**: the look's +0xCC is a constant 0.5 and +0xDC 0 all through
+  (no shake there); look +0xA0 isn't the eye in world space. The built view (forward row against the yaw written,
+  its pitch, the right row's height for a roll, its position row +0x100 against the feet) matched the look exactly
+  through level 1's enemy shooting the player and three rockets fired from the eye into the start room's ceiling
+  (`ctl rocket`): no shake in the player's view build. A hit's flinch comes through the same view kick (1.72° at a
+  hit, dev_autofire's shots 0.1-0.3°), so CAMERA SHAKE covers it. The eye over the feet: 1.455-1.505 m standing,
+  a 1-2 cm twitch now and then (the head bone's idle). The walk's bob isn't measured: the control channel's stick
+  doesn't move the player in VR (the controllers' sticks win in ApplyPad); whatever shake explosions make, if any,
+  would be later than the view build (the renderer's own matrices).
+
+
+## 2026-11-27: the view kick undone, the off hand's roll, the fore-grip a stretch (headset, dev hands)
+
+- **The view kick was ours**: the game takes player +0x4C4 off the pitch before VrLook (0x1E5FCD) and puts it back
+  after (0x1E5FF1); VrLook's write of the head's pitch in between leaves the view without it. The earlier round's
+  "kick taken off" (game_pitch less +0x4C4) put a whole kick into the view instead (dev_camlog: built pitch head +
+  kick, 18.56 to 21.32 at kick 2.76, the user: "knocks the head back, sickening"); with the sign turned it dropped
+  the view by the kick (15.84). With nothing taken off: 18.60-18.63 through dev_autofire's AK bursts. The eye over
+  the feet 1.455-1.478 firing or not, no position kick. CAMERA SHAKE removed (nothing left for it: no explosion
+  shake in the view's build either, earlier entry).
+- **The free off hand's roll** (user's screenshots, controller held normally: the thumb out flat to the left, the
+  fingers curled up like an open palm): the roll moves the thumb one for one about the controller's axis (-45 gave
+  -72°, -153 gave -180°): kFreeHandRoll +117°. dev_fakehands' log: thumb in the controller -0.12 0.87 -0.49 (its
+  top), fingers -0.10 -0.07 -0.99 (forward). Every gun's free off hand is the one pose (VrPoseArms' free_left), so
+  all take it; on the gun, the gun's own hold.
+- **The fore-grip a stretch** (user's play log: two AK grips at the handguard pulled the magazine out, the hand 5-10
+  cm ahead of the charging handle and never "on the gun"; after a shotgun's shell no grip took): LeftHold measures
+  the hand from a line along the gun's +z through the fore-grip point, from 0.4 of the grip-to-fore-grip way back
+  to 0.12 m ahead (reach 8 cm as before); the magazine's pull-out zone needs the hand 8 cm off that line (was 5 cm
+  from the point). Each grip press within 30 cm logs "off hand grip N cm from the fore-grip ..." for the next
+  miss. dev_reload: AK1 TOOK 3 of 3 after drop, take, seat, rack; SHG TOOK after shot, pump, shell, pump.
+
+## 2026-11-27: the menus' prompts in the controllers' names (built; not run: no install go-ahead)
+
+- User: no walking bob; the menus without the green A and red B icons, plain buttons, RT/A to confirm.
+- prompts.cpp: MenuPrompts hides each menu prompt's "Button" icon in the headset as on the keyboard (the text moved
+  into its place); Wording leads the prompts with the controls: FE_CONFIRM "(RT/A) CONFIRM" (the laser's right
+  trigger, or A), FE_BACK / backspace "(B) BACK", FE_SELECT as it was (its ▲▼ are its text, not an icon: seen on the title menu); the
+  font's coloured A (²) and B (¹) glyphs in other texts ("press ² to save") become the letters; the pickup glyphs
+  A and B the plain letters (X was RIGHT GRIP already). The pause menu's prompts (seen in a user's screenshot: ▲▼
+  SELECT, green A CONFIRM, red B BACK) are on the menu level (kMenuLevel), which Prompts walks.
+- Seen on the headset (title menu, theater screen): "▲▼ SELECT", "(RT/A) CONFIRM", no coloured icon. The pause menu
+  sits level ahead of the head, out of a desk shot: not seen.
+
+## 2026-11-27: the elbow's roll-over and the wrist's twist (built; not run: no install go-ahead)
+
+- **Elbow** (vr_gun.cpp VrPoseArms): the elbow's way was a fixed down-and-out (side 0.6, -1, 0.3 in C) less its part
+  along the shoulder-to-wrist line; with the hand at the chest that line runs nearly along it, the rest is small
+  and swings round: the elbow rolled over. Now the way is toward the elbow of a straight wrist (the drawn elbow
+  carried rigidly with the hand bone: the forearm line back from the wrist, L2 long), with 0.15 of the fixed way to
+  steady it (the fixed way alone if that's on the line). It follows the hand, so it turns smoothly with it.
+  dev_elbowlog logs the left elbow's way and the wrist from the shoulder 4 a second (dev_reload takes the hand to
+  the chest: watch it there).
+- **Twist**: the forearm bones took 0.3 and 0.8 of the hand's roll about the forearm (the right 0.5), so the skin
+  between them wrung like a towel (user). Every forearm bone takes all of it now (twist 1): the forearm turns as one
+  piece with the hand; the turn shows at the elbow, where the elbow's way (above) now follows the hand too.
+- Run (dev_reload, AK1, dev_elbowlog): ahead of the head the left elbow's way -0.18 -0.97 -0.14 (down, a little out);
+  the hand at the chest (wrist 0.17 -0.09 0.04 from the shoulder) -0.37 -0.35 0.86 (out, down and back, as an elbow
+  goes with the hand pulled in); racking the handle across the gun 0.09..0.46 -0.96..-0.87 (down, drifting a little
+  in as the hand goes right); no swing round between the steps.
+

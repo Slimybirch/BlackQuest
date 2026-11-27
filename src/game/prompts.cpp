@@ -128,6 +128,16 @@ std::string Wording(uint32_t id, const std::string& pad, bool keyboard, bool tou
             Replace(text, "start", "A");
         }
         if (std::string says = VrHintText(text); !says.empty()) text = says;
+        // the menus (user 2026-11-27): no coloured pad icons (MenuPrompts hides them), the prompt leads with the
+        // controller's own buttons, plain: the laser's right trigger or A confirms, B backs out (the select prompt's
+        // arrows are its text, kept)
+        if (id == kConfirm) text = "(RT/A) " + text;
+        else if (id == kBack || id == kBackspace) text = "(B) " + text;
+        else {
+            // the font's coloured A and B glyphs in a text ("press ² to save"): their letters
+            Replace(text, "²", "A");
+            Replace(text, "¹", "B");
+        }
         // "hold (X) to swap" too: the grip's press swaps (as the pickup's)
         if (text.find("TO SWAP") != std::string::npos || text.find("to swap") != std::string::npos) {
             Replace(text, "HOLD", "PRESS");
@@ -268,8 +278,9 @@ void MenuPrompts(X86Context& ctx, uint8_t*) {
         }
         was = device;
     }
-    // the pad's icons go on the touch screen too, its texts say the touch
-    Prompts(flash::Level(flash::kMenuLevel), keyboard || touch, 0);
+    // the pad's icons go on the touch screen too, its texts say the touch; and in the headset (its texts say the
+    // controller's buttons, plain: user 2026-11-27)
+    Prompts(flash::Level(flash::kMenuLevel), keyboard || touch || xr::Active(), 0);
     static uint32_t glyphs[4];
     static uint32_t keys;
     if (!keys && (keys = mem::AllocSystem(4 * kKeySize)))
@@ -278,6 +289,8 @@ void MenuPrompts(X86Context& ctx, uint8_t*) {
         std::string key = keyboard ? input::ButtonKey(kPickupButtons[i])
                           : touch  ? input::TouchName(kPickupButtons[i])
                           : xr::Active() && kPickupButtons[i] == 2 ? std::string("RIGHT GRIP")  // (X: the right grip)
+                          : xr::Active() && kPickupButtons[i] == 0 ? std::string("A")  // (plain, not the coloured glyph)
+                          : xr::Active() && kPickupButtons[i] == 1 ? std::string("B")
                                    : std::string();
         std::snprintf(static_cast<char*>(HostPtr(keys + i * kKeySize)), kKeySize, "%s", key.c_str());
         W32(kPickupGlyphs + i * 4, key.empty() ? glyphs[i] : keys + i * kKeySize);

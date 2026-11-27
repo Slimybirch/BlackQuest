@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -15,6 +16,7 @@
 #include "gpu/backend.h"
 #include "gpu/texture.h"
 #include "gpu/vertex.h"
+#include "kernel/kernel.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
@@ -329,8 +331,21 @@ void CreateBuffers(const PresentParams& p) {
 
 void EnsureBackend(uint32_t w, uint32_t h) {
     if (g_backend) return;
-    g_backend = gpu::CreateBackend();
-    if (!g_backend->Init(w, h)) LOGE("d3d: renderer init failed");
+    // a failed start (launched with the headset asleep: no surface yet) is tried again for a few seconds; still
+    // failing, the app quits with the reason logged instead of drawing on a dead backend (vkCreateImage's crash)
+    constexpr int kTries = 20;
+    constexpr auto kWait = std::chrono::milliseconds(500);
+    for (int i = 0;; i++) {
+        g_backend = gpu::CreateBackend();
+        if (g_backend->Init(w, h)) break;
+        if (i + 1 >= kTries) {
+            LOGE("d3d: renderer init failed %d times, quitting", kTries);
+            kernel::Shutdown(1);
+        }
+        LOGE("d3d: renderer init failed, trying again");
+        g_backend.reset();
+        std::this_thread::sleep_for(kWait);
+    }
     if (kRenderThread) g_backend = gpu::CreateThreadedBackend(std::move(g_backend));
 }
 

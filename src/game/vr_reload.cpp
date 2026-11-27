@@ -1253,8 +1253,9 @@ void VrReloadTick() {
     near_rack = near_rack && (state == 0 || state == 1) && !VrLeftOnGun() && !g_parts.shells;
     // at the magazine in the gun (its body, not the gun round it)
     bool near_mag = false;
-    // (not a shotgun's: there's nothing to pull; not within 5 cm of the fore-grip: that's the grip's, user)
-    if (state == 0 && g_bone >= 0 && !VrLeftOnGun() && !g_parts.shells && VrLeftFore() > 0.05f) {
+    // (not a shotgun's: there's nothing to pull; not within the fore-grip's reach, its stretch under the barrel:
+    // that's the grip's, user 2026-11-27: the AK's magazine came out at a reach for its fore-end)
+    if (state == 0 && g_bone >= 0 && !VrLeftOnGun() && !g_parts.shells && VrLeftFore() > 0.08f) {
         std::lock_guard lock(g_lock);
         if (g_well_ok) {
             float v[3] = {hc[0] - g_well[0], hc[1] - g_well[1], hc[2] - g_well[2]};

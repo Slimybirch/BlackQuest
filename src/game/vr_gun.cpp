@@ -463,11 +463,13 @@ struct ArmRig {
     int upper, fore[2], hand, finger_lo, finger_hi;
     float elbow[3], wrist[3], palm[3], side, twist[2];
 };
+// (user 2026-11-27: a share on each bone, 0.3 and 0.8, wrung the forearm's skin like a towel as the wrist turned:
+// the whole forearm turns with the hand now, as one piece)
 const ArmRig kRig[2] = {
     {9, {12, 15}, 18, 21, 63, {0.128f, -0.004f, -0.107f}, {0.116f, 0.005f, 0.137f}, {0.117f, -0.003f, 0.204f}, -1,
-     {0.3f, 0.8f}},
+     {1, 1}},
     {66, {69, -1}, 72, 75, 129, {-0.128f, -0.004f, -0.107f}, {-0.118f, -0.015f, 0.145f}, {-0.118f, -0.003f, 0.205f}, 1,
-     {0.5f, 0}},
+     {1, 0}},
 };
 // the arms' bone rows by gun (each gun's .db names its skeleton from World: row = 3 x its place). Most are the
 // table's; the uzi's lacks the left hand's last fingertip (its right arm is a row early), the m249's the left
@@ -481,7 +483,7 @@ ArmRig RigOf(const std::string& code, int h) {
         if (h == 0) a.finger_hi = 60;
         else set(63, 66, -1, 69, 72, 129);
     } else if (code == "HVY" || code == "HV5") {
-        if (h == 0) set(9, 12, -1, 15, 18, 60), a.twist[0] = 0.5f, a.twist[1] = 0;  // the forearm takes the twist
+        if (h == 0) set(9, 12, -1, 15, 18, 60), a.twist[0] = 1, a.twist[1] = 0;  // the forearm takes the twist
         else set(63, 66, -1, 69, 72, 123);
     } else if (code == "MGN" || code == "MG5") {
         if (h == 0) set(30, 33, 36, 39, 42, 84);
@@ -492,8 +494,11 @@ ArmRig RigOf(const std::string& code, int h) {
 // the free off hand's roll about its controller's pointing axis, clockwise as seen down the arm (user: 45°; then
 // 2026-11-26, the thumb down on an upright controller: dev_fakehands measured it 72° below the controller's right,
 // and the user's check, the controller turned 90° clockwise showing the thumb on top and the fingers out to the
-// right, puts it on the controller's left side: 108° more)
-constexpr float kFreeHandRoll = -153.0f * 3.14159265f / 180;
+// right, puts it on the controller's left side: 108° more). 2026-11-27, the user's controller held normally (their
+// screenshots): the thumb out to the left, flat, the fingers curled up like an open palm: the thumb belongs on the
+// controller's top (+90° about the axis, from -180° now: the roll moves the thumb one for one, -45 gave -72): 270°
+// round from here, -243 = +117
+constexpr float kFreeHandRoll = 117.0f * 3.14159265f / 180;
 constexpr int kBone0 = 96 - 36;     // the constant (hardware order) of bone offset 0
 constexpr float kUpperArm = 0.28f;  // shoulder to elbow (the mesh only has the lower half of the upper arm)
 constexpr float kShoulderOut = 0.17f, kShoulderDown = 0.24f, kShoulderBack = 0.06f;  // from the head's middle
@@ -1162,13 +1167,43 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
         dist = std::max(dist, std::fabs(L1 - L2) + 0.002f);
         float along = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
         float out = std::sqrt(std::max(L1 * L1 - along * along, 0.0f));
-        // elbows down and out, a little back (C is the head's view at simulation: x right, y up, z back)
-        float pole[3] = {a.side * 0.6f, -1, 0.3f};
+        // the elbow's way: toward where the forearm would come from with the wrist straight (the hand's own forearm
+        // line, back from the wrist), with a little of down and out, a little back (C: x right, y up, z back) to
+        // steady it. The fixed way alone (user 2026-11-27): with the hand at the chest the shoulder-to-wrist line
+        // ran nearly along it, what was left of it swung round and the elbow rolled over
+        Aff hand_now = Compose(hand_delta, hd);
+        float he[3], hw[3];
+        Apply(hand_now, a.elbow, he);  // the drawn elbow carried with the hand: the straight wrist's
+        Apply(hand_now, a.wrist, hw);
+        float fixed[3] = {a.side * 0.6f, -1, 0.3f}, hint[3];
+        Normalize(fixed);
+        {
+            float fl[3] = {he[0] - hw[0], he[1] - hw[1], he[2] - hw[2]};
+            Normalize(fl);
+            for (int i = 0; i < 3; i++) hint[i] = w1[i] + fl[i] * L2 - s1[i];  // the straight wrist's elbow, from s1
+        }
+        float pole[3];
+        for (int i = 0; i < 3; i++) pole[i] = hint[i] + fixed[i] * 0.15f;
         float pd = pole[0] * d[0] + pole[1] * d[1] + pole[2] * d[2];
         for (int i = 0; i < 3; i++) pole[i] -= d[i] * pd;
+        if (pole[0] * pole[0] + pole[1] * pole[1] + pole[2] * pole[2] < 1e-6f) {
+            float fd = fixed[0] * d[0] + fixed[1] * d[1] + fixed[2] * d[2];
+            for (int i = 0; i < 3; i++) pole[i] = fixed[i] - d[i] * fd;
+        }
         Normalize(pole);
         float e1[3];
         for (int i = 0; i < 3; i++) e1[i] = s1[i] + d[i] * along + pole[i] * out;
+        {
+            // dev_elbowlog: the left elbow's way from the shoulder-to-wrist line and the wrist from the shoulder
+            // (C: x right, y up, z back), 4 a second: a roll-over shows as the way swinging round
+            static const bool elog = std::filesystem::exists(app::ExeDir() / "dev_elbowlog");
+            static int64_t next = 0;
+            if (elog && h == 0 && SteadyMs() >= next) {
+                next = SteadyMs() + 250;
+                LOGR("dev_elbowlog: elbow way %.2f %.2f %.2f, wrist from the shoulder %.2f %.2f %.2f", pole[0], pole[1],
+                     pole[2], w1[0] - s1[0], w1[1] - s1[1], w1[2] - s1[2]);
+            }
+        }
         // upper arm: turned from its drawn line onto shoulder → elbow, moved to the shoulder
         float u0[3] = {e0[0] - s0[0], e0[1] - s0[1], e0[2] - s0[2]}, u1[3] = {e1[0] - s1[0], e1[1] - s1[1], e1[2] - s1[2]};
         Normalize(u0);
@@ -3019,10 +3054,18 @@ void LeftHold(const Frame& f) {
         VrGunPose(yaw, pitch, &f.grip[0], 1, rot, pos) && HandInCamera(yaw, pitch, 0, AC, hc, false)) {
         float fore[3], d2 = 0;
         Rest(f, 0, fore);
-        for (int i = 0; i < 3; i++) {
-            float at = rot[i * 3] * fore[0] + rot[i * 3 + 1] * fore[1] + rot[i * 3 + 2] * fore[2] + pos[i];
-            d2 += (at - hc[i]) * (at - hc[i]);
-            g_fore_at[i] = at;
+        for (int i = 0; i < 3; i++)
+            g_fore_at[i] = rot[i * 3] * fore[0] + rot[i * 3 + 1] * fore[1] + rot[i * 3 + 2] * fore[2] + pos[i];
+        // the fore-grip is a stretch along the gun under the barrel, not a point (user 2026-11-27: the AK's grip
+        // pulled its magazine instead, the hand 5-10 cm ahead of the charging handle; after a shotgun's reload no
+        // grip took): from kForeBack of the grip-to-fore-grip way back (short of the magazine well) to kForeAhead on
+        // along the barrel (the mesh's +z)
+        constexpr float kForeBack = 0.4f, kForeAhead = 0.12f;
+        {
+            float v[3], z[3];
+            for (int i = 0; i < 3; i++) v[i] = hc[i] - g_fore_at[i], z[i] = rot[i * 3 + 2];
+            float t = std::clamp(v[0] * z[0] + v[1] * z[1] + v[2] * z[2], -kForeBack * f.fore, kForeAhead);
+            for (int i = 0; i < 3; i++) d2 += (v[i] - z[i] * t) * (v[i] - z[i] * t);
         }
         g_fore_ok = true;
         near = d2 < kReach * kReach;
@@ -3030,6 +3073,10 @@ void LeftHold(const Frame& f) {
         float g = hand[0].grip;
         bool press = g > 0.6f && !was;
         was = g > 0.6f;
+        // every grip press near the gun, for the next miss: how far from the fore-grip's stretch
+        if (press && d2 < 0.3f * 0.3f)
+            LOGR("vr gun: off hand grip %.1f cm from the fore-grip (reach %.0f), on %d, mag %d, slide %d, racking %d",
+                 std::sqrt(d2) * 100, kReach * 100, int(on), int(VrMagInHand()), int(VrSlideHeld()), int(VrRacking()));
         // a grip still held from a magazine seated or a handle let go of takes the fore-grip as the hand gets there
         // (user 2026-11-26: after a load the off hand couldn't grip; it took a fresh press)
         static bool carry = false;

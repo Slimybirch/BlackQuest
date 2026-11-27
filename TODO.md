@@ -25,7 +25,7 @@
 - [x] touch overlay hidden under XR; the title says PRESS A (Phase 7)
 - [x] (2026-11-25) xbe check: normalise the dump tool's region/media cert patch before hashing (game_files.cpp, Builder)
 - [x] the fire ray (0x1DB7B0, Phase 4) and the grenade spawn (FUN_001DD000, Phase 6)
-- [ ] `EnsureBackend`: stop cleanly when the renderer can't start instead of crashing in vkCreateImage
+- [x] (2026-11-27, built, not run) `EnsureBackend`: tries the renderer's start again for 10 s, then quits with the reason logged
 
 ## Phase 2 (design in NOTES, "Phase 2 (true stereo): design"; double replay chosen by the user)
 - [x] projection layer + per-eye swapchains (1680x1760), views a frame ahead
@@ -50,7 +50,10 @@
 - [ ] locomotion relative to the off hand (option), real crouch done in Phase 2
 - [ ] sim step 1/72 or pose-only re-render when the sim drops a frame
 - [ ] comfort: vignette when moving, turn speed, seated mode
-- [ ] camera shake / head bob off (option to keep a little); cutscene cameras on the theater screen
+- [x] camera shake (2026-11-27, headset): firing and hits don't move the view (the game's own kick never did: a
+      fix of ours had put one in); no explosion shake in the view's build; the CAMERA SHAKE setting removed
+- [x] the walk's bob: none (user 2026-11-27)
+- [ ] cutscene cameras on the theater screen
 
 ## Phase 4 (motion-controller aiming, gun in the hand)
 - [x] gun list moved to the right controller (K in EyeMatrix), anchor from the muzzle (vr_gun.cpp)
@@ -148,7 +151,7 @@
 - [x] user: couldn't move through it (imgui's gamepad nav was never enabled); now also the right controller's
       pointer, trigger clicks
 - [ ] user: pointer, stick navigation, panel placement/readability, cheats from the title
-- [x] VR Settings window (Phase 7: the panel beside the menus; render scale, refresh rate, foveation and space warp still open): its own window on the virtual screen,
+- [x] VR Settings window (Phase 7: the panel beside the menus; render scale and space warp still open; foveation dropped, slower): its own window on the virtual screen,
       opened from the pause menu and from beside the main menu (the same window). Settings that only apply in
       play (cheats, for one) are shown greyed out outside a level. Laser pointer and stick navigation. Pages:
       - cheats: the android port's cheats panel (menu.cpp rows), same options and toml
@@ -242,7 +245,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] AkLd1 / PstLd0b / PstCockP1 if they fit a step (offsets unconfirmed: NOTES)
 - [ ] later: the rack sound synced to the hand (the pull's part as it goes back, the release's when let go; held
       back longer, the release waits); the AK's is already two sounds (AkCock0, AkCock1)
-- [ ] button prompts in the Quest's names (e.g. "RIGHT GRIP to pick up" for the game's "X"): find the prompt text
+- [x] (2026-11-27, built) button prompts in the Quest's names: hints (kVrButtons), pickups, the menus' plain labels
+      ("(RT/A) CONFIRM", "(B) BACK", no coloured icons). Was: find the prompt text
       and button glyph table, map the pad buttons to our VR controls
 - [x] the magazine and slide bones for the other guns: named in each gun's .db (2026-11-22)
 - [x] the magnum (MGN/MG5): its speed loader and six rounds by hand (built 2026-11-23: see below)
@@ -272,7 +276,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] a dropped magazine stays drawn only while the same gun is held (one drop at a time)
 - [ ] the thumb: rests too flat/broken-looking on the thumb rest, and its twist (curl, kThumbRest,
       kThumbTwist in vr_gun.cpp); every finger wrapping on whatever the hand grips
-- [ ] the elbow rolls over counter-clockwise when the hand reaches to the chest (the IK's pole)
+- [x] (2026-11-27, dev hands) the elbow rolls over counter-clockwise when the hand reaches to the chest (the IK's pole:
+      now from the hand's own forearm line); the wrist's twist wrung the forearm (now one piece, user)
 - [ ] the magazine in the hand held vertical (it sits sideways now): turn HandMag's pose so its up runs along the
       hand's fingers-to-wrist line, top toward the thumb
 - [x] (2026-11-27, headset runs) No blur when objectives or tips come up (user)
@@ -326,7 +331,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] the Walther's off hand's angle on the fore-end: the user's look (test hands cup it from under)
 - [x] the WA2000's right side the same way
 - [x] the Walther: its magazine's and the off hand's angle; the magazine hard to seat; the rock after a shot (fail)
-- [ ] the Uzi and Walther free off hand still turned, the Uzi's fore-grip not taken (fails)
+- [ ] the Uzi's and Walther's free off hand still turned (the Uzi is one-handed, no fore-grip: user 2026-11-27)
 - [ ] fails to look at: the SPAS's and Remington's shells in the hand; the RPG's rocket in the hand; grenades into the
       GRL's and M203's open tubes and shutting them; the magnum opening by angling down, its speed loader in the
       hand; the M16's magazine and rack; the M16 and M249 stocks' look; the aim at distance; the hand grenade
@@ -338,15 +343,15 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] (built) the VR settings panel beside the pause and main menus, no combo; gunstock support and its options
 - [x] (built) the VR page in sections: comfort (turn speed), hands, height (view height), gunstock, graphics
       (render resolution, draw distance, TEXTURES: original or the HD pack, for Phase 8), testing
-- [ ] Phase 8: load the HD pack only when TEXTURES is HD PACK (vr_hd_textures)
+- [x] Phase 8: load the HD pack only when TEXTURES is HD PACK (vr_hd_textures): checked 2026-11-27, hd::On() gates every lookup
 - [x] (built) the title says PRESS A; the Quest's dialogs (before VR: shown; the update notice: on the panel)
 - [ ] mission 1 headset-on (the user, 2026-11-24 evening);
       on the page now: vignette, seated mode, height calibration, refresh rate
 - [ ] left-handed play: the gun in the left hand, the arms and grips mirrored, the shoulder switch, sticks and melee
-- [ ] foveation (XR_FB_foveation: the eyes' render passes with a fragment density map)
+- [x] (dropped) foveation: tried (VK_EXT_fragment_density_map), 45 fps against 55-59 without, reverted (NOTES "foveated rendering tried")
 - [ ] co-op (user, 2026-11-24): the player gets a body, the same model as the AI on the player's side (the friendly
       soldiers); now only the first-person arms are drawn, no body (the game has none for the player in first person)
-- [ ] two-handed holds for the Uzi and the Mac-10 (user, 2026-11-24: if there's one already, it doesn't work)
+- [x] two-handed holds: the Uzi one-handed as the game's (no fore-grip, user), the Mac-10's spot in kGrips (vr_gun.cpp)
 
 ## Phase 8 (HD textures)
 - PAUSED HERE (user, 2026-11-24, for scopes): next is the pack converter, then the coverage report; the dump
@@ -445,3 +450,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] the reticle sat a few degrees left of the pistol's barrel line in a test-hands shot: check with real hands
 - [x] the reticle at what the barrel hits: the game's own line test (0x1DAFF0) down the barrel each tick (headset: 4.0 m on a wall, misses through the roof at 60 m)
 
+## Weapons by hand (user, 2026-11-27)
+- [ ] picking up weapons with the hands: reach to a weapon lying in the world and grip it to take it (instead of
+      standing on it and pressing the right grip); the pickups' positions, a grab radius round the hand, a highlight
+      in reach, the game's own pickup run for that item; the right grip kept as a fallback (Phase 4's "picking
+      weapons up by hand" item)
