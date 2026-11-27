@@ -155,7 +155,8 @@ constexpr int kTakeChest = 0, kTakeShoulder = 1, kTakeWaist = 2;
 // a rifle's handle: the zone 3 cm on from the knob's tip, 3.5 cm round it (user tests 6 and 7). Knobs from each
 // slide bone's outermost vertices; mesh +x is the player's side (the game's guns eject to the left). Travels are
 // guesses (the game's own reloads would show them); the pistols' frame parts move 3.7 cm against the slide
-constexpr float kKnobLen = 0.03f, kKnobReach = 0.035f;
+// (user 2026-11-26: wider and longer, every grab should find it: 6 cm on from the knob, 5 cm round it)
+constexpr float kKnobLen = 0.06f, kKnobReach = 0.05f;
 // AK-47: magazine 81 (measured on the headset: up 0.94 -0.33), its rounds 87, the bolt carrier 84 with the handle's
 // knob at its front on the port side (the vertex dumps that had it painted on held only part of the gun's draw)
 const GunParts kAk = {.mag = 81, .slide = 84, .travel = 0.07f, .mid = {0, -0.054f, 0.127f}, .up = {0, 0.94f, -0.33f},
@@ -164,7 +165,7 @@ const GunParts kAk = {.mag = 81, .slide = 84, .travel = 0.07f, .mid = {0, -0.054
                       .rack_len = kKnobLen, .rack_reach = kKnobReach};
 // the pistols' slides are taken anywhere over the top of their back half, or its sides (user): the zone a line 1.4 cm
 // over the slide's top from its rear end to its middle, 4 cm round it
-constexpr float kSlideReach = 0.04f;
+constexpr float kSlideReach = 0.05f;
 // pistol: magazine 114 in the grip, slide 117 (measured on the headset; z -0.094..0.129, its top y 0.066)
 const GunParts kPistol = {.mag = 114, .slide = 117, .travel = 0.037f, .mid = {0, -0.022f, -0.057f},
                           .up = {0, 0.98f, 0.19f}, .top = 0.044f, .bottom = -0.051f, .measured = true, .rack_bone = 117,
@@ -217,7 +218,7 @@ const GunParts kWa2000 = {.mag = 81, .slide = 84, .travel = 0.07f, .mid = {0, -0
                           // (user: it slides home once its top reaches the well's bottom: the mouth 2.6 cm under the
                           // seated top, the line on 2.4 cm past it, 3 cm round it)
                           .hold = 0.02f, .depth = 0.05f, .seat_reach = 0.03f, .rack_out = {1, 0, 0}, .rack_len = kKnobLen,
-                          .rack_reach = 0.06f, .bolt = true, .hold_open = true};  // the user's hand 5-6 cm off it (play log 2026-11-23)
+                          .rack_reach = 0.07f, .bolt = true, .hold_open = true};  // the user's hand 5-6 cm off it (play log 2026-11-23)
 // m249: the box 99 at the side under the feed (its belt, bones 102-111, stays in the gun), the handle 114
 const GunParts kM249 = {.mag = 99, .slide = 114, .travel = 0.07f, .mid = {0.025f, 0.035f, 0.128f}, .up = {0, 1, 0},
                         .top = 0.031f, .bottom = -0.045f, .rack_bone = 114, .rack = {0.035f, 0.077f, 0.082f},
@@ -236,16 +237,19 @@ constexpr float kPumpStroke = 0.07f, kPumpSpeed = 0.5f;
 // a shot's pump is needed if the game starts its own pump within this long after it (the SPAS's semi-auto mode
 // doesn't: user)
 constexpr int64_t kCycleWait = 700;
-const GunParts kSpas = {.mag = 114, .slide = 111, .travel = 0.08f, .mid = {0, -0.054f, 0.153f}, .up = {0, 0, 1},
+const GunParts kSpas = {.mag = 114, .slide = 111, .travel = 0.08f, .mid = {0, 0.046f, 0.153f}, .up = {0, 0, 1},
                         .top = 0.024f, .bottom = -0.024f, .rack_bone = 111, .rack = {0, 0.010f, 0.250f},
-                        .hold = 0.05f, .depth = 0.05f, .rack_out = {0, 0, 1}, .rack_len = 0.17f,
+                        .hold = 0.02f, .depth = 0.05f, .rack_out = {0, 0, 1}, .rack_len = 0.17f,
                         .rack_reach = kPumpReach, .bolt = true, .shells = true, .root = 108};
+// (user 2026-11-26: both shotguns' loading points raised 10 cm, they were still too far under the receiver)
+// (and the shell held 9 cm out along its axis, was 5: pinched at its brass, most of it past the fingers as in the
+// user's photo; it sat deep in the fist)
 // (its root: the game parks its shell bone outside its own reload, so the port's place is the root's: user, the
 // entrance was 10-13 cm under the receiver)
 // remington 870: shell 120, pump 117 (z 0.229..0.434); its loading gate (111) and ejection cover (114) stay put
-const GunParts kRemington = {.mag = 120, .slide = 117, .travel = 0.08f, .mid = {0.001f, -0.018f, 0.148f},
+const GunParts kRemington = {.mag = 120, .slide = 117, .travel = 0.08f, .mid = {0.001f, 0.082f, 0.148f},
                              .up = {0, 0, 1}, .top = 0.029f, .bottom = -0.029f, .rack_bone = 117,
-                             .rack = {0, 0.020f, 0.250f}, .hold = 0.05f, .depth = 0.05f, .rack_out = {0, 0, 1},
+                             .rack = {0, 0.020f, 0.250f}, .hold = 0.02f, .depth = 0.05f, .rack_out = {0, 0, 1},
                              .rack_len = 0.17f, .rack_reach = kPumpReach, .bolt = true, .shells = true};
 // the magnum: the speed loader 9 (behind the cylinder, z -0.019..-0.008 round the cylinder's axis x 0.001 y 0.045)
 // with its six rounds 12..27 (into the chambers to z 0.028), the cylinder 120, the crane arm 117 before it, the
@@ -519,6 +523,7 @@ constexpr float kMagBase = 0.015f;
 constexpr float kRodTilt = 55 * 3.14159265f / 180;
 // a shell goes in with its tip within this far of the loading port's line (the user's tight zones are for magazines)
 constexpr float kShellReach = 0.03f;
+constexpr float kShellBall = 0.08f, kShellAbove = 0.02f;  // the shotguns' loading ball (user: a few inches round)
 // knocking the old magazine out with the fresh one: within this far of its well, the hand this fast (m/s)
 constexpr float kKnockReach = 0.12f, kKnockSpeed = 0.6f;
 
@@ -1122,7 +1127,8 @@ void VrReloadTick() {
                                               : NearChest(hand[0], head);
     bool chest = (state == 0 || state == 1) && reserve > 0 && room && !VrLeftOnGun() && !g_racking && zone;
     // the launchers' hints over the off hand (user)
-    if (!g_parts.launcher || reserve == 0 || state == 2) SetTip("");
+    // (user: only until the first round ever goes into a launcher, then never again)
+    if (!g_parts.launcher || reserve == 0 || state == 2 || Opt().vr_launcher_tips_done) SetTip("");
     else if (tube && g_spent && !tube_open && !clip && !g_pending) SetTip("Push the tube forward to open it");
     else if (room) SetTip(g_parts.take == kTakeShoulder ? "Grip over your left shoulder for a rocket"
                                                         : "Grip low by your waist for a grenade");
@@ -1403,6 +1409,14 @@ void VrReloadTick() {
                 for (int i = 0; i < 3; i++) d2 += (v[i] - g_axis[i] * t) * (v[i] - g_axis[i] * t);
                 dist = std::sqrt(d2);
                 below = std::max(-s, 0.0f);
+                if (g_parts.shells && !g_parts.launcher) {
+                    // a shell (user 2026-11-26): anywhere in a ball round the loading port, kShellBall about it, down
+                    // and to the sides as well, but not over the gun's top (kShellAbove up the gun from the port)
+                    float e[3] = {pc[0] - g_well[0], pc[1] - g_well[1], pc[2] - g_well[2]};
+                    float r = std::sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+                    float up = e[0] * g_rack_up[0] + e[1] * g_rack_up[1] + e[2] * g_rack_up[2];
+                    dist = r < kShellBall && up < kShellAbove ? 0.0f : 1.0f;
+                }
             }
         }
         // diagnostic: the held top's distance from the well twice a second while it's within 15 cm
@@ -1460,6 +1474,11 @@ void VrReloadTick() {
             xr::Pulse(0, 0.6f, 0.04f);
             xr::Pulse(1, 0.4f, 0.03f);
             if (g_parts.launcher) TestEvent(g_parts.take == kTakeShoulder ? "rocket_in" : "grenade_in:" + code);
+            if (g_parts.launcher && !Opt().vr_launcher_tips_done) {
+                Opt().vr_launcher_tips_done = true;
+                app::Save();
+                SetTip("");
+            }
             else TestEvent("shell_in");
             if (pump_open && !g_parts.launcher) TestEvent("shell_in_open");
             LOGR("vr reload: %s shell in, clip %u, waiting %u, reserve %u", code.c_str(), clip, g_pending, reserve);

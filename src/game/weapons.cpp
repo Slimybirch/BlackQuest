@@ -29,6 +29,7 @@
 #include "kernel/disc.h"
 #include "kernel/memory.h"
 #include "xdk/hle.h"
+#include "xr.h"
 
 using namespace kernel;
 using namespace layout;
@@ -1196,6 +1197,27 @@ void WeaponsTick(X86Context& ctx) {
     }
     DevInvReq();
     game::VrSilencerTick();
+    {
+        // the held gun's animation requests as they change, with its code (finding the cocking a pickup plays)
+        static uint32_t last_anim = ~0u, last_w = 0;
+        static int logged = 0;
+        Level al;
+        uint32_t w = ReadLevel(al) ? R32(al.inventory + kInvHeld) : 0;
+        uint32_t anim = w ? R32(w + kWeaponAnim) : 0;
+        // a gun's draw (0x9, the gun cocked, 1.3-1.9 s), picked up or switched to, skipped to idle in vr (user
+        // 2026-11-26: no cocking on pickup, nor on a switch back)
+        if (w && anim == 0x9 && xr::Active()) {
+            W32(w + kWeaponAnim, 0);
+            static int skipped = 0;
+            if (skipped++ < 20) LOGR("weapons: %s's draw skipped (busy %X)", weapons::HeldCode().c_str(), R32(al.inventory + kInvBusy));
+            anim = 0;
+        }
+        if (w && (anim != last_anim || w != last_w) && logged < 200) {
+            logged++;
+            LOGR("weapons: held %08X (%s) anim 0x%X busy %X", w, weapons::HeldCode().c_str(), anim, R32(al.inventory + kInvBusy));
+        }
+        last_anim = anim, last_w = w;
+    }
     game::VrWallTick(ctx);
     game::VrReticleTick(ctx);
     DevGive(ctx);

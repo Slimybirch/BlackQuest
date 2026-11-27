@@ -3,6 +3,7 @@
 // throw asked for (the release) and taken by the weapon state machine's wrapper (hooks.cpp), which makes the
 // grenade itself through the game's own maker (FUN_001DD000) with the hand's place and speed in the world, the
 // count taken as the game's throw takes it. The game's throw animation never runs
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -33,11 +34,14 @@ namespace game {
 bool VrHandWorld(int hand, float* pos, float* vel);  // vr_gun.cpp: a hand's grip in the game's world, metres
 
 namespace {
-// the hand's speed as thrown (1: as it was; the game's own throws are a little faster than an arm's)
-constexpr float kThrowGain = 1.5f;
+// the hand's speed as thrown: 1.5 times up to 4 m/s (a toss), the gain growing 0.25 a m/s past it, at most 40 m/s
+// (user 2026-11-26: "I want to really lob grenades"; the game's gravity is about 20 m/s2, twice the earth's, so 1.5
+// times a hard 8 m/s throw carried 7 m at most. Now 8 m/s leaves at 20, about 20 m; 10 at 30). The game itself
+// keeps a grenade's speed (a 38 m/s test throw flew straight till it hit a wall: logged)
+constexpr float kThrowGain = 1.5f, kThrowFrom = 4.0f, kThrowGrow = 0.25f, kThrowMax = 40.0f;
 // the throw's speed: the fastest the hand went in this long before it let go (at the release the arm has already
 // slowed: user, the throws all went the same way short)
-constexpr int64_t kPeakMs = 100;
+constexpr int64_t kPeakMs = 150;
 struct Sample {
     int64_t ms;
     float vel[3];
@@ -106,10 +110,14 @@ bool VrTakeThrow(float* pos, float* vel) {
         }
         g_samples.clear();
     }
-    for (int i = 0; i < 3; i++) vel[i] *= kThrowGain;
+    float hand_speed = std::sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+    float gain = kThrowGain + kThrowGrow * std::max(0.0f, hand_speed - kThrowFrom);
+    gain = std::min(gain, hand_speed > 1e-3f ? kThrowMax / hand_speed : gain);
+    for (int i = 0; i < 3; i++) vel[i] *= gain;
     g_thrown_ms = NowMs();
     PlayThrowSound();
-    LOGR("vr grenade: thrown from %.2f %.2f %.2f at %.2f %.2f %.2f m/s", pos[0], pos[1], pos[2], vel[0], vel[1], vel[2]);
+    LOGR("vr grenade: thrown from %.2f %.2f %.2f at %.2f %.2f %.2f m/s (the hand %.1f m/s, x%.2f)", pos[0], pos[1], pos[2],
+         vel[0], vel[1], vel[2], hand_speed, gain);
     return true;
 }
 

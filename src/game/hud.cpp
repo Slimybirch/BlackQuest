@@ -45,6 +45,13 @@ constexpr float kCentre = 0.5f;
 
 float g_anchor = kOff;
 float g_width = 640;
+// vr (user 2026-11-26: the hud's edges were too far out to read): each of the player's hud items pulled toward the
+// middle by its anchor (the game's x, y share of the screen: its corner stays its corner, nearer) and made bigger
+// about it. -1: not a hud item now
+// (user: in 35-50% of the way; across, the top corners' items meet sooner: 0.72 had health and ammo touching)
+// (2026-11-26: 0.78, 0.55 too close in; out 25%)
+constexpr float kVrPullX = 0.975f, kVrPullY = 0.69f, kVrGrow = 1.25f;  // (x 0.7: health under ammo, shot)
+float g_vr_ax = -1, g_vr_ay = -1;
 uint32_t g_hud = 0;  // the player's HUD while its list draws
 bool g_overlay = false;  // a 2d layer over the whole screen is open: its draws go on the vr hud plane
 float g_inset = 0;   // 640x480 pixels a sprite's uv is pulled in by at each edge
@@ -67,6 +74,26 @@ void FollowOutput() {
 // in the vertex buffer: strips are joined there with copies of vertices. Centred, a point on a screen side stays
 template <typename F>
 void Emit(X86Context& ctx, uint8_t* base, uint32_t count, F emit) {
+    if (g_vr_ax >= 0 && xr::Active()) {
+        // the hud item's points about its anchor: the anchor pulled in, the item grown about it
+        static std::vector<float> vs;
+        uint32_t pts = ctx.eax;
+        float off = G<float>(R32(ctx.esp + 4));
+        float w = g_width, h = g_width * 0.75f;
+        float ax = g_vr_ax * w, ay = g_vr_ay * h;
+        float nx = w * 0.5f + (ax - w * 0.5f) * kVrPullX, ny = h * 0.5f + (ay - h * 0.5f) * kVrPullY;
+        vs.resize(count * 2);
+        for (uint32_t i = 0; i < count; i++) {
+            float& x = G<float>(pts + i * 8);
+            float& y = G<float>(pts + i * 8 + 4);
+            vs[i * 2] = x, vs[i * 2 + 1] = y;
+            x = nx + (x + off - ax) * kVrGrow - off;
+            y = ny + (y - ay) * kVrGrow;
+        }
+        emit(ctx, base);
+        for (uint32_t i = 0; i < count; i++) G<float>(pts + i * 8) = vs[i * 2], G<float>(pts + i * 8 + 4) = vs[i * 2 + 1];
+        return;
+    }
     if (g_anchor < 0) return emit(ctx, base);
     static std::vector<float> saved;
     uint32_t points = ctx.eax;
@@ -219,6 +246,7 @@ X86_FUNC(sub_000D99A0) {
 X86_EXTERN_FUNC(__imp__sub_000D3740);
 X86_FUNC(sub_000D3740) {
     g_anchor = kOff;
+    g_vr_ax = g_vr_ay = -1;
     g_inset = 0;
     __imp__sub_000D3740(ctx, base);
     // after: the layer's sprites may flush at its end
@@ -289,13 +317,18 @@ bool HudItem(X86Context& ctx, uint8_t*) {
         if (hide && cb == hide) return false;
     }
     uint32_t frame = R32(ctx.ebx + kItemFrame);
-    float anchor = kCentre;
+    float anchor = kCentre, anchor_y = kCentre;
     for (uint32_t c = g_hud ? R32(g_hud + kHudComponents) : 0; c; c = R32(c + kComponentNext)) {
         if (R32(c + kComponentFrame) != frame) continue;
         anchor = G<float>(kAnchors + R32(c + kComponentAnchor) * kAnchorSize);
+        anchor_y = G<float>(kAnchors + R32(c + kComponentAnchor) * kAnchorSize + 4);
         if (float& height = G<float>(frame + kFrameHeight); height == G<float>(kTaller)) height = 1;
     }
     if (g_anchor != kOff) g_anchor = anchor;
+    // (the player's hud only, drawn to the screen: menus and the title cards keep their places)
+    bool on_screen = R32(kDisplay) && g_width == float(R32(R32(kDisplay)));
+    if (g_hud && xr::Active() && on_screen) g_vr_ax = std::clamp(anchor, 0.0f, 1.0f), g_vr_ay = std::clamp(anchor_y, 0.0f, 1.0f);
+    else g_vr_ax = g_vr_ay = -1;
     return true;
 }
 

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace BlackQuestBuilder {
@@ -57,6 +58,37 @@ static class Program {
                 w.WriteLine(ok ? "== OK" : "== FAILED");
                 w.Close();
                 Environment.Exit(ok ? 0 : 1);
+            }
+        }
+        // --contact <dumps> <map> <prefix>: contact sheets of the textures the upscaler would take, numbered (sorting)
+        {
+            string[] a = Environment.GetCommandLineArgs();
+            int c = Array.IndexOf(a, "--contact");
+            if (c > 0 && c + 3 < a.Length) {
+                Upscaler.Contact(a[c + 1], a[c + 2], a[c + 3]);
+                Environment.Exit(0);
+            }
+        }
+        // --upscale <dumps> <map> <out> <sample> <sheet prefix> [model]: the dump's textures without an HD match upscaled
+        // (Real-ESRGAN in toolchain\realesrgan), a sample of them with review sheets (tests)
+        {
+            string[] a = Environment.GetCommandLineArgs();
+            int u = Array.IndexOf(a, "--upscale");
+            if (u > 0 && u + 5 < a.Length) {
+                var w = new StreamWriter(a[u + 3] + ".log", false) { AutoFlush = true };
+                string exe = Path.Combine(root, "toolchain", "realesrgan", "realesrgan-ncnn-vulkan.exe");
+                string model = u + 6 < a.Length ? a[u + 6] : "realesrgan-x4plus";
+                // [only] a file of candidate numbers ("-": all but alpha), [method] esrgan or bicubic
+                // ("!" before the file: the numbers left out of all but alpha ones instead)
+                HashSet<int> only = null, skip = null;
+                bool not = u + 7 < a.Length && a[u + 7].StartsWith("!");
+                if (u + 7 < a.Length && a[u + 7] != "-")
+                    (not ? ref skip : ref only) = new HashSet<int>(File.ReadAllText(a[u + 7].TrimStart('!')).Split(new[] { ' ', ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Select(int.Parse));
+                string method = u + 8 < a.Length ? a[u + 8] : "esrgan";
+                int n = Upscaler.Run(a[u + 1], a[u + 2], a[u + 3], exe, model, int.Parse(a[u + 4]), a[u + 5] == "-" ? null : a[u + 5],
+                                     line => w.WriteLine(line), only, method, skip);
+                w.Close();
+                Environment.Exit(n > 0 ? 0 : 1);
             }
         }
         // --apply <zip or url> <tag> --log <file>: an update's apply alone, no window (tests)

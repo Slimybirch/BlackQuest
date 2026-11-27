@@ -412,13 +412,34 @@ uint32_t VrHideReserve2(uint32_t ctrl);  // and the M203's
 bool VrTakeThrow(float* pos, float* vel);  // vr_grenade.cpp: a grenade thrown by hand, its place and velocity
 }
 X86_EXTERN_FUNC(__imp__sub_001DD000);
+static bool g_throw_watch = false;
 // phase 6: a grenade thrown by hand, made as the game's throw makes it (0x1E3464: FUN_001DD000(matrix*, velocity*,
 // 3, 0), edi the grenades' pool at [0x2D1998], it cleans its own 16 bytes) but with the hand's place and velocity,
 // the count (character +0x286) taken as the throw's event takes it (0x1E8925). Our own frame below the stack, the
 // registers as they were after
 static void ThrowGrenade(X86Context& ctx, uint8_t* base, uint32_t me) {
+    {
+        // the grenades in flight, each 250 ms for 3 s after a throw: velocity (+0xF0), its time in flight (+0x110), the
+        // flags +0x114/+0x115 (why a throw's speed doesn't carry: user, 2026-11-26)
+        static int64_t since = 0, last = 0;
+        int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        uint32_t pool = R32(0x2D1998);
+        if (since && pool && now - since < 3000 && now - last >= 250) {
+            last = now;
+            for (uint32_t i = 0; i < 0x20; i++) {
+                if (!G<uint8_t>(pool + 0x3700 + i)) continue;
+                uint32_t g = pool + i * 0x120;
+                LOGR("grenade %u +%lld ms: v %.2f %.2f %.2f |%.2f| in flight %.2f s, flags %u %u", i, (long long)(now - since),
+                     G<float>(g + 0xF0), G<float>(g + 0xF4), G<float>(g + 0xF8),
+                     std::sqrt(G<float>(g + 0xF0) * G<float>(g + 0xF0) + G<float>(g + 0xF4) * G<float>(g + 0xF4) + G<float>(g + 0xF8) * G<float>(g + 0xF8)),
+                     G<float>(g + 0x110), G<uint8_t>(g + 0x114), G<uint8_t>(g + 0x115));
+            }
+        }
+        if (g_throw_watch) since = now, last = 0, g_throw_watch = false;
+    }
     float pos[3], vel[3];
     if (!game::VrTakeThrow(pos, vel)) return;
+    g_throw_watch = true;
     uint16_t& count = G<uint16_t>(me + 0x286);
     if (!count || !R32(0x2D1998)) return;
     count--;

@@ -1648,6 +1648,7 @@ X86_FUNC(sub_001DDA70) {
 }
 
 namespace game { void VrLauncherKick(bool rocket); }  // vr_gun.cpp: the launcher's buzz
+namespace game { bool VrLauncherAim(uint32_t& matrix, uint32_t& vel); }  // vr_gun.cpp: the rocket out of the tube
 
 // A grenade made, edi the maker; &matrix, &velocity, side (ret 0xC): the player's (side 3) go to the partner
 X86_EXTERN_FUNC(__imp__sub_001DCE60);
@@ -1675,6 +1676,11 @@ X86_FUNC(sub_001DD000) {
 X86_EXTERN_FUNC(__imp__sub_001E35F0);
 X86_FUNC(sub_001E35F0) {
     PROBE("rocket made: side %u from %08X", ctx.edi, R32(ctx.esp));
+    if (ctx.edi == kPlayerSide && !g_rocket_replay && xr::Active()) {
+        // from the tube in the hand (sent to a co-op partner as fired)
+        uint32_t matrix = R32(ctx.esp + 4), vel = R32(ctx.esp + 8);
+        if (game::VrLauncherAim(matrix, vel)) W32(ctx.esp + 4, matrix), W32(ctx.esp + 8, vel);
+    }
     bool mine = ctx.edi == kPlayerSide && SendsProjectiles();
     if (mine) SendProjectile(1, kPlayerSide, R32(ctx.esp + 4), R32(ctx.esp + 8), R32(ctx.esp + 0xC), R32(ctx.esp + 0x10));
     if (ctx.edi == kPlayerSide && !g_rocket_replay && xr::Active()) game::VrLauncherKick(true);

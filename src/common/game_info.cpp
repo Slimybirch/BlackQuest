@@ -129,6 +129,7 @@ const app::GameInfo app::kGame = {
                 {"vr_reticle", &game::Opt().vr_reticle, nullptr},
                 {"vr_wall_pull", &game::Opt().vr_wall_pull, nullptr},
                 {"vr_setup_done", &game::Opt().vr_setup_done, nullptr},
+                {"vr_launcher_tips_done", &game::Opt().vr_launcher_tips_done, nullptr},
                 {"coop", nullptr, &game::Opt().coop},
                 {"coop_port", nullptr, &game::Opt().coop_port},
                 {"coop_max_players", nullptr, &game::Opt().coop_max_players},

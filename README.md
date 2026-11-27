@@ -26,7 +26,8 @@ or endorsed by them.
   from over the left shoulder, the M16's M203 opens and loads by hand.
 - **Throw grenades** with your arm, **melee** with a swing, switch weapons by reaching behind your right shoulder,
   crouch with the right stick.
-- **A silencer** you carry on your hip and twist onto the muzzle.
+- **The silencer** as the game does it: picked up, it's fitted with the game's own animation; grip it to take it off,
+  grip the end of the barrel to put it back on.
 - **Haptics** tuned per weapon (heavier guns kick harder), light touches as your hands find the magazine, the slide
   and pickups.
 - **The game's reticle dot** where the barrel points, in its usual colours (black for things that burn, red for
@@ -57,8 +58,8 @@ or endorsed by them.
 | Take a magazine, shell or round | Left grip at your chest (shells: left trigger; grenades at your waist, rockets over your left shoulder) |
 | Rack the slide or handle | Left grip on it, pull back, let go |
 | M16's M203 | Left trigger |
-| Silencer on | Left grip at your left hip takes it; bring it to the muzzle and twist it clockwise to lock it on |
-| Silencer off | Left grip on it at the muzzle, twist it back the other way; let go anywhere and it returns to your hip |
+| Silencer off | Reach to the silencer and grip it with your left hand |
+| Silencer on | Grip the end of the barrel with your left hand |
 | Pause / back | Menu button: tap to pause, hold for back |
 | Recentre | Hold the Meta button |
 

@@ -2221,3 +2221,97 @@ brighter and bigger)
   wasn't clicked (no release on GitHub yet to offer one).
 - xbe_recomp leaves unchanged generated files alone (their times kept), so the recompile step costs seconds and
   the native build only redoes partitions whose code changed.
+
+## 2026-11-25: v0.1.0 released (user go)
+- The repo made public (user: option 1; the anonymous update checks need it). Tag v0.1.0, release with
+  BlackQuest-0.1.0.zip (2.9 MB) and notes.md (Rebuild: full). Checked without signing in: the API answers v0.1.0
+  with the zip and the marker, the zip downloads (200, 2,928,558 bytes). gh 2.105.0 portable in toolchain/gh.
+
+## 2026-11-26: the user's test round (log 2026-11-25 22:18, build 5d29559) and its fixes
+- Checklist: the shotgun steps all pass; both shells "look right in the hand" fail; RPG hint, rocket taking and
+  loading pass. Log clean (the quit's FEAudio line only).
+- Silencer (vr_silencer.cpp rewritten, user): as the game does it. A level's pickup is fitted by the game with its
+  animation (no inventory, no icon, no hip). Off hand grip within 7 cm of our silencer's tube: the game's detach
+  (+0xD8 = 0x18); within 7 cm of the muzzle on a gun that has had one on: its attach (0x17). Our model still drawn on
+  the muzzle while the flag is on; SPAWN A SILENCER's walk-over now asks for the attach.
+- SPAS tipped 45 degrees up after AK -> SPAS: "SHG frame held at rest" was logged the moment it came back to hand
+  (401.169): g_root_rest from its first time out still matched, so the frame was held mid raise and kept. Now
+  held only 2 s or more after the gun came to hand.
+- Shotguns' loading points 10 cm higher (user: "at least 4 inches"): SPAS mid y -0.054 -> 0.046, Remington -0.018 ->
+  0.082. The shell's hold in the hand still to be described by the user.
+- Launcher hint: shown until the first round ever goes into a launcher (vr_launcher_tips_done, saved).
+- Handles: kKnobLen 3 -> 6 cm, kKnobReach 3.5 -> 5 cm, kSlideReach 4 -> 5 cm, the WA2000's 6 -> 7 cm.
+- AK rounds (bone 87, y 0.045..0.057) sit over its magazine's top (81: up to 0.031) in the mesh: sunk 2 cm down
+  the magazine's axis wherever we place the magazine (SetMag).
+- Rockets: 0x1E35F0's &matrix and &velocity (player's side, not a co-op replay) copied, moved with the gun to the
+  hand (VrGunMap axes) and turned onto the barrel (VrGunAim), speed kept (VrLauncherAim); the co-op partner gets
+  the moved one.
+- Free off hand on every gun: the pistol's left hand in the gun's axes (kPstInGun, as the Uzi's and Walther's
+  were), the game's own hold only while gripping the gun.
+- Paused menu head-locked again (the room fix off; dev_hudroom brings it back). Settings panel 3x: 3.0 m wide
+  beside the paused hud, 4.8 m beside the title's screen.
+- Hud (hud.cpp): each player-hud item's points about its anchor (the game's x, y share, 0x2AD968 + id*8): the
+  anchor pulled toward the middle (0.8) and the item grown 1.25 about it. Headset shot at 0.72: health and ammo
+  bigger, nearer, nearly touching; 0.8 kept.
+- Round 2 (user): hud in 35-50% of the way: kVrPullY 0.55, kVrPullX 0.78 (0.7 put health under the ammo box in a
+  headset shot; the top corners' items meet across first). Shotgun shells held 9 cm out along their axis (was 5:
+  "too deep in the hand", the user's photo: pinched at the brass, most of it out).
+- Pickup hint: in vr the X glyph (kPickupGlyphs, 0x2AB72C) says RIGHT GRIP and a pickup text's HOLD reads PRESS
+  (prompts.cpp; its string logged once as "prompts: the pickup hint").
+- The cocking on pickup: logged +0xD8 as guns were given: each new gun 0x9 for 1.3-1.9 s (busy 6), then 0; 0x9 is
+  set by the draw request 0x8 (0x1EF11A stores it). A gun's first time in hand, 0x9 is written back to 0 at once
+  (weapons.cpp WeaponsTick); later draws of the same gun are the game's. Headset: AK, M16, MP5 given, each idle at
+  once, all fired after (dev_firehold).
+- Draws: every 0x9 (user: a switch back cocks the gun too) written back to 0 in vr, not just a gun's first.
+- HD matching with the user's dump (2026-11-25, 338 textures): only 3 not already in texdump_all (the 8 missions'
+  1144); merged. --match: 175 of 898 (was 173). HdPack.Match now also writes <map>.near: the best pair left out,
+  with why (not-mutual 427, unclear 106, far 85). The unclear and far ones up to 0.85 (168) reviewed on three
+  --sheet sheets by eye: 116 the same picture (walls, signs, doors, machines, the arms' camo, a gun, the skyline,
+  the sanatorium sign), kept in tools/hd_map.txt (291 pairs). The not-mutual 427 (a pack image better matched to
+  another texture) not reviewed yet.
+- The 427 not-mutual near misses on 8 sheets by score: the first three reviewed (168 pairs, 0.36-0.73): 5 the same
+  picture (two soldier atlases, a car's, a brass part's, a machine's), the rest a few generic pack images (a grey
+  panel, a grey door, a fire sprite) each nearest to dozens of unrelated textures. The third sheet had none; the
+  five past it score worse and were left. tools/hd_map.txt: 296 pairs, on the headset.
+- The smarter matcher (user: 600 by hand is too many): the raw rule's false pairs were hubs (a plain grey panel, a
+  grey door, a fire sprite nearest to dozens). HdPack.Match now keeps every distance and scores pairs by CSLS
+  (cross-domain similarity local scaling: 2d - rx - rp, r each side's mean distance to its 10 nearest on the
+  other side), writing <map>.all (both rules' best per texture). Graded on the eye-checked set (296 right, 215
+  rejected): raw kept 196 right; CSLS (mutual, <= -0.25, runner-up 0.03 clear) 259 right, 15 wrong, 93 new.
+  Its new pairs from -0.88 to -0.06 on three sheets: 84%, 79%, 67% right by score; the 123 right ones kept (tools/
+  hd_map.txt 419, on the headset). --match's map is now CSLS's (367 kept on this dump; the raw rule's in .raw).
+  Still to try: effect sprites and blurred textures are most of its misses (skip strong-alpha sprites; weigh
+  detail).
+- Upscaling the unmatched (user, a sample first): Real-ESRGAN's Windows build (realesrgan-ncnn-vulkan 20220424,
+  v0.2.5.0, MIT, 45 MB) in toolchain/realesrgan. builder/Upscale.cs (--upscale <dumps> <map> <out> <n> <sheets>
+  [model]): the dump's textures without a pair, 32 px and up, not flat (464 of them), each padded by an eighth of
+  its own wrap (no seam where it tiles), 4x with realesrgan-x4plus, cropped, alpha upscaled apart as grey, capped
+  at 1024; review sheets with each whole and its middle quarter magnified. 48 sampled: 12 s on this PC (all 464
+  about 2 minutes). Seen: wood, concrete and its cracks, riveted panels, stone, diamond plate come out clean and
+  sharper; perforated metal and fine grilles turn into an invented bubbly mesh; smoke and dirt sprites go harsh;
+  text stays a blur turned crisp gibberish.
+- Upscaled set (user: all of them; skip fine grilles, smoke, dirt, sparks, unreadable text; a second pass of our own
+  on grilles and text): Upscale.cs --contact sheets of the 464 candidates sorted by eye: 131 with alpha (sprites,
+  decals, UI) and 18 effects left out; 247 plain through realesrgan-x4plus (38 s); 18 grilles/perforated and 21
+  text set apart. Second pass compared realesrgan-x4plus-anime against bicubic + unsharp (--upscale ... bicubic):
+  the anime model keeps grilles as clean straight lines and large lettering crisp and correct (border sign, "30",
+  "ДОК", "кред"); small print still turns to crisp gibberish, and hex perforation and a weave went to speckle and
+  waves: those 11 skipped, 28 kept. out/textures_upscaled (275 PNGs, gitignored) is converted after the pack's
+  pairs (HdPack.Convert: a pack image wins). Headset: 694 HD textures (419 pack + 275 upscaled), 623 MB.
+
+## 2026-11-26: grenades lobbed (user: the throw's speed didn't change how far they went)
+- Logged a thrown grenade every 100 ms (hooks.cpp ThrowGrenade, kept at 250 ms): its velocity at +0xF0 is kept as
+  given (a 38 m/s dev throw flew straight till a wall in the start room took it); +0x110 is its time in flight,
+  not a budget (0x1DE740 adds dt; 0x1DE630's check against it is the fuse's). The game's gravity is ~20 m/s2 (vy
+  falls 2.1 m/s a 0.1 s). The user's throws left at 10-13 m/s (hand 6-9 m/s x 1.5): ~7 m at most.
+- vr_grenade.cpp: gain 1.5 to 4 m/s, +0.25 a m/s past it, the throw at most 40 m/s; the peak taken over the last
+  150 ms (was 100). Headset: dev_throw 8 -> the hand 8.2 m/s x2.56, 20.8 m/s out. dev_throw's file can hold a
+  speed now (m/s, 8 when empty).
+- Shotguns (user): the shell held 2 cm out along its axis (9 was too far out of the hand). Loading: a shell goes in
+  anywhere its middle comes within 8 cm of the loading point, below and to the sides as well, but not more than
+  2 cm up the gun from it (g_rack_up, the pump's up: the gun's) (kShellBall, kShellAbove); was 3 cm from the
+  loading line. Built and installed, not run with the controllers.
+
+## 2026-11-26: hud out 25%
+
+src/game/hud.cpp kVrPullX 0.78 -> 0.975, kVrPullY 0.55 -> 0.69 (each corner's distance from the middle x1.25; user: too close in). Headset capture: health and ammo well apart, no overlap.

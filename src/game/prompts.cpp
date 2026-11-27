@@ -14,6 +14,7 @@
 
 #include "common/mouse_keyboard.h"
 #include "common/translations.h"
+#include "core/log.h"
 #include "game/flash.h"
 #include "xdk/hle.h"
 #include "xr.h"
@@ -83,6 +84,16 @@ std::string Wording(uint32_t id, const std::string& pad, bool keyboard, bool tou
             Replace(text, "START", "A");
             Replace(text, "Start", "A");
             Replace(text, "start", "A");
+        }
+        // the pickup's hint (user: "Press right grip to pick up <the weapon>"): its button glyph is the right grip
+        // (MenuPrompts), its "hold" a press (the grip held is the game's held X)
+        if (text.find("PICK UP") != std::string::npos || text.find("pick up") != std::string::npos ||
+            text.find("Pick up") != std::string::npos) {
+            Replace(text, "HOLD", "PRESS");
+            Replace(text, "Hold", "Press");
+            Replace(text, "hold", "press");
+            static int logged = 0;
+            if (logged++ < 4) LOGR("prompts: the pickup hint %08X \"%s\" -> \"%s\"", id, pad.c_str(), text.c_str());
         }
         return text == pad ? std::string() : text;
     }
@@ -208,6 +219,7 @@ void MenuPrompts(X86Context& ctx, uint8_t*) {
     for (uint32_t i = 0; keys && i < 4; i++) {
         std::string key = keyboard ? input::ButtonKey(kPickupButtons[i])
                           : touch  ? input::TouchName(kPickupButtons[i])
+                          : xr::Active() && kPickupButtons[i] == 2 ? std::string("RIGHT GRIP")  // (X: the right grip)
                                    : std::string();
         std::snprintf(static_cast<char*>(HostPtr(keys + i * kKeySize)), kKeySize, "%s", key.c_str());
         W32(kPickupGlyphs + i * 4, key.empty() ? glyphs[i] : keys + i * kKeySize);

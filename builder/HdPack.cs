@@ -226,8 +226,26 @@ public static class HdPack {
                 log("  " + pair.Value + ": " + e.Message);
             }
         }
-        log("HD textures: " + done + " converted" + (missing > 0 ? ", " + missing + " pack images missing" : ""));
-        return done;
+        // the upscaled ones beside it (out	extures_upscaled, <xbox hash>.png: Upscale.cs, the dump's textures the pack
+        // has no match for), after the pack's: a pack image wins
+        string up = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dest)), "textures_upscaled");
+        int ups = 0;
+        if (Directory.Exists(up)) {
+            var paired = new HashSet<string>(pairs.Select(p => p.Key));
+            foreach (string png in Directory.EnumerateFiles(up, "*.png")) {
+                if (cancel()) return -1;
+                string hash = Path.GetFileNameWithoutExtension(png);
+                if (paired.Contains(hash)) continue;
+                string outFile = Path.Combine(dest, hash + ".ktx2");
+                if (!File.Exists(outFile) || File.GetLastWriteTimeUtc(outFile) < File.GetLastWriteTimeUtc(png)) {
+                    try { ConvertOne(png, outFile, cap); } catch (Exception e) { log("  " + hash + ": " + e.Message); continue; }
+                }
+                ups++;
+            }
+        }
+        log("HD textures: " + done + " converted" + (missing > 0 ? ", " + missing + " pack images missing" : "") +
+            (ups > 0 ? ", and " + ups + " upscaled" : ""));
+        return done + ups;
     }
 
     static void ConvertOne(string src, string outFile, int cap) {
@@ -346,6 +364,75 @@ public static class HdPack {
         return shape / a.Luma.Length * 0.4f + edge / a.Grad.Length * 0.4f + colour / 768 * 2.0f + alpha / 256 * 1.0f;
     }
 
+    // every xbox texture's best pack image under the raw distance and under CSLS (cross-domain similarity local
+    // scaling: 2d - rx - rp, r each side's mean distance to its k nearest on the other side), which marks down the
+    // hubs: a plain grey panel near everything. Columns: xbox, raw best, raw d, csls best, csls, its runner-up,
+    // csls-mutual (the pack image's own csls best is this texture), d of the csls best
+    // a pair kept: mutual, CSLS this low or lower, the runner-up this much higher (on the eye-checked pairs: ~95% right;
+    // its new pairs past -0.25 ran 67-84% right by score, so they want an eye before going in)
+    const float kCsls = -0.25f, kCslsMargin = 0.03f;
+    static int WriteAll(string file, string map, List<Sig> xs, List<Sig> ps, float[,] D) {
+        const int K = 10;
+        int nx = xs.Count, np = ps.Count;
+        var rx = new float[nx];
+        var rp = new float[np];
+        var tmp = new List<float>();
+        for (int i = 0; i < nx; i++) {
+            tmp.Clear();
+            for (int j = 0; j < np; j++) if (!float.IsNaN(D[i, j])) tmp.Add(D[i, j]);
+            tmp.Sort();
+            rx[i] = tmp.Count == 0 ? 0 : tmp.Take(K).Average();
+        }
+        for (int j = 0; j < np; j++) {
+            tmp.Clear();
+            for (int i = 0; i < nx; i++) if (!float.IsNaN(D[i, j])) tmp.Add(D[i, j]);
+            tmp.Sort();
+            rp[j] = tmp.Count == 0 ? 0 : tmp.Take(K).Average();
+        }
+        var pBest = new int[np];
+        var pBestC = new float[np];
+        for (int j = 0; j < np; j++) { pBest[j] = -1; pBestC[j] = float.MaxValue; }
+        var lines = new List<string>();
+        var bestJ = new int[nx];
+        var bestC = new float[nx];
+        var secC = new float[nx];
+        var rawJ = new int[nx];
+        for (int i = 0; i < nx; i++) {
+            float bc = float.MaxValue, sc = float.MaxValue, bd = float.MaxValue;
+            int bj = -1, rj = -1;
+            for (int j = 0; j < np; j++) {
+                float d = D[i, j];
+                if (float.IsNaN(d)) continue;
+                if (d < bd) { bd = d; rj = j; }
+                float c = 2 * d - rx[i] - rp[j];
+                if (c < bc) { sc = bc; bc = c; bj = j; } else if (c < sc) sc = c;
+                if (c < pBestC[j]) { pBestC[j] = c; pBest[j] = i; }
+            }
+            bestJ[i] = bj; bestC[i] = bc; secC[i] = sc; rawJ[i] = rj;
+        }
+        var inv = CultureInfo.InvariantCulture;
+        for (int i = 0; i < nx; i++) {
+            if (bestJ[i] < 0) continue;
+            int j = bestJ[i];
+            bool mutual = pBest[j] == i || bestC[i] <= pBestC[j] + 0.02f;
+            lines.Add(xs[i].Name + " " + ps[rawJ[i]].Name + " " + D[i, rawJ[i]].ToString("0.000", inv) + " " + ps[j].Name + " " +
+                      bestC[i].ToString("0.000", inv) + " " + (secC[i] == float.MaxValue ? "9" : secC[i].ToString("0.000", inv)) + " " +
+                      (mutual ? 1 : 0) + " " + D[i, j].ToString("0.000", inv));
+        }
+        File.WriteAllLines(file, lines);
+        var kept = new List<string> { "# xbox_hash pack_file csls runner_up (BlackQuestBuilder --match: CSLS mutual best matches; lower is closer)" };
+        for (int i = 0; i < nx; i++) {
+            int j = bestJ[i];
+            if (j < 0) continue;
+            bool mutual = pBest[j] == i || bestC[i] <= pBestC[j] + 0.02f;
+            if (!mutual || bestC[i] > kCsls || secC[i] - bestC[i] < kCslsMargin) continue;
+            kept.Add(xs[i].Name + " " + ps[j].Name + " " + bestC[i].ToString("0.000", inv) + " " +
+                     (secC[i] == float.MaxValue ? "-" : secC[i].ToString("0.000", inv)));
+        }
+        File.WriteAllLines(map, kept);
+        return kept.Count - 1;
+    }
+
     // a review sheet: pairs (the Xbox texture, then its pack image), 96 px each, rows of 6 pairs, the score on each;
     // every step-th line of the map sorted by score (from 'from' on)
     public static void Sheet(string pack, string dumps, string map, string png, int from, int step, int count) {
@@ -431,12 +518,20 @@ public static class HdPack {
         var best = new Dictionary<Sig, KeyValuePair<Sig, float>>();      // xbox -> its best pack image
         var packBest = new Dictionary<Sig, float>();                       // pack image -> its best distance to any xbox
         var second = new Dictionary<Sig, float>();
+        // every distance kept (NaN: aspects disagree), for the hub-aware scoring below
+        var D = new float[xsigs.Count, packSigs.Count];
+        int xi = -1;
         foreach (var s in xsigs) {
+            xi++;
             float bd = float.MaxValue, sd = float.MaxValue;
             Sig bp = null;
+            int pi = -1;
             foreach (var p in packSigs) {
+                pi++;
+                D[xi, pi] = float.NaN;
                 if (Math.Abs(p.Aspect / s.Aspect - 1) > 0.03f) continue;
                 float d = Distance(s, p);
+                D[xi, pi] = d;
                 if (d < bd) { sd = bd; bd = d; bp = p; } else if (d < sd) sd = d;
                 if (!packBest.TryGetValue(p, out float pb) || d < pb) packBest[p] = d;
             }
@@ -445,6 +540,8 @@ public static class HdPack {
         // kept: mutual (the pack image's own best is this one, or within 10% of it: the same picture under another
         // hash), and clear of the runner-up
         var lines = new List<string> { "# xbox_hash pack_file score runner_up (BlackQuestBuilder --match: mutual best matches; lower is closer)" };
+        // the near misses beside it (map.near, the same columns and why each was left: for review sheets)
+        var near = new List<string> { "# xbox_hash pack_file score runner_up why (left out by --match: for review)" };
         int n = 0;
         foreach (var kv in best.OrderBy(k => k.Value.Value)) {
             var p = kv.Value.Key;
@@ -452,13 +549,24 @@ public static class HdPack {
             bool mutual = d <= packBest[p] * 1.10f + 0.01f;
             bool clear = second[kv.Key] > d * 1.08f;
             // (past 0.68 the review sheet showed wrong pairs: a phone for a curtain, a blue panel for a blueprint)
-            if (!mutual || !clear || d > 0.68f) continue;
+            if (!mutual || !clear || d > 0.68f) {
+                if (d <= 0.95f)
+                    near.Add(kv.Key.Name + " " + p.Name + " " + d.ToString("0.000", CultureInfo.InvariantCulture) + " " +
+                             (second[kv.Key] == float.MaxValue ? "-" : second[kv.Key].ToString("0.000", CultureInfo.InvariantCulture)) +
+                             " " + (!mutual ? "not-mutual" : !clear ? "unclear" : "far"));
+                continue;
+            }
             lines.Add(kv.Key.Name + " " + p.Name + " " + d.ToString("0.000", CultureInfo.InvariantCulture) + " " +
                       (second[kv.Key] == float.MaxValue ? "-" : second[kv.Key].ToString("0.000", CultureInfo.InvariantCulture)));
             n++;
         }
-        File.WriteAllLines(map, lines);
-        log("matched " + n + " of " + xsigs.Count + " xbox textures (mutual, clear of the runner-up)");
+        // (the raw rule's pairs beside it, to compare; the map is CSLS's: graded against 300 pairs checked by eye and
+        // 215 rejected, 2026-11-26, it kept 259 right for 15 wrong where the raw rule kept 196)
+        File.WriteAllLines(map + ".raw", lines);
+        File.WriteAllLines(map + ".near", near);
+        int kept = WriteAll(map + ".all", map, xsigs, packSigs, D);
+        log("matched " + kept + " of " + xsigs.Count + " xbox textures (CSLS: mutual, <= " + kCsls + ", clear by " + kCslsMargin +
+            "; the raw rule's " + n + " in " + Path.GetFileName(map) + ".raw)");
     }
 }
 

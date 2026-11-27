@@ -875,7 +875,10 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
     // turned at the stock's side: dev_lefthand, NOTES 2026-11-23), and the free off hand and the fore-grip take
     // theirs from it (user: turned, and neither could be held): the M16's left hand there instead, its angle to the
     // gun's root (measured, the AK's and SPAS's within a few degrees), its palm at the gun's fore-grip (kGrips)
-    if (code == "SMG" || code == "SM5" || code == "SNR" || code == "SN5") {
+    // every gun's free off hand (user 2026-11-26): the pistol's, level, thumb on top, at rest; the gun's own hold
+    // only while the hand grips the gun
+    const bool free_left = !g_left_on.load(std::memory_order_relaxed);
+    if (code == "SMG" || code == "SM5" || code == "SNR" || code == "SN5" || free_left) {
         static const float kM16Left[9] = {0.0351f, 0.5319f, -0.8461f, -0.9744f, 0.2062f, 0.0892f,
                                           0.2219f, 0.8213f, 0.5255f};
         // the uzi (one-handed, user 2026-11-25): its free off hand as the pistol's, the pistol's left hand in the gun's
@@ -889,7 +892,7 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
         static const float kAkInGun[9] = {0.0351f, -0.4000f, -0.9158f, 0.9743f, 0.2173f, -0.0576f,
                                           0.2220f, -0.8903f, 0.3974f};
         const bool uzi = code == "SMG" || code == "SM5";
-        const float* in_gun = uzi ? kPstInGun : g_left_on.load(std::memory_order_relaxed) ? kAkInGun : kPstInGun;
+        const float* in_gun = uzi || free_left ? kPstInGun : kAkInGun;
         const float* left = kM16Left;
         Frame fr;
         std::memcpy(&fr, frame, sizeof(fr));
@@ -1325,7 +1328,14 @@ bool VrHandWorld(int hand, float* pos, float* vel) {
         !HandInCamera(yaw, pitch, hand, AC, hc, false)) {
         // dev_throw with the controllers asleep on the desk: from half a metre ahead of the eyes, 8 m/s on and up
         if (!std::filesystem::exists(app::ExeDir() / "dev_throw")) return false;
-        const float at[3] = {0, 0, -0.5f}, v[3] = {0, 2, -8};
+        // (its content a speed, m/s, to try harder throws: 8 when empty)
+        static const float speed = [] {
+            std::ifstream f(app::ExeDir() / "dev_throw");
+            float s = 0;
+            f >> s;
+            return s > 0 ? s : 8.0f;
+        }();
+        const float at[3] = {0, 0, -0.5f}, v[3] = {0, speed * 0.25f, -speed};
         Aff c2w = CamToWorld(cam);
         Apply(c2w, at, pos);
         RotOf(c2w, v, vel);
@@ -1454,9 +1464,22 @@ bool DropNow(float t, Aff& out) {
 // thrown, then gone); the slide held back. The well and its axis go back to the reload. vb..base: the draw's
 // vertices and indices, to measure the magazine by
 // the magazine's bone set to b, and the rounds on its top (a bone of their own: -1 none) with it
+// (the AK's rounds sit 1.4-2.6 cm over its magazine's lips in the mesh, hidden by the receiver in the gun: out of
+// it they floated over the top, user 2026-11-26; sunk 2 cm down the magazine's axis there)
+float RoundsSink() { return HeldGunCode().rfind("AK", 0) == 0 ? 0.02f : 0.0f; }
 void SetMag(float (*c)[4], int bone, int bullets, const Aff& b) {
     SetBone(c, bone, b);
-    if (bullets >= 0) SetBone(c, bullets, b);
+    if (bullets < 0) return;
+    float sink = RoundsSink();
+    if (sink <= 0) {
+        SetBone(c, bullets, b);
+        return;
+    }
+    float up[3] = {g_mag_up_m[0], g_mag_up_m[1], g_mag_up_m[2]};
+    Normalize(up);
+    Aff down = kIdentityAff;
+    for (int i = 0; i < 3; i++) down.m[i * 4 + 3] = -up[i] * sink;
+    SetBone(c, bullets, Compose(b, down));
 }
 
 // the magazines' shapes measured in the held gun's draws, by bone (render thread)
@@ -2945,15 +2968,18 @@ void VrGunFrame(X86Context& ctx) {
         static std::string held_code;
         static Frame held{};
         static bool have = false;
+        static int64_t came_ms = 0;
         int wr, ws;
-        if (code != held_code) have = false, held_code = code;
+        if (code != held_code) have = false, held_code = code, came_ms = SteadyMs();
         if (WorkedGun(code, wr, ws)) {
             bool settled;
             {
                 std::lock_guard rl(g_root_lock);
                 settled = g_root_rest.ok && g_root_rest.code == code;
             }
-            if (!have && settled && SteadyMs() - g_shot_ms.load() > 1500) {
+            // (and not before the game's raise animation is done: a gun switched back to had its root's rest from
+            // before, so the frame was held mid-raise, 45 degrees up for good, user 2026-11-26)
+            if (!have && settled && SteadyMs() - g_shot_ms.load() > 1500 && SteadyMs() - came_ms > 2000) {
                 held = f, have = true;
                 LOGR("vr gun: %s frame held at rest", code.c_str());
             }
@@ -3077,6 +3103,29 @@ bool VrGunAim(float* dir) {
     ToCamera(dir, false, c);
     for (int i = 0; i < 3; i++) k[i] = AC[i * 3] * c[0] + AC[i * 3 + 1] * c[1] + AC[i * 3 + 2] * c[2];
     ToWorld(k, false, dir);
+    return true;
+}
+
+// game thread: the player's rocket (0x1E35F0's &matrix and &velocity, coop_world.cpp) out of the tube in the hand
+// along its barrel (user: rockets didn't leave the tube): the matrix moved with the gun to the hand, the velocity
+// turned onto the barrel, its speed kept. Copies in our own buffer (the game's may be its own live matrix), the
+// arguments pointed there; false leaves them
+bool VrLauncherAim(uint32_t& matrix, uint32_t& vel) {
+    if (!matrix || !vel) return false;
+    float m[16], v[3];
+    std::memcpy(m, HostPtr(matrix), sizeof(m));
+    std::memcpy(v, HostPtr(vel), sizeof(v));
+    float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (speed < 1e-3f || !VrGunMap(m, true)) return false;
+    float d[3] = {v[0] / speed, v[1] / speed, v[2] / speed};
+    if (!VrGunAim(d)) return false;
+    static const uint32_t buf = mem::AllocSystem(96, 16);
+    float* h = static_cast<float*>(HostPtr(buf));
+    std::memcpy(h, m, sizeof(m));
+    for (int i = 0; i < 3; i++) h[16 + i] = d[i] * speed;
+    matrix = buf, vel = buf + 64;
+    static int logged = 0;
+    if (logged++ < 4) LOGR("vr gun: rocket from the tube at %.2f %.2f %.2f, along %.2f %.2f %.2f", m[12], m[13], m[14], d[0], d[1], d[2]);
     return true;
 }
 

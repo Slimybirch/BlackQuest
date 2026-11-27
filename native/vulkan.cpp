@@ -1147,8 +1147,9 @@ bool HudMatrix(int eye, float aspect, float* out) {
     {
         static bool fixed = false;
         static float c[3], Rp[9];
-        // (dev_hudlocked: never fixed, to compare)
-        static const bool locked = std::filesystem::exists(app::ExeDir() / "dev_hudlocked");
+        // (user 2026-11-26: the paused menu static in front of the player again, head-locked as the hud: the room
+        // fix is off; dev_hudroom turns it back on to compare)
+        static const bool locked = !std::filesystem::exists(app::ExeDir() / "dev_hudroom");
         if (locked || !::game::VrMenuOverPlay()) {
             fixed = false;
         } else {

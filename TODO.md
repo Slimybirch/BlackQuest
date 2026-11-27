@@ -375,8 +375,12 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       from review sheets): tools/hd_map.txt, 173 of 895 dump textures. Conversion keeps the pack's DXT and mips
       under a 1024 cap (KTX2 BC1/BC3: the Quest 3 samples BC); mip-less ones and PNGs get a BC3 encode
 - [x] HD images always mip-filtered (stages.hd): a 1024 image on a texture the game drew without mips speckled
-- [ ] coverage: 173 of 895; better matching (the PS2's art often differs) or a hand-made list for the rest
+- [ ] coverage: 419 of 898 (2026-11-26: the CSLS matcher, its new pairs checked by eye); next: sprites and blurred textures out of its picks, then what's left
 - [ ] coverage report per level
+- [ ] (user 2026-11-26: later; HD isn't needed for co-op, each headset draws its own) automate HD for other players:
+      tools/upscale_list.txt (hash -> x4plus / anime / skip, from the user's sorted 464) so a player's Builder
+      upscales the same set from their own dump; better, the textures read from the disc image on the PC (how the
+      game stores them, and whether those bytes hash as in memory), so no dump or play-through is needed
 
 ## Phase 9 (co-op; user, 2026-11-24: moved up from 11)
 - [x] (built 2026-11-24, not run) black-seamless-coop (MIT) ported: src/game/coop*.cpp, BSD sockets (coop_net.cpp),
@@ -425,7 +429,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] normalise the xbe's cert patch before hashing (Phase 1 note)
 
 ## Phase 11 (release prep; was 10)
-- [ ] signed release build, README and credits (MIT notices kept), the version tag (only with the user's go-ahead)
+- [x] (2026-11-25) v0.1.0 released: README and credits (MIT notices kept), the tag, the zip (each player signs their own APK)
 
 ## Endless mode (user, 2026-11-24: replayability; after co-op, Phase 9)
 - [ ] mission 1's map, started by a hidden switch in the level (or a front-end entry); 3 lives a player, over when

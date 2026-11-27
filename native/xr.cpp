@@ -936,7 +936,8 @@ XrPosef PanelBeside(const XrPosef& at, float half, float panel_w) {
     p.orientation = {0, std::sin(yaw * 0.5f), 0, std::cos(yaw * 0.5f)};
     return p;
 }
-constexpr float kPanelBesideHud = 1.0f, kPanelBesideScreen = 1.6f;  // its width beside the paused hud, the theater
+// its width beside the paused hud, the theater (user 2026-11-26: 3 times bigger, it was too small to read everywhere)
+constexpr float kPanelBesideHud = 3.0f, kPanelBesideScreen = 4.8f;
 
 std::atomic<bool> g_last_theater{true};
 bool LastTheater() { return g_last_theater.load(std::memory_order_relaxed); }

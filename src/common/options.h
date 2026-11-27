@@ -39,6 +39,7 @@ struct Options {
     // phase 8: each texture the game uploads saved once, by its hash, as a PNG (textures_dump/ in the app's folder)
     bool vr_dump_textures = false;
     // co-op (black-seamless-coop, MIT; phase 9): 0 off, 1 host, 2 join the host at coop_host; the host's UDP port
+    bool vr_launcher_tips_done = false;  // vr: the launchers' hints shown till the first round went in (user)
     bool vr_setup_done = false;  // vr: the first launch's setup (stance, height, turning) done or skipped (user)
     bool vr_wall_pull = true;  // vr: the gun pulled back along its barrel where it would go into a wall (user)
     bool vr_reticle = true;  // vr: a reticle where the barrel points, the game's crosshair hidden (user)
