@@ -14,3 +14,6 @@
 - Fixed: a crash when the game was launched with the headset asleep (the renderer's start is tried again)
 - Menus name the Quest's buttons, plainly: (RT/A) confirm, (B) back
 - Fixed: the elbow rolling over as a hand reached to the chest; turning a wrist turns the forearm instead of wringing it
+- Rifle and sniper magazines held upright on the palm; the hand stays on a magazine as it seats
+- AK: the rounds on a loose magazine sit lower; rounds show in the open action only while there are any
+- Shotgun shells held between the thumb and index finger; the fingers now pose on the shotguns

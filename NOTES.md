@@ -2559,3 +2559,32 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
   goes with the hand pulled in); racking the handle across the gun 0.09..0.46 -0.96..-0.87 (down, drifting a little
   in as the hand goes right); no swing round between the steps.
 
+## 2026-11-27: magazines held as the user's photo, the hand stays on a seated one, the AK's rounds (installed)
+
+- The magazine in the off hand (vr_reload.cpp HeldMagOf, vr_gun.cpp VrHeldMag, both the same): a magazine gun's
+  (not shells, launcher rounds or the speed loader: UprightMag) is upright on the palm, its up the controller's top
+  (over the thumb), its front the controller's forward (its flat side against the palm, the fingers across it), as
+  the user's photo of an AR's magazine held; its middle `hold` up from the palm as before. Was the fist's axis (a
+  rod in the fist, along the controller).
+- Seated by hand: g_seat_pin; VrGunPose (the free off hand) keeps the hand where it was against the gun as the
+  magazine went in, till the left grip lets go (< 0.4) or the controller is 12 cm from there.
+- The AK's rounds out of the gun 2 inches lower (RoundsSink 0.02 -> 0.071 m down the magazine's axis); in the gun the
+  rounds' bone (seen in the open action) collapsed while the gun's empty (clip and chamber: g_empty), shown while
+  there are rounds.
+- dev_reload AK1 ran (seated, racked); desk shots can't show the held magazine (the hand at the chest out of view):
+  the look is the user's.
+
+## 2026-11-27: shotgun shells pinched in the fingers (installed, dev hands)
+
+- The shotguns never had finger poses: VrPoseArms' finger search (FindFingers) only ever saw the shotgun's own mesh
+  (one bone, Shotgun_Root 108: logged), cached it as the arms' with no hands, so no pinch and no curl. Now a draw
+  with no hands isn't cached as the arms' (no_hands), and a gun whose arms draw isn't seen borrows the fingers of a
+  gun with the table's arm rows (not the Uzi, M249, magnum: RigOf). (The search also looks past the table's rows when
+  none share skin with the hand.)
+- A shell in the off hand (user's gif: pinched between the thumb and index finger, brass in the fingertips, pointing
+  forward): VrPoseArms measures the thumb's and index finger's last joints' middle each frame in the left controller's
+  axes from its grip (g_pinch; VrPinchAt); the drawn shell (VrHeldMag) and the reload's (HeldMagOf) put the shell
+  along the controller's forward, its middle kPinchIn (1.7 cm) past that point. Measured: the pinch 0.007 0.063 -0.020
+  (6.3 cm over the grip, 2 cm ahead); the shell's middle 7.3 cm from the grip (was 2.0: in the fist). dev_reload SHG:
+  the shell in at the port, the fore-grip TOOK after.
+- Not done: parts of the game's own reload animation at the take and the push in (the user's "if they could").

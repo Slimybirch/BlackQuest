@@ -82,6 +82,10 @@ void VrReloadTick();
 bool VrMagFromHand();
 float VrMagHold();
 float VrRodTilt();
+constexpr float kPinchIn = 0.017f;  // a pinched shell's middle past the pinch along it: its brass in the fingers
+bool VrMagUpright();   // vr_reload.cpp: the held gun's magazine is held upright on the palm (not a shell or round)
+bool VrGunEmpty();     // vr_reload.cpp: no round in the held gun's magazine or chamber
+bool VrTakeSeatPin();  // vr_reload.cpp: a magazine was just seated by hand (once)
 void TestEvent(const std::string& name);  // vr_totest.cpp: the test checklist
 
 namespace {
@@ -141,6 +145,10 @@ std::atomic<int64_t> g_shot_ms{0};  // steady ms of the player's last shot (the 
 // the left hand on the gun: gripped at the fore-grip (or the gun hand, on a pistol), the left arm drawn where the
 // game holds it; off it, the left arm follows the left controller
 std::atomic<bool> g_left_on{false};
+// a pinched shell's place: the thumb and index finger's middle in the left controller's axes from its grip (render
+// thread writes)
+std::atomic<float> g_pinch[3] = {0, 0, 0};
+std::atomic<bool> g_pinch_ok{false};
 std::atomic<float> g_left_fore{1e9f};  // the off hand's distance from the fore-grip (m), for the reload's zones
 constexpr float kReach = 0.08f;  // metres from the fore-grip a grip press takes hold (tight: the user's ask)
 std::string g_code = "?";  // the weapon it was made for
@@ -693,7 +701,8 @@ void FindFingers(const std::string& code, const uint8_t* vb, uint32_t stride, co
     auto pivot = [&](int x, int y, float* o) {
         auto it = pair.find({std::min(x, y), std::max(x, y)});
         if (it == pair.end() || it->second[3] < 2) return false;
-        for (int j = 0; j < 3; j++) o[j] = float(it->second[j] / it->second[3]);
+        if (o)
+            for (int j = 0; j < 3; j++) o[j] = float(it->second[j] / it->second[3]);
         return true;
     };
     for (int h = 0; h < 2; h++) {
@@ -701,15 +710,22 @@ void FindFingers(const std::string& code, const uint8_t* vb, uint32_t stride, co
         HandFingers hf;
         std::vector<Finger> chains;
         std::set<int> used;
-        for (int root = a.finger_lo; root <= a.finger_hi; root += 3) {
+        // (the table's finger rows first; none found there (the shotguns' arms, 2026-11-27: 0 chains), any bone sharing
+        // skin with the hand)
+        int lo = a.finger_lo, hi = a.finger_hi;
+        bool any = false;
+        for (int root = lo; root <= hi && !any; root += 3) any = pivot(a.hand, root, nullptr);
+        if (!any) lo = 0, hi = 129;
+        for (int root = lo; root <= hi; root += 3) {
             Finger f;
+            if (root == a.hand || root == a.upper || root == a.fore[0] || root == a.fore[1]) continue;
             if (used.count(root) || !pivot(a.hand, root, f.pivot[0])) continue;
             f.bone[0] = root, f.n = 1;
             used.insert(root);
             // down the finger: the next bone sharing vertices with this one, higher in the list
             while (f.n < 3) {
                 int next = -1;
-                for (int b = f.bone[f.n - 1] + 3; b <= a.finger_hi && next < 0; b += 3)
+                for (int b = f.bone[f.n - 1] + 3; b <= hi && next < 0; b += 3)
                     if (!used.count(b) && pivot(f.bone[f.n - 1], b, f.pivot[f.n])) next = b;
                 if (next < 0) break;
                 f.bone[f.n++] = next;
@@ -729,6 +745,9 @@ void FindFingers(const std::string& code, const uint8_t* vb, uint32_t stride, co
             chains.push_back(f);
         }
         if (chains.size() < 5) {
+            LOGR("vr arms: %s %s hand: %zu finger chains (5 wanted), bones %d..%d, hand %d", code.c_str(),
+                 h ? "right" : "left", chains.size(), lo, hi, a.hand);
+
             out[h] = hf;
             continue;
         }
@@ -871,6 +890,42 @@ bool VrGunPose(float yaw, float pitch, const float* frame, int hand, float* rot,
     float rest[3];
     Rest(f, on ? 1 : hand, rest);
     for (int i = 0; i < 3; i++) pos[i] = hc[i] - (rot[i * 3] * rest[0] + rot[i * 3 + 1] * rest[1] + rot[i * 3 + 2] * rest[2]);
+    if (hand == 0 && !on) {
+        // a magazine seated by hand: the hand stays on it, held to the gun where it was as it went in (user
+        // 2026-11-27), till the grip lets go or the controller goes 12 cm from there
+        static std::mutex pin_lock;
+        static bool pinned = false;
+        static float rel_r[9], rel_p[3];
+        float gr[9], gp[3];
+        xr::Hand l, rh;
+        float head[3];
+        if (VrGunPose(yaw, pitch, frame, 1, gr, gp) && xr::Hands(l, rh, head)) {
+            std::lock_guard lock(pin_lock);
+            if (VrTakeSeatPin()) {
+                pinned = true;
+                for (int i = 0; i < 3; i++) {
+                    rel_p[i] = 0;
+                    for (int k = 0; k < 3; k++) {
+                        rel_p[i] += gr[k * 3 + i] * (pos[k] - gp[k]);
+                        rel_r[i * 3 + k] = gr[i] * rot[k] + gr[3 + i] * rot[3 + k] + gr[6 + i] * rot[6 + k];
+                    }
+                }
+            }
+            if (pinned) {
+                float pr[9], pp[3], d2 = 0;
+                for (int i = 0; i < 3; i++) {
+                    pp[i] = gp[i];
+                    for (int k = 0; k < 3; k++) {
+                        pp[i] += gr[i * 3 + k] * rel_p[k];
+                        pr[i * 3 + k] = gr[i * 3] * rel_r[k] + gr[i * 3 + 1] * rel_r[3 + k] + gr[i * 3 + 2] * rel_r[6 + k];
+                    }
+                    d2 += (pp[i] - pos[i]) * (pp[i] - pos[i]);
+                }
+                if (l.grip < 0.4f || d2 > 0.12f * 0.12f) pinned = false;
+                else std::memcpy(rot, pr, sizeof pr), std::memcpy(pos, pp, sizeof pp);
+            }
+        }
+    }
     return true;
 }
 
@@ -1026,12 +1081,27 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
         }
     }
     // the fingers, from the controllers, before anything moves the hands
+    // (a draw without the arms' hands, the shotguns' own mesh, 2026-11-27: kept apart, not cached as the arms':
+    // their fingers came from the arms' draw never)
     auto found = g_fingers.find({code, index_count});
-    if (found == g_fingers.end() && vb && indices) {
+    static std::set<std::pair<std::string, uint32_t>> no_hands;
+    if (found == g_fingers.end() && vb && indices && !no_hands.count({code, index_count})) {
         std::array<HandFingers, 2> hf;
         FindFingers(code, vb, stride, indices, index16, index_count, base_vertex, hf);
-        found = g_fingers.emplace(std::make_pair(code, index_count), hf).first;
+        if (hf[0].ok || hf[1].ok) found = g_fingers.emplace(std::make_pair(code, index_count), hf).first;
+        else no_hands.insert({code, index_count});
     }
+    // its arms' draw not seen by us (the shotguns'): another gun's with the same arm rows (the table's: not the uzi,
+    // m249 or magnum, RigOf), the same arms mesh
+    auto standard = [](const std::string& g) {
+        return g != "SMG" && g != "HVY" && g != "HV5" && g != "MGN" && g != "MG5";
+    };
+    if (found == g_fingers.end() && standard(code))
+        for (auto it = g_fingers.begin(); it != g_fingers.end(); ++it)
+            if (standard(it->first.first) && it->second[0].ok && it->second[1].ok) {
+                found = it;
+                break;
+            }
     {
         xr::Hand in[2];
         float head_unused[3];
@@ -1238,6 +1308,23 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
         SetBone(c, a.hand, Compose(hand_b, hd));
         for (int fb = a.finger_lo; fb <= a.finger_hi; fb += 3) SetBone(c, fb, Compose(hand_b, Compose(D, Bone(c, fb))));
     }
+    // a shell pinched (user 2026-11-27: it sat too far out): the thumb's and index finger's last joints' middle, in
+    // the left controller's axes from its grip, for both the drawn shell and the reload's (VrPinchAt)
+    if (VrMagInHand() && VrShellGun() && VrLauncherRoot() < 0 && found != g_fingers.end() && found->second[0].ok) {
+        float AC[9], hc[3];
+        if (HandInCamera(yaw, pitch, 0, AC, hc, false)) {
+            const Finger &th = found->second[0].f[0], &ix = found->second[0].f[1];
+            float t[3], x[3];
+            Apply(Compose(D, Bone(c, th.bone[th.n - 1])), th.pivot[th.n - 1], t);
+            Apply(Compose(D, Bone(c, ix.bone[ix.n - 1])), ix.pivot[ix.n - 1], x);
+            for (int k = 0; k < 3; k++) {
+                float v = 0;
+                for (int i = 0; i < 3; i++) v += AC[i * 3 + k] * ((t[i] + x[i]) / 2 - hc[i]);
+                g_pinch[k].store(v, std::memory_order_relaxed);
+            }
+            g_pinch_ok.store(true, std::memory_order_relaxed);
+        }
+    }
     // dev_fakehands: the free off hand's thumb and fingers in its controller's axes (x right, y its top, z back),
     // the wrist to the thumb's last joint and to the middle finger's knuckle: to set its roll by
     static const bool dev_hands = std::filesystem::exists(app::ExeDir() / "dev_fakehands");
@@ -1382,16 +1469,30 @@ constexpr float kRockIn = 15 * 3.14159265f / 180;  // a magazine going in, at it
 
 // the off hand's magazine in C: its middle, up (the fist's axis, out past the thumb) and front (forward, square to
 // it). The same as vr_reload.cpp's HeldMagOf, from HandPose (so dev_fakehands holds one too)
+float VrPinchIn() { return kPinchIn; }
+// any thread: a pinched shell's place (the left controller's axes from its grip), while one's pinched
+bool VrPinchAt(float* p) {
+    if (!(VrMagInHand() && VrShellGun() && VrLauncherRoot() < 0) || !g_pinch_ok.load(std::memory_order_relaxed))
+        return false;
+    for (int k = 0; k < 3; k++) p[k] = g_pinch[k].load(std::memory_order_relaxed);
+    return true;
+}
 bool VrHeldMag(float yaw, float pitch, float* mid, float* up, float* front) {
     float A[9], hp[3];
     if (!HandPose(0, A, hp)) return false;
     float fl[3] = {-A[2], -A[5], -A[8]}, ul[3] = {A[1], A[4], A[7]};
     float c = std::cos(VrRodTilt()), s = std::sin(VrRodTilt()), rl[3], frl[3];
     for (int i = 0; i < 3; i++) rl[i] = c * fl[i] + s * ul[i], frl[i] = s * fl[i] - c * ul[i];
+    if (VrMagUpright())  // a rifle's magazine on the palm, upright, its front forward (vr_reload.cpp HeldMagOf)
+        for (int i = 0; i < 3; i++) rl[i] = ul[i], frl[i] = fl[i];
+    float pinch[3];
+    const bool pinched = VrPinchAt(pinch);
+    if (pinched)  // a shell: along the fingers, its brass in the pinch (vr_reload.cpp HeldMagOf)
+        for (int i = 0; i < 3; i++) rl[i] = fl[i], frl[i] = ul[i], hp[i] += A[i * 3] * pinch[0] + A[i * 3 + 1] * pinch[1] + A[i * 3 + 2] * pinch[2];
     float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
     float U[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
     hp[1] += xr::kEyeRaise + VrViewLift();
-    float hold = VrMagHold();
+    float hold = pinched ? kPinchIn : VrMagHold();
     for (int i = 0; i < 3; i++) {
         up[i] = U[i] * rl[0] + U[3 + i] * rl[1] + U[6 + i] * rl[2];
         front[i] = U[i] * frl[0] + U[3 + i] * frl[1] + U[6 + i] * frl[2];
@@ -1575,8 +1676,9 @@ bool DropNow(float t, Aff& out) {
 // vertices and indices, to measure the magazine by
 // the magazine's bone set to b, and the rounds on its top (a bone of their own: -1 none) with it
 // (the AK's rounds sit 1.4-2.6 cm over its magazine's lips in the mesh, hidden by the receiver in the gun: out of
-// it they floated over the top, user 2026-11-26; sunk 2 cm down the magazine's axis there)
-float RoundsSink() { return HeldGunCode().rfind("AK", 0) == 0 ? 0.02f : 0.0f; }
+// it they floated over the top, user 2026-11-26; sunk 2 cm down the magazine's axis there; 2 inches more, user
+// 2026-11-27)
+float RoundsSink() { return HeldGunCode().rfind("AK", 0) == 0 ? 0.071f : 0.0f; }
 void SetMag(float (*c)[4], int bone, int bullets, const Aff& b) {
     SetBone(c, bone, b);
     if (bullets < 0) return;
@@ -2340,6 +2442,13 @@ bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const 
     }
     if ((state == 0 || state == 3) && !shells) {
         last_gun = rest;
+        // the rounds on its top show in the open action while there are any (in it or the chamber), not once the
+        // gun's empty (user 2026-11-27)
+        if (bullets >= 0 && VrGunEmpty()) {
+            Aff none{};
+            for (int i = 0; i < 3; i++) none.m[i * 4 + 3] = Bone(c, bullets).m[i * 4 + 3];
+            SetBone(c, bullets, none);
+        }
         return true;  // the game's own
     }
     float along = VrMagInsert();
@@ -3030,8 +3139,10 @@ bool VrHandMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
             Apply(D, mid, mc);  // (G to C)
             if (HandInCamera(yaw, pitch, 0, AC, hc, false))
                 for (int i = 0; i < 3; i++) e += (mc[i] - hc[i]) * (mc[i] - hc[i]);
-            LOGR("vr gun: the held part's middle %.3f m from its bone's place, %.3f m from the palm", std::sqrt(d),
-                 std::sqrt(e));
+            float pp[3] = {};
+            bool pin = VrPinchAt(pp);
+            LOGR("vr gun: the held part's middle %.3f m from its bone's place, %.3f m from the palm; pinch %d %.3f %.3f "
+                 "%.3f (ok %d)", std::sqrt(d), std::sqrt(e), int(pin), pp[0], pp[1], pp[2], int(g_pinch_ok.load()));
         }
     }
     for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone || k == bullets ? b : point);

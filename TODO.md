@@ -278,7 +278,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       kThumbTwist in vr_gun.cpp); every finger wrapping on whatever the hand grips
 - [x] (2026-11-27, dev hands) the elbow rolls over counter-clockwise when the hand reaches to the chest (the IK's pole:
       now from the hand's own forearm line); the wrist's twist wrung the forearm (now one piece, user)
-- [ ] the magazine in the hand held vertical (it sits sideways now): turn HandMag's pose so its up runs along the
+- [x] (2026-11-27, the user's photo) the magazine in the hand held vertical (it sat sideways): turn HandMag's pose so its up runs along the
       hand's fingers-to-wrist line, top toward the thumb
 - [x] (2026-11-27, headset runs) No blur when objectives or tips come up (user)
 - [x] (2026-11-27) Title cards: the text only; the start's pitch sign and the card's look reset fixed (user)
@@ -332,7 +332,7 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [x] the WA2000's right side the same way
 - [x] the Walther: its magazine's and the off hand's angle; the magazine hard to seat; the rock after a shot (fail)
 - [ ] the Uzi's and Walther's free off hand still turned (the Uzi is one-handed, no fore-grip: user 2026-11-27)
-- [ ] fails to look at: the SPAS's and Remington's shells in the hand; the RPG's rocket in the hand; grenades into the
+- [ ] fails to look at: (shells: pinched, 2026-11-27, to confirm); the RPG's rocket in the hand; grenades into the
       GRL's and M203's open tubes and shutting them; the magnum opening by angling down, its speed loader in the
       hand; the M16's magazine and rack; the M16 and M249 stocks' look; the aim at distance; the hand grenade
       pieces (taken, thrown, the M67 in the hand: marked before there were grenades, user)

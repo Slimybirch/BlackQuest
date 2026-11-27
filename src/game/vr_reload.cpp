@@ -74,6 +74,8 @@ int VrModePresses();                          // vr_body.cpp: the fire-mode butt
 bool VrFireHeld();                            // vr_body.cpp: the fire trigger is held
 bool VrLeftOnGun();                           // vr_gun.cpp
 float VrLeftFore();                           // vr_gun.cpp: the off hand from the fore-grip (m)
+bool VrPinchAt(float* p);  // vr_gun.cpp: a pinched shell's place in the left controller's axes
+float VrPinchIn();         // vr_gun.cpp: its middle past the pinch
 bool VrForeAt(float* c);                      // vr_gun.cpp: where the off hand takes the gun (C)
 bool VrLeftOnGun();
 void VrM203CaseOut();                         // vr_gun.cpp: the m203's spent case falls out
@@ -536,6 +538,8 @@ std::atomic<uint32_t> g_ctrl{0};  // the weapon in the player's hand (its state 
 // VrMag: 0 in the gun (hand empty), 1 out (falling, then gone; hand empty), 2 in the off hand (the well empty),
 // 3 a fresh one in the off hand with the old one still in the gun (to knock it out with)
 std::atomic<int> g_state{0};
+std::atomic<bool> g_empty{false};  // the held gun has no round in its magazine or chamber (its rounds not drawn)
+std::atomic<bool> g_seat_pin{false};  // a magazine just seated by hand: the hand stays on it (vr_gun.cpp)
 std::atomic<bool> g_from_hand{false};  // the magazine falling now left the hand (else it left the gun)
 std::atomic<int> g_bone{-1};  // the held gun's magazine bone, -1 none (not drawn moving)
 GunParts g_parts;  // the held gun's (game thread writes, render reads: copied under g_lock)
@@ -650,6 +654,10 @@ void PalmInCamera(const xr::Hand& h, float yaw, float pitch, float* c) {
 
 // the magazine held in a hand, in C: its middle, its up (the fist's axis, out past the thumb) and its front (the
 // controller's forward, square to that). Upright in the fist, as a magazine is carried to a well
+bool UprightMag() {
+    std::lock_guard lock(g_lock);
+    return !g_parts.shells && !g_parts.launcher && !g_parts.revolver;
+}
 bool HeldMagOf(const xr::Hand& h, float yaw, float pitch, float hold, float* mid, float* up, float* front) {
     if (!h.ok || !h.aim_ok) return false;
     float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
@@ -662,8 +670,23 @@ bool HeldMagOf(const xr::Hand& h, float yaw, float pitch, float hold, float* mid
     for (int i = 0; i < 3; i++) rl[i] = c * fl[i] + s * ul[i], frl[i] = -s * fl[i] + c * ul[i];
     // front: square to the axis, the forward side of the fist (fl rotated on by the same tilt, negated: forward-down)
     for (int i = 0; i < 3; i++) frl[i] = -frl[i];
+    // a rifle's or sniper's magazine (user 2026-11-27, a photo): the palm on its flat side, the fingers across it,
+    // upright over the thumb (the controller's top), its front forward (the controller's way); shells, rockets and
+    // grenades stay in the fist
+    if (UprightMag())
+        for (int i = 0; i < 3; i++) rl[i] = ul[i], frl[i] = fl[i];
     float p[3];
     PalmInCamera(h, yaw, pitch, p);
+    // a shell pinched between the thumb and index finger (user 2026-11-27, it sat too far out): along the fingers,
+    // its brass at the fingertips' middle as drawn (vr_gun.cpp VrPinchAt, the controller's axes from its grip)
+    float pinch[3];
+    if (VrPinchAt(pinch)) {
+        float xl[3] = {ul[1] * -fl[2] - ul[2] * -fl[1], ul[2] * -fl[0] - ul[0] * -fl[2], ul[0] * -fl[1] - ul[1] * -fl[0]};
+        float o[3];
+        for (int i = 0; i < 3; i++) rl[i] = fl[i], frl[i] = ul[i], o[i] = xl[i] * pinch[0] + ul[i] * pinch[1] - fl[i] * pinch[2];
+        for (int i = 0; i < 3; i++) p[i] += U[i] * o[0] + U[3 + i] * o[1] + U[6 + i] * o[2];
+        hold = VrPinchIn();
+    }
     for (int i = 0; i < 3; i++) {
         up[i] = U[i] * rl[0] + U[3 + i] * rl[1] + U[6 + i] * rl[2];
         front[i] = U[i] * frl[0] + U[3 + i] * frl[1] + U[6 + i] * frl[2];
@@ -682,6 +705,9 @@ float VrMagHold() {
 }
 // the fist's axis tilt (vr_gun.cpp's held magazine matches HeldMagOf)
 float VrRodTilt() { return kRodTilt; }
+bool VrMagUpright() { return UprightMag(); }
+bool VrGunEmpty() { return g_empty.load(std::memory_order_relaxed); }
+bool VrTakeSeatPin() { return g_seat_pin.exchange(false); }
 
 // any thread: where the held gun's magazine is (VrPoseGun), and its bone (-1: not ours to move)
 int VrMagState() { return g_state.load(std::memory_order_relaxed); }
@@ -1057,6 +1083,7 @@ void VrReloadTick() {
         return;
     }
     uint16_t& clip = G<uint16_t>(a.ammo + a.clip);  // (the M203's an int never below 0: its low half)
+    g_empty.store(!clip && !g_pending, std::memory_order_relaxed);
     uint16_t& reserve = G<uint16_t>(a.reserve);
     // a bolt worked by hand: a shot (the clip down since the last tick, nothing of ours) leaves the rest waiting for
     // a rack, the bolt forward (none left: it locks back below)
@@ -1711,6 +1738,7 @@ void VrReloadTick() {
             xr::Pulse(0, 0.8f, 0.06f);
             xr::Pulse(1, 0.8f, 0.06f);
             TestEvent("mag_in:" + code);
+            if (UprightMag()) g_seat_pin.store(true);  // the hand stays on it (user 2026-11-27)
             LOGR("vr reload: %s magazine in, clip %u, reserve %u", code.c_str(), n, reserve);
             PlaySound(code, kLoad);
         } else if (!grab && !g_seating && (g_parts.shells || g_parts.revolver)) {

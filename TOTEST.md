@@ -199,3 +199,7 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] menus (title, pause, options): no green A or red B icons; prompts read "▲▼ SELECT", "(RT/A) CONFIRM", "(B) BACK"; texts like "press A to save" show a plain A (confirm)
 - [ ] the elbow stays down and out as either hand reaches to the chest or the waist, no rolling over (confirm)
 - [ ] turning a wrist turns the forearm with it as one piece, no wrung-towel folds (confirm)
+- [ ] a rifle's or sniper's magazine in the off hand: upright on the palm, fingers across its side, its top over the thumb, as the photo (confirm)
+- [ ] seating a magazine by hand: the hand stays on it at the well until the grip lets go or the hand moves away (confirm)
+- [ ] AK: the rounds on a magazine out of the gun sit 2 inches lower; rounds show in the open action while there are any, none when empty (confirm)
+- [ ] shotgun shells: pinched between the thumb and index finger, brass in the fingertips, pointing forward; the fingers pinch (they never did on shotguns) (confirm)
