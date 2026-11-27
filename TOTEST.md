@@ -187,3 +187,4 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] objective, mission and fire mode texts half last time's size (confirm)
 - [ ] Y does nothing in play (no fire mode change, no animation); the right stick's up still changes it (confirm)
 - [ ] AK (and every magazine gun): drop, take a fresh one, seat it, rack, then the fore-grip takes; also holding the grip from seating straight onto the fore-end (auto: fore_grip:AK1) (confirm)
+- [ ] SPAS: holding a shell, no dark gun-like shape stretched from the off hand; the shell sits in the fingers (confirm)

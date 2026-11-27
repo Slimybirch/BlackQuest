@@ -2979,8 +2979,27 @@ bool VrHandMag(float yaw, float pitch, const float* frame, float (*c)[4]) {
     const int part_root = VrPartRoot();  // a launcher's round, the SPAS's shell: the game may have hidden its bone
     Aff rest = Compose(D, Bone(c, part_root >= 0 ? part_root : bone));
     Aff b = Compose(Dinv, HandMag(yaw, pitch, rest));
+    // the rest collapsed onto the held part's own middle: a triangle partly on its bone stays on it (user
+    // 2026-11-27: on the SPAS, collapsed to the shell bone's place, which the game parks off the gun, they reached
+    // from the off hand across the view, a gun-like shape in the hand)
     Aff point{};
-    for (int i = 0; i < 3; i++) point.m[i * 4 + 3] = Bone(c, bone).m[i * 4 + 3];
+    float mid[3];
+    Apply(b, mag_mid, mid);
+    for (int i = 0; i < 3; i++) point.m[i * 4 + 3] = mid[i];
+    {
+        static int64_t told = 0;
+        static const bool dev_hands = std::filesystem::exists(app::ExeDir() / "dev_fakehands");
+        if (dev_hands && NowMs() - told > 2000) {
+            told = NowMs();
+            float d = 0, e = 0, mc[3], AC[9], hc[3];
+            for (int i = 0; i < 3; i++) d += std::pow(point.m[i * 4 + 3] - Bone(c, bone).m[i * 4 + 3], 2.0f);
+            Apply(D, mid, mc);  // (G to C)
+            if (HandInCamera(yaw, pitch, 0, AC, hc, false))
+                for (int i = 0; i < 3; i++) e += (mc[i] - hc[i]) * (mc[i] - hc[i]);
+            LOGR("vr gun: the held part's middle %.3f m from its bone's place, %.3f m from the palm", std::sqrt(d),
+                 std::sqrt(e));
+        }
+    }
     for (int k = 0; k + 2 < 132; k += 3) SetBone(c, k, k == bone || k == bullets ? b : point);
     return true;
 }

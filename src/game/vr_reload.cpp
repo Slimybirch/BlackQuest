@@ -755,10 +755,16 @@ std::string VrTip() {
 bool VrMagFromHand() { return g_from_hand.load(std::memory_order_relaxed); }
 
 // game thread, each gun frame: the hands' part of a reload
-// dev_reload in the app folder (with dev_fakehands; a gun with a magazine): the off hand's reload played through
-// the real code, the hands xr::SetDevHands gives: 6 s into the gun and every 16 s, A drops the magazine, the left
-// grip takes one at the chest and seats it in the well, the handle is gripped, pulled back and let go, then the
-// fore-grip is gripped and held; "vr reload: dev_reload" logs each step and whether the fore-grip took
+// the palm (C) that puts a held magazine's top 3 cm down the well's line (HeldMagOf without an aim: up is C's);
+// under g_lock
+void WellPalm(float* c) {
+    for (int i = 0; i < 3; i++) c[i] = g_well[i] + g_axis[i] * (g_mag_top - 0.03f) - (i == 1 ? g_mag_top : 0);
+}
+// dev_reload in the app folder (with dev_fakehands; a gun with a magazine, or a shotgun): the off hand's reload
+// played through the real code, the hands xr::SetDevHands gives (to the game's pad too): 6 s into the gun and every
+// 16 s, A drops the magazine, the left grip takes one at the chest and seats it in the well, the handle is gripped,
+// pulled back and let go, then the fore-grip is gripped and held (a shotgun's, every 27 s: below); "vr reload:
+// dev_reload" logs each step and whether the fore-grip took
 void DevReloadScript(const std::string& code, int state, float yaw, float pitch, const float* head, const float* fwd) {
     static const bool on = std::filesystem::exists(app::ExeDir() / "dev_reload");
     if (!on) return;
@@ -767,13 +773,13 @@ void DevReloadScript(const std::string& code, int state, float yaw, float pitch,
     auto now = std::chrono::steady_clock::now();
     if (for_code != code) for_code = code, since = now;
     float hy, hp;
-    if (g_parts.shells || g_parts.revolver || g_parts.launcher || g_bone < 0 || !xr::HeadAngles(hy, hp)) {
+    if (g_parts.revolver || g_parts.launcher || (!g_parts.shells && g_bone < 0) || !xr::HeadAngles(hy, hp)) {
         xr::SetDevHands(nullptr, nullptr);
         return;
     }
     float t = std::chrono::duration<float>(now - since).count() - 6;
     if (t < 0) return;
-    t = std::fmod(t, 16.0f);
+    t = std::fmod(t, g_parts.shells ? 27.0f : 16.0f);
     // the head's turn (the fake hands' frame), and C to local: p = U c, less the eye's raise
     float cy = std::cos(hy), sy = std::sin(hy), cp = std::cos(hp), sp = std::sin(hp);
     const float r[9] = {cy, sy * sp, sy * cp, 0, cp, -sp, -sy, cy * sp, cy * cp};
@@ -798,79 +804,148 @@ void DevReloadScript(const std::string& code, int state, float yaw, float pitch,
     // the left (no aim: a held magazine is upright at the palm)
     float c[3];
     int step;
+    static bool checked = false;
     // dev_reload_carry: the grip held from the seated magazine straight onto the fore-grip (slid there along the gun
     // over half a second), no rack
     static const bool carry = std::filesystem::exists(app::ExeDir() / "dev_reload_carry");
-    if (carry && t >= 6.5f) step = t < 7 ? 11 : t < 10 ? 10 : 0;
-    else if (t < 1) step = 0;      // at rest
-    else if (t < 1.2f) step = 1;   // A: the magazine out
-    else if (t < 2) step = 0;
-    else if (t < 2.5f) step = 2;   // at the chest
-    else if (t < 3.5f) step = 3;   // gripped: one taken
-    else if (t < 6.5f) step = 4;   // at the well, held: seats
-    else if (t < 7) step = 5;      // let go, still there
-    else if (t < 7.5f) step = 6;   // at the handle
-    else if (t < 8.5f) step = 7;   // gripped, pulled back
-    else if (t < 9) step = 8;      // let go: racked
-    else if (t < 9.5f) step = 0;
-    else if (t < 10) step = 9;     // at the fore-grip
-    else if (t < 13) step = 10;    // gripped
-    else step = 0;
-    ahead(-0.10f, -0.14f, -0.55f, h[0].pos);
-    if (step == 1) h[1].primary = true;
-    if (step == 2 || step == 3) {
-        h[0].pos[0] = head[0] - sy * kChestAhead, h[0].pos[2] = head[2] - cy * kChestAhead;
-        h[0].pos[1] = head[1] - 0.5f * (kChestTop + kChestBottom);
-        h[0].grip = step == 3 ? 1.0f : 0.0f;
-    }
-    if (step == 4 || step == 5) {
-        std::lock_guard lock(g_lock);
-        if (g_well_ok) {
-            // the palm so the held magazine's top is 3 cm down the well's line (HeldMagOf without an aim: up is C's)
-            for (int i = 0; i < 3; i++) c[i] = g_well[i] + g_axis[i] * (g_mag_top - 0.03f) - (i == 1 ? g_mag_top : 0);
+    if (g_parts.shells) {
+        // a shotgun: a shot; the pump taken, worked back at 0.6 m/s and let go open; a shell pinched at the chest,
+        // held out (to see it), put in the port; the pump taken open and run forward, held; then the left grip
+        // pressed and let go away from the gun, every half second (no gun may come to the hand)
+        if (t < 1) step = 0;
+        else if (t < 1.15f) step = 20;  // the right trigger: a shot
+        else if (t < 2) step = 0;
+        else if (t < 2.5f) step = 21;   // at the fore-grip
+        else if (t < 3) step = 22;      // gripped
+        else if (t < 3.2f) step = 23;   // worked back
+        else if (t < 3.7f) step = 24;   // held back
+        else if (t < 4.5f) step = 25;   // let go: open
+        else if (t < 5) step = 26;      // at the chest
+        else if (t < 6) step = 27;      // the trigger: a shell
+        else if (t < 12) step = 28;     // held out before the eyes
+        else if (t < 13) step = 29;     // at the port: in
+        else if (t < 13.5f) step = 0;
+        else if (t < 14) step = 30;     // at the open pump
+        else if (t < 14.5f) step = 31;  // gripped
+        else if (t < 14.7f) step = 32;  // run forward
+        else if (t < 17) step = 33;     // held
+        else if (t < 18) step = 0;
+        else if (t < 19) step = 34;     // away from the gun
+        else if (t < 23) step = 35;     // gripping there, on and off
+        else step = 0;
+        ahead(-0.10f, -0.14f, -0.55f, h[0].pos);
+        float fore[3], fl[3];
+        const bool fore_ok = VrForeAt(fore);
+        for (int k = 0; k < 3; k++) fl[k] = U[k * 3] * fwd[0] + U[k * 3 + 1] * fwd[1] + U[k * 3 + 2] * fwd[2];
+        auto at_fore = [&](float along) {
+            if (!fore_ok) return;
+            for (int i = 0; i < 3; i++) c[i] = fore[i] + fwd[i] * along;
             to_local(c, h[0].pos);
+        };
+        if (step == 20) h[1].trigger = 1;
+        if (step >= 21 && step <= 25) {
+            float back = step == 23 ? (t - 3) / 0.2f * 0.12f : step > 23 ? 0.12f : 0;
+            at_fore(-back);
+            h[0].grip = step >= 22 && step <= 24 ? 1.0f : 0.0f;
+            if (step == 23)
+                for (int k = 0; k < 3; k++) h[0].vel[k] = -fl[k] * 0.6f;
         }
-        h[0].grip = step == 4 ? 1.0f : 0.0f;
-    }
-    if (step >= 6 && step <= 8) {
-        std::lock_guard lock(g_lock);
-        if (g_rack_ok) {
-            float back = step == 7 ? std::min((t - 7.5f) / 0.8f, 1.0f) * (kRackPull + 0.02f) : step == 8 ? kRackPull + 0.02f : 0;
-            for (int i = 0; i < 3; i++) c[i] = g_rack_at[i] - fwd[i] * back;
-            to_local(c, h[0].pos);
+        if (step == 26 || step == 27) {
+            h[0].pos[0] = head[0] - sy * kChestAhead, h[0].pos[2] = head[2] - cy * kChestAhead;
+            h[0].pos[1] = head[1] - 0.5f * (kChestTop + kChestBottom);
+            h[0].trigger = step == 27 ? 1.0f : 0.0f;
         }
-        h[0].grip = step == 7 ? 1.0f : 0.0f;
-    }
-    if (step == 11) {
-        // from the well toward the fore-grip, the grip held
-        float w[3], f[3];
-        bool ok;
-        {
+        if (step == 28) h[0].trigger = 1, ahead(-0.20f, -0.04f, -0.40f, h[0].pos);  // before the eyes, left of the gun
+        if (step == 29) {
             std::lock_guard lock(g_lock);
-            ok = g_well_ok;
-            for (int i = 0; i < 3; i++) w[i] = g_well[i] + g_axis[i] * (g_mag_top - 0.03f) - (i == 1 ? g_mag_top : 0);
+            if (g_well_ok) {
+                for (int i = 0; i < 3; i++) c[i] = g_well[i] - g_rack_up[i] * 0.03f;
+                to_local(c, h[0].pos);
+            }
+            h[0].trigger = 1;
         }
-        if (ok && VrForeAt(f)) {
-            float k = std::clamp((t - 6.5f) / 0.5f, 0.0f, 1.0f);
-            for (int i = 0; i < 3; i++) c[i] = w[i] + (f[i] - w[i]) * k;
+        if (step >= 30 && step <= 33) {
+            float along = step == 32 ? -0.06f + (t - 14.5f) / 0.2f * 0.08f : step == 33 ? 0.02f : -0.06f;
+            at_fore(along);
+            h[0].grip = step >= 31 ? 1.0f : 0.0f;
+            if (step == 32)
+                for (int k = 0; k < 3; k++) h[0].vel[k] = fl[k] * 0.4f;
+        }
+        if (step == 34 || step == 35) {
+            ahead(-0.30f, -0.50f, -0.20f, h[0].pos);  // down by the hip
+            h[0].grip = step == 35 && std::fmod(t - 19, 1.0f) < 0.5f ? 1.0f : 0.0f;
+        }
+    } else {
+        if (carry && t >= 6.5f) step = t < 7 ? 11 : t < 10 ? 10 : 0;
+        else if (t < 1) step = 0;      // at rest
+        else if (t < 1.2f) step = 1;   // A: the magazine out
+        else if (t < 2) step = 0;
+        else if (t < 2.5f) step = 2;   // at the chest
+        else if (t < 3.5f) step = 3;   // gripped: one taken
+        else if (t < 6.5f) step = 4;   // at the well, held: seats
+        else if (t < 7) step = 5;      // let go, still there
+        else if (t < 7.5f) step = 6;   // at the handle
+        else if (t < 8.5f) step = 7;   // gripped, pulled back
+        else if (t < 9) step = 8;      // let go: racked
+        else if (t < 9.5f) step = 0;
+        else if (t < 10) step = 9;     // at the fore-grip
+        else if (t < 13) step = 10;    // gripped
+        else step = 0;
+        ahead(-0.10f, -0.14f, -0.55f, h[0].pos);
+        if (step == 1) h[1].primary = true;
+        if (step == 2 || step == 3) {
+            h[0].pos[0] = head[0] - sy * kChestAhead, h[0].pos[2] = head[2] - cy * kChestAhead;
+            h[0].pos[1] = head[1] - 0.5f * (kChestTop + kChestBottom);
+            h[0].grip = step == 3 ? 1.0f : 0.0f;
+        }
+        if (step == 4 || step == 5) {
+            std::lock_guard lock(g_lock);
+            if (g_well_ok) {
+                WellPalm(c);
+                to_local(c, h[0].pos);
+            }
+            h[0].grip = step == 4 ? 1.0f : 0.0f;
+        }
+        if (step >= 6 && step <= 8) {
+            std::lock_guard lock(g_lock);
+            if (g_rack_ok) {
+                const float full = kRackPull + 0.02f;
+                float back = step == 7 ? std::min((t - 7.5f) / 0.8f, 1.0f) * full : step == 8 ? full : 0;
+                for (int i = 0; i < 3; i++) c[i] = g_rack_at[i] - fwd[i] * back;
+                to_local(c, h[0].pos);
+            }
+            h[0].grip = step == 7 ? 1.0f : 0.0f;
+        }
+        if (step == 11) {
+            // from the well toward the fore-grip, the grip held
+            float w[3], f[3];
+            bool ok;
+            {
+                std::lock_guard lock(g_lock);
+                ok = g_well_ok;
+                WellPalm(w);
+            }
+            if (ok && VrForeAt(f)) {
+                float k = std::clamp((t - 6.5f) / 0.5f, 0.0f, 1.0f);
+                for (int i = 0; i < 3; i++) c[i] = w[i] + (f[i] - w[i]) * k;
+                to_local(c, h[0].pos);
+            }
+            h[0].grip = 1;
+        }
+        if ((step == 9 || step == 10) && VrForeAt(c)) {
             to_local(c, h[0].pos);
+            h[0].grip = step == 10 ? 1.0f : 0.0f;
         }
-        h[0].grip = 1;
-    }
-    if ((step == 9 || step == 10) && VrForeAt(c)) {
-        to_local(c, h[0].pos);
-        h[0].grip = step == 10 ? 1.0f : 0.0f;
     }
     xr::SetDevHands(&h[0], &h[1]);
     static int was = -1;
-    static bool checked = false;
     if (step != was) {
         LOGR("vr reload: dev_reload %s t %.1f step %d (state %d, on the gun %d, fore %.3f, near a zone %d, racking %d)",
              code.c_str(), t, step, state, int(VrLeftOnGun()), VrLeftFore(), int(g_near_rack.load()), int(g_racking));
         was = step;
-        if (step == 10) checked = false;
+        if (step == 10 || step == 33) checked = false;
     }
-    if (step == 10 && t > (carry ? 9.5f : 12) && !checked) {
+    if (((step == 10 && t > (carry ? 9.5f : 12)) || (step == 33 && t > 16.5f)) && !checked) {
         checked = true;
         LOGR("vr reload: dev_reload %s: the fore-grip after the reload %s (fore %.3f, state %d, racking %d, near a "
              "zone %d)", code.c_str(), VrLeftOnGun() ? "TOOK" : "DID NOT TAKE", VrLeftFore(), state, int(g_racking),

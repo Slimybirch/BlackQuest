@@ -3,3 +3,4 @@
 - Pause menu 30% bigger
 - Objective, mission and fire mode texts half the size
 - Y no longer changes the fire mode in play (the right stick's up does)
+- Fixed: a dark, gun-like shape stretched from the off hand while it held a shotgun shell

@@ -2420,3 +2420,18 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
 - AK results (2026-11-27): the full reload then a fresh press at the fore-grip took (twice). The grip held from the
   seat: without the carry fix DID NOT TAKE (twice, the hand within 2 mm of the point), with it TOOK (twice): the
   AK's lockout after a reload was the held grip needing a fresh press.
+
+## 2026-11-27: the SPAS through dev_reload; the held shell's stretched draw
+- dev_reload on a shotgun (every 27 s): the right trigger fires (xr::SetDevHands now feeds ApplyPad too: triggers,
+  grips, A and X reach the game as the controllers' would), the pump gripped, worked back 12 cm at 0.6 m/s and let
+  go open, a shell pinched at the chest and held before the eyes 6 s, put in the port, the open pump gripped and run
+  forward, held (the fore-grip check), then the left grip pressed and let go every half second down by the hip.
+  Result: pump open, shell in, pumped, the fore-grip TOOK; the grips away from the gun never took it ("off hand on"
+  never logged) and the gun was aimed at the off hand only while it held the gun (a once-a-second log, removed).
+- The user's "a SPAS in the off hand for a split second": the held shell is the gun's draw drawn again with every
+  bone but the shell's collapsed to one point, that point the shell bone's own place, which the game parks off the
+  gun (0.24-0.64 m from the hand, measured). Triangles partly on the shell's bone stretched from the hand to there:
+  dark gun-coloured spikes across the view while a shell was held. Now collapsed onto the held part's own middle
+  (VrHandMag; dev_fakehands logs "the held part's middle ... from the palm": 0.020 m).
+- Headset screencaps (adb) land a second or more from when they're asked for and take ~5 s each on the device:
+  pictures of short steps can show the step before; the log is the timing.

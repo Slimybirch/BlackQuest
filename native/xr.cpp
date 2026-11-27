@@ -1218,6 +1218,12 @@ void ApplyPad(int port, input::Pad& p) {
     {
         std::lock_guard lock(g_controls_lock);
         c = g_controls;
+        if (g_dev_hands_on) {
+            // dev hands: their buttons to the game as the controllers' would go
+            c.live = true;
+            for (int h = 0; h < 2; h++) c.grip[h] = g_dev_hands[h].grip, c.trigger[h] = g_dev_hands[h].trigger;
+            c.a = g_dev_hands[1].primary, c.x = g_dev_hands[0].primary;
+        }
     }
     using clock = std::chrono::steady_clock;
     static clock::time_point menu_down;
