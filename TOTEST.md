@@ -69,7 +69,7 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 
 ## Off hands
 - [ ] Uzi: the free off hand isn't turned (confirm)
-- [ ] Uzi: take the fore-grip with the off hand (auto: fore_grip:SMG)
+- [x] Uzi: take the fore-grip with the off hand: dropped, the Uzi is one-handed (user 2026-11-27)
 - [ ] Walther: the free off hand isn't turned (confirm)
 - [ ] Walther: take the fore-grip with the off hand (auto: fore_grip:SNR)
 
@@ -206,3 +206,8 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] co-op: SAVE LOGS (ALL PLAYERS) in the CO-OP tab leaves logs/coop_<time>_<name>.log on every headset; after a crash the last run's log is logs/black_prev.log (confirm)
 - [ ] RPG: the free off hand looks like a hand again (not mangled) (confirm)
 - [ ] every gun: the grip takes the gun where the off hand is drawn on it (within 10 cm) (confirm)
+- [ ] AK: the grip takes the gun with the hand about 4 inches ahead of the drawn hold, toward the muzzle (if not, the log's "side / up / along" says which way) (confirm)
+- [ ] the objective lines and tips at the bottom middle sit higher, in view (confirm)
+- [ ] A to close a tip doesn't drop the magazine (confirm)
+- [ ] Uzi: shots leave the barrel and scatter round where it points (the game's spread), no drift to the right at range (confirm)
+- [ ] WA2000: after switching from the M249 (or any gun) and back, the right hand sits on its grip as before (confirm)

@@ -148,8 +148,11 @@ std::atomic<bool> g_left_on{false};
 // a pinched shell's place: the thumb and index finger's middle in the left controller's axes from its grip (render
 // thread writes)
 std::atomic<float> g_pinch[3] = {0, 0, 0};
+std::atomic<int> g_gun_gen{0};  // counts the held gun's switches (render thread)
+float g_grab_off[3] = {};  // the off hand from the grab point at the last check, the gun's axes (cm; LeftHold)
 std::atomic<bool> g_pinch_ok{false};
 std::atomic<float> g_left_fore{1e9f};  // the off hand's distance from the fore-grip (m), for the reload's zones
+constexpr float kAkGrabLonger = 0.08f;  // the AK's grab zone runs on this far toward the muzzle
 constexpr float kReach = 0.10f;  // metres from where the hand's drawn on the gun a grip press takes hold
 std::string g_code = "?";  // the weapon it was made for
 
@@ -181,6 +184,7 @@ void Cross(const float* a, const float* b, float* o) {
     std::memcpy(o, r, sizeof(r));
 }
 
+float MuzzleAhead(const std::string&) { return 0; }  // (measured: every gun's locator is at its barrel's end)
 // the player's muzzle matrix in the game world (renderware rows: left, up, along the barrel, position)
 bool Muzzle(X86Context& ctx, float* m) {
     uint32_t model = R32(Player() + kPlayerModel);
@@ -193,6 +197,13 @@ bool Muzzle(X86Context& ctx, float* m) {
     std::memcpy(m, HostPtr(out), 64);
     for (int i = 0; i < 16; i++)
         if (!std::isfinite(m[i])) return false;
+    // a gun whose locator sits back along it from the barrel's end (the Uzi's mid-gun: its shots and flash came from
+    // its side, user 2026-11-27): moved on along the barrel; kGrips' back is longer by the same, so the gun stays put
+    if (float ahead = MuzzleAhead(weapons::HeldCode()); ahead != 0) {
+        float l = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+        if (l > 1e-6f)
+            for (int i = 0; i < 3; i++) m[12 + i] += m[8 + i] / l * ahead;
+    }
     return true;
 }
 
@@ -1057,8 +1068,8 @@ bool VrPoseArms(float yaw, float pitch, const float* frame, float (*c)[4], const
     } else if (WorkedGun(code, worked_root, worked_slide)) {
         static Aff rel[44];
         static bool have = false;
-        static std::string for_code;
-        if (for_code != code) have = false, for_code = code;
+        static int for_gen = -1;
+        if (for_gen != g_gun_gen.load(std::memory_order_relaxed)) have = false, for_gen = g_gun_gen.load();
         Aff root = Bone(c, worked_root), hold = root;
         bool held = false;
         {
@@ -2191,9 +2202,56 @@ void LogBarrel(const float* frame, float (*c)[4], uint32_t count) {
          std::asin(std::clamp(rt, -1.0f, 1.0f)) * kD, count);
 }
 
+// diagnostic, once per gun: the mesh's frontmost vertex along the barrel (its root bone's +z) against the muzzle
+// the shots and flash leave from, in C before K (the Uzi's came from mid-gun, user 2026-11-27): metres along the
+// barrel, up, right
+void LogMuzzleTip(const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride, uint32_t vbytes,
+                  const void* indices, bool index16, uint32_t count, int32_t base) {
+    if (count >= 2880 && count <= 2970) return;  // the arms
+    std::string code = HeldGunCode();
+    static std::set<std::string> told;
+    if (!vb || !indices || told.count(code)) return;
+    told.insert(code);
+    static const std::set<std::string> k108 = {"PST", "PS5", "GK1", "GK5", "SMG", "SM5", "SM3", "MC5",
+                                               "RM1", "RM5", "SHG", "SH5", "RPG"};
+    int root = k108.count(code) ? 108 : 75;
+    float tip[3] = {0, 0, -1e9f};
+    for (uint32_t i = 0; i < count; i++) {
+        int64_t v = int64_t(index16 ? static_cast<const uint16_t*>(indices)[i] : static_cast<const uint32_t*>(indices)[i]) + base;
+        if (v < 0 || (uint64_t(v) + 1) * stride > vbytes) continue;
+        float p[3];
+        std::memcpy(p, vb + size_t(v) * stride, 12);
+        if (p[2] > tip[2]) std::memcpy(tip, p, 12);
+    }
+    Frame f;
+    std::memcpy(&f, frame, sizeof(f));
+    auto it = kGrips.find(code);
+    const Grip& g = it == kGrips.end() ? kDefaultGrip : it->second;
+    float t[3], mc[3], right[3], d[3];
+    Apply(Bone(c, root), tip, t);
+    t[0] = -t[0], t[2] = -t[2];  // S
+    for (int i = 0; i < 3; i++) mc[i] = f.grip[i] + f.fwd[i] * g.back + f.up[i] * g.down, d[i] = t[i] - mc[i];
+    Cross(f.fwd, f.up, right);
+    LOGR("vr gun: %s barrel's end from the muzzle: along %.3f up %.3f right %.3f m (mesh %u)", code.c_str(),
+         d[0] * f.fwd[0] + d[1] * f.fwd[1] + d[2] * f.fwd[2], d[0] * f.up[0] + d[1] * f.up[1] + d[2] * f.up[2],
+         d[0] * right[0] + d[1] * right[1] + d[2] * right[2], count);
+}
+
 bool VrPoseGun(float yaw, float pitch, const float* frame, float (*c)[4], const uint8_t* vb, uint32_t stride,
                uint32_t vbytes, const void* indices, bool index16, uint32_t count, int32_t base) {
+    {
+        // any switch of guns: a worked gun's held rest and arms start over (user 2026-11-27: the walther switched back
+        // to from the M249, not a worked gun, kept the rest and arms from before; its right hand came out turned)
+        static std::string last;
+        if (std::string now = HeldGunCode(); now != last) {
+            last = now;
+            g_gun_gen.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard lock(g_root_lock);
+            g_root_rest = RootRest{};
+        }
+    }
     LogBarrel(frame, c, count);
+    LogMuzzleTip(frame, c, vb, stride, vbytes, indices, index16, count, base);
     if (VrGunAway()) {
         // phase 6 (vr_grenade.cpp): every bone of the gun's collapsed to a point (not seen); a grenade held: the M67
         // on bone 3 at the right palm, its fuze up the controller's top, its spoon against the palm (mesh +x to the
@@ -3171,7 +3229,20 @@ void LeftHold(const Frame& f) {
             g_fore_at[i] = rot[i * 3] * fore[0] + rot[i * 3 + 1] * fore[1] + rot[i * 3 + 2] * fore[2] + pos[i];
         // the grab point is where the hand is drawn on the gun, the game's palm there, on every gun (user
         // 2026-11-27: a stretch along the barrel, then the AK's moved back, both missed it)
-        for (int i = 0; i < 3; i++) d2 += (hc[i] - g_fore_at[i]) * (hc[i] - g_fore_at[i]);
+        // (the AK's 10 cm ahead of the drawn hold along the barrel: the user's grips, logged in the gun's axes, landed
+        // 9-29 cm along it from 10 cm behind, 2026-11-27; the drawn free palm is the controller's grip itself)
+        float back = HeldGunCode().rfind("AK", 0) == 0 ? -0.10f : 0.0f, gv[3];
+        for (int i = 0; i < 3; i++) {
+            g_fore_at[i] -= rot[i * 3 + 2] * back;  // (the mesh's +z: along the barrel)
+            gv[i] = hc[i] - g_fore_at[i];
+        }
+        // the AK's zone a little longer toward the muzzle, not moved (user 2026-11-27): a line from the point on
+        // along the barrel, the hand measured from its nearest place on it
+        const float longer = back < 0 ? kAkGrabLonger : 0;
+        float along = std::clamp(gv[0] * rot[2] + gv[1] * rot[5] + gv[2] * rot[8], 0.0f, longer);
+        for (int i = 0; i < 3; i++) d2 += (gv[i] - rot[i * 3 + 2] * along) * (gv[i] - rot[i * 3 + 2] * along);
+        // the hand from the grab point in the gun's axes (cm: x side, y up, z along the barrel), for each press
+        for (int k = 0; k < 3; k++) g_grab_off[k] = 100 * (rot[k] * gv[0] + rot[3 + k] * gv[1] + rot[6 + k] * gv[2]);
         g_fore_ok = true;
         near = d2 < kReach * kReach;
         g_left_fore.store(std::sqrt(d2), std::memory_order_relaxed);
@@ -3180,8 +3251,9 @@ void LeftHold(const Frame& f) {
         was = g > 0.6f;
         // every grip press near the gun, for the next miss: how far from the fore-grip's stretch
         if (press && d2 < 0.3f * 0.3f)
-            LOGR("vr gun: off hand grip %.1f cm from the fore-grip (reach %.0f), on %d, mag %d, slide %d, racking %d",
-                 std::sqrt(d2) * 100, kReach * 100, int(on), int(VrMagInHand()), int(VrSlideHeld()), int(VrRacking()));
+            LOGR("vr gun: off hand grip %.1f cm from the fore-grip (side %.1f up %.1f along %.1f; reach %.0f), on %d, "
+                 "mag %d, slide %d, racking %d", std::sqrt(d2) * 100, g_grab_off[0], g_grab_off[1], g_grab_off[2],
+                 kReach * 100, int(on), int(VrMagInHand()), int(VrSlideHeld()), int(VrRacking()));
         // a grip still held from a magazine seated or a handle let go of takes the fore-grip as the hand gets there
         // (user 2026-11-26: after a load the off hand couldn't grip; it took a fresh press)
         static bool carry = false;
@@ -3470,6 +3542,23 @@ void VrFireShot(X86Context& ctx, uint8_t* base) {
                 for (int i = 0; i < 3; i++) d[i] = d[i] * cr + s1[i] * ca + s2[i] * sa;
                 Normalize(d);
             }
+            {
+                // the Uzi (user 2026-11-27: "the bullet spread is off", the shots a few degrees right at range): from
+                // the barrel as drawn (the muzzle's forward through the same mapping), the game's own scatter
+                const std::string code = weapons::HeldCode();
+                float b[16] = {};
+                float l = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+                for (int i = 0; i < 3; i++) b[i] = m[8 + i] / std::max(l, 1e-6f), b[12 + i] = m[12 + i];
+                if ((code == "SMG" || code == "SM5") && VrGunMap(b, false)) {
+                    // its scatter about the barrel as the game's, but not the steady lean in it (its aim toward the
+                    // flat game's crosshair: user, the shots drifted a few degrees right at range): the running
+                    // mean of the shots' offset from the barrel taken off
+                    static float mean[3] = {};
+                    for (int i = 0; i < 3; i++) mean[i] += (d[i] - b[i] - mean[i]) * 0.1f;
+                    for (int i = 0; i < 3; i++) d[i] -= mean[i];
+                    Normalize(d);
+                }
+            }
             static uint32_t buf = mem::AllocSystem(32, 16);
             float o[8] = {d[12], d[13], d[14], G<float>(ctx.ecx + 12), d[0], d[1], d[2], G<float>(dir + 12)};
             std::memcpy(HostPtr(buf), o, sizeof(o));
@@ -3484,6 +3573,7 @@ void VrFireShot(X86Context& ctx, uint8_t* base) {
             g_shot_ms.store(SteadyMs());
             static int shots = 0;
             if (shots++ % 50 == 0) LOGR("vr gun: shot from the hand, direction %.2f %.2f %.2f", o[4], o[5], o[6]);
+
         }
     }
     __imp__sub_001DB7B0(ctx, base);

@@ -155,6 +155,10 @@ void VrLogicTick() { g_logic_ms.store(NowMs(), std::memory_order_relaxed); }
 // hints too: the game pauses for some (level 1's "red hit ring indicates attack direction"), its hud still up and no
 // menu page; not a menu (no settings panel, the hud kept head-locked) unless asked for
 std::atomic<bool> g_page_up{false};  // a menu page is up (VrPad, game thread)
+bool VrLogicStopped() {
+    int64_t t = g_logic_ms.load(std::memory_order_relaxed);
+    return t && NowMs() - t > 100;
+}
 bool VrMenuOverPlay(bool hints) {
     int64_t t = g_logic_ms.load(std::memory_order_relaxed);
     return t && NowMs() - t > 300 && (hints || g_page_up.load(std::memory_order_relaxed) || !HudShown());

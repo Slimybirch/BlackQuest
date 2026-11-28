@@ -46,6 +46,7 @@ uint32_t HeldWeapon();
 }
 
 namespace game {
+bool VrLogicStopped();  // vr_body.cpp: the game's logic paused (a tip's pause, the pause menu)
 
 bool VrHandWorld(int hand, float* pos, float* vel);  // vr_gun.cpp: a hand's grip in the game's world, metres
 
@@ -1225,10 +1226,27 @@ void VrReloadTick() {
     float dev_t = std::chrono::duration<float>(std::chrono::steady_clock::now() - since).count();
     int dev_phase = dev_shells && g_parts.shells && dev_t > 6 ? int(std::fmod(dev_t - 6, 6.0f) * 2) : -1;  // 0..11
     static bool a_was = false, grab_was = false;
+    {
+        // after a pause (a tip's: A dismisses it, user 2026-11-27: the magazine dropped as play came back) a button
+        // still held isn't a press
+        static auto last = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        if (now - last > std::chrono::milliseconds(200)) a_was = hand[1].primary;
+        last = now;
+    }
     // a shell is pinched (user: thumb and index finger): taken and held on the off hand's trigger, not its grip
     float take = g_parts.shells && !g_parts.launcher ? hand[0].trigger : hand[0].grip;
     bool a_edge = hand[1].primary && !a_was, grab = take > 0.6f, grab_edge = grab && !grab_was;
     if (g_parts.shells) a_edge = false;  // no magazine to drop
+    // A while the game's logic is paused (a tip waits for A: user 2026-11-27, it dropped the magazine) is the game's:
+    // this tick runs with the gun's draw, paused or not. dev_tipa: A pressed now and then in such a pause (its test)
+    if (game::VrLogicStopped()) {
+        static const bool dev_tipa = std::filesystem::exists(app::ExeDir() / "dev_tipa");
+        if (dev_tipa && !a_was) LOGR("vr reload: dev_tipa: A in the paused game"), a_edge = true;
+        if (a_edge) LOGR("vr reload: A in the paused game, left to the game");
+        a_edge = false;
+        a_was = true;
+    }
     bool latch_edge = g_parts.revolver && a_edge;  // the revolver's A is its latch, not an eject
     if (g_parts.revolver) a_edge = false;
     a_was = hand[1].primary;

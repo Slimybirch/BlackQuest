@@ -457,3 +457,19 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
       standing on it and pressing the right grip); the pickups' positions, a grab radius round the hand, a highlight
       in reach, the game's own pickup run for that item; the right grip kept as a fallback (Phase 4's "picking
       weapons up by hand" item)
+
+## From the user's test runs (2026-11-27: the in-game checklist's fails)
+- [ ] M249: lift its top cover by hand to reload (user): the off hand's grip on the cover's back, up to open, the
+      belt box out and in, down to shut
+- [ ] M249: its right side still isn't right (checklist fail: receiver wall, plates, slot, port cover, handguard
+      against the left); the user may have shots of it
+- [ ] the SPAS's and Remington's shell in the hand (failed before the pinch fix of 2026-11-27: check again)
+- [ ] M16+M203: after its shot, pushing the M203's barrel forward quickly doesn't open it; after firing it, the game
+      plays its reload animation (user: no animation, the barrel worked by hand only)
+- [ ] magnum: it can fire while open, or the game's own reload starts (checklist fail)
+- [ ] magnum: taking a speed loader at the chest with the off hand's grip, held between thumb and fingers (fail):
+      it shows only the rounds left from the last load (or one); taken at the chest it should be a full loader of six (user)
+- [ ] magnum: a game animation still takes over the magnum or the hands while it's out (fail): after every shot it
+      plays the hammer clicking back; keep the gun's parts moving (and the sound) but not the arms or hands (user)
+- [ ] magnum: spinning the cylinder by hand: a small buzz as the hand makes contact, and a spin sound (user)
+

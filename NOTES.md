@@ -2608,3 +2608,40 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
 - The grab point, simply (user): where the hand is drawn on the gun (Rest: the game's palm on it), every gun, within
   kReach 10 cm of the controller's grip; the stretch along the barrel and the AK's ForeBack are gone. The reload's
   zones give way within those 10 cm.
+- The user's log after that: AK grips that took were 3.5-7 cm from the drawn hold, most misses 10-18 cm. The drawn
+  free palm is the controller's grip itself (measured 0 cm, so not the cause). The AK's grab point now 10 cm back
+  toward the receiver from the drawn hold (the hand still drawn at the game's hold); each press logs its offset in
+  the gun's axes ("side / up / along" cm) to aim by next time. dev_reload AK1: TOOK twice.
+- Backwards: the next log's presses landed +9..+29 cm along the barrel (mesh +z, toward the muzzle) from the point 10
+  cm behind the hold, side and up within 4 cm. The AK's grab point now 10 cm ahead of the drawn hold (back = -0.10).
+- User: the AK's grab point right now. Then: the objective text too low to see, A on a tip dropped the magazine.
+  hud.cpp: the bottom middle's items (anchor 0.5, 1.0: 0x135370 and 0x1355B0, the objective lines and the tips)
+  pulled toward the middle by kVrPullBottom 0.35 (were kVrPullY 0.69: 0.85 of the height, under the lenses).
+  vr_reload.cpp: the reload's tick doesn't run in a tip's pause; A held as play came back read as a fresh press and
+  ejected: after a gap of 200 ms a held A isn't an edge.
+- Neither worked (user). The log: the magazines came out at 34 s and 47 s with no tip's pause (A on an objective
+  message, not a pausing tip), and the low texts aren't anchored at the bottom (only the corners and middles are
+  hud components). Now, not by anchor: hud.cpp lifts any hud item (not the crosshair) whose drawn points reach past
+  kVrLowest 0.72 of the height, as a whole, till they don't; a text drawn at the middle or below marks
+  game::NoteHudText, and the reload's A doesn't eject while one's newly up (HudTextNew: drawn in the last 250 ms,
+  up less than 8 s, so a text that never goes can't lock reloading out). Built and installed, not run (the user
+  tests; no headset runs asked).
+- Round 3 (user: the text in view but every line on one, A still drops, the Uzi's shots and spread). hud.cpp: a
+  hud item reaching past 0.62 of the height goes up by a fixed 0.25 of it (one clamp height for each line had put
+  them on one line); not seen yet (the autostart run went to another mission). A: the reload's tick runs with the
+  gun's draw while the game's logic is paused (dev_tipa + dev_pause: "A in the paused game" every frame); A there is
+  the game's now (game::VrLogicStopped, logic stale 100 ms), and held A doesn't count after: no magazine out.
+  Uzi: LogMuzzleTip (the mesh's frontmost vertex against the muzzle, in C): its muzzle is 1.6 cm past the barrel's
+  end (the MP5's 2.5), so it leaves the barrel; its shots went 0-9.5 degrees off the barrel (the game's spread,
+  logged): pulled to a third (kUziSpread) toward the barrel's line.
+- The WA2000's right hand turned after the M249 (user's captures): its right palm 0.170 -0.382 -0.340 at its first
+  draw, 0.151 -0.173 -0.231 after switching from the M249 and back. g_root_rest (a worked gun's held root) was only
+  reset by another worked gun's draw, and the arms' snapshot by another worked gun's code: the M249 isn't one, so the
+  WA2000 came back on its old rest and arms. Now any switch (VrPoseGun: the held code changing) resets the rest
+  and the snapshot (g_gun_gen).
+- Uzi (user: shots a few degrees right at range; the one-handed spread is the long guns' only, never the Uzi's):
+  the third-spread pull undone; the game's scatter about the barrel kept, its steady lean taken off (a running mean
+  of the shots' offset from the barrel, 0.1 a shot). Installed with the WA2000 fix; not run.
+- The checklist's fails (totest_done.txt and the logs) put in TODO; the Uzi's fore-grip item dropped (one-handed).
+- The AK's grab zone lengthened, not moved (user): a line from its point 8 cm on toward the muzzle (kAkGrabLonger),
+  reach 10 cm round it. Installed, not run.

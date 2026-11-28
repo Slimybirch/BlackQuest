@@ -50,11 +50,12 @@ float g_width = 640;
 // about it. -1: not a hud item now
 // (user: in 35-50% of the way; across, the top corners' items meet sooner: 0.72 had health and ammo touching)
 // (2026-11-26: 0.78, 0.55 too close in; out 25%)
-constexpr float kVrPullX = 0.975f, kVrPullY = 0.69f, kVrGrow = 1.25f;  // (x 0.7: health under ammo, shot)
+constexpr float kVrPullX = 0.975f, kVrPullY = 0.69f, kVrGrow = 1.25f, kVrPullBottom = 0.35f, kVrLow = 0.62f, kVrLift = 0.25f;  // (x 0.7: health under ammo, shot)
 constexpr float kVrGrowMiddle = kVrGrow * 0.6f;  // the middle's crosshair and title fade (HudItem)
 // the middle's texts: the objectives, the mission's, the fire mode's (user 2026-11-26: half again, in the way)
 constexpr float kVrGrowText = kVrGrowMiddle * 0.5f;
 float g_vr_ax = -1, g_vr_ay = -1, g_vr_grow = kVrGrow;
+uint32_t g_vr_cb = 0;  // the hud item drawing (its draw callback)
 uint32_t g_hud = 0;  // the player's HUD while its list draws
 bool g_overlay = false;  // a 2d layer over the whole screen is open: its draws go on the vr hud plane
 float g_inset = 0;   // 640x480 pixels a sprite's uv is pulled in by at each edge
@@ -84,7 +85,10 @@ void Emit(X86Context& ctx, uint8_t* base, uint32_t count, F emit) {
         float off = G<float>(R32(ctx.esp + 4));
         float w = g_width, h = g_width * 0.75f;
         float ax = g_vr_ax * w, ay = g_vr_ay * h;
-        float nx = w * 0.5f + (ax - w * 0.5f) * kVrPullX, ny = h * 0.5f + (ay - h * 0.5f) * kVrPullY;
+        // (the bottom middle's items, the objective lines and the tips, pulled up further: at kVrPullY they sat out
+        // of view under the lenses, user 2026-11-27)
+        const float pull_y = g_vr_ax == kCentre && g_vr_ay > 0.9f ? kVrPullBottom : kVrPullY;
+        float nx = w * 0.5f + (ax - w * 0.5f) * kVrPullX, ny = h * 0.5f + (ay - h * 0.5f) * pull_y;
         vs.resize(count * 2);
         for (uint32_t i = 0; i < count; i++) {
             float& x = G<float>(pts + i * 8);
@@ -92,6 +96,15 @@ void Emit(X86Context& ctx, uint8_t* base, uint32_t count, F emit) {
             vs[i * 2] = x, vs[i * 2 + 1] = y;
             x = nx + (x + off - ax) * g_vr_grow - off;
             y = ny + (y - ay) * g_vr_grow;
+        }
+        // no hud text under the lenses (user 2026-11-27: the objective lines and tips sat too low to see, at any
+        // anchor): whatever reaches into the lower part (past kVrLow of the height) goes up by one fixed amount, the
+        // same for every line, so lines keep their spacing (each clamped to one height had them all on one line)
+        if (g_vr_cb != kCrosshair && count) {
+            float low = -1e9f;
+            for (uint32_t i = 0; i < count; i++) low = std::max(low, G<float>(pts + i * 8 + 4));
+            if (low > h * kVrLow)
+                for (uint32_t i = 0; i < count; i++) G<float>(pts + i * 8 + 4) -= h * kVrLift;
         }
         emit(ctx, base);
         for (uint32_t i = 0; i < count; i++) G<float>(pts + i * 8) = vs[i * 2], G<float>(pts + i * 8 + 4) = vs[i * 2 + 1];
@@ -341,6 +354,7 @@ bool HudItem(X86Context& ctx, uint8_t*) {
     // the middle's items (the objective, mission and fire mode texts) their own size, apart from the corners' (user
     // 2026-11-26: they followed the hud's growth; 40% smaller, then half that)
     const uint32_t cb = R32(ctx.ebx + kItemCallback);
+    g_vr_cb = cb;
     const bool middle = g_vr_ax == kCentre && g_vr_ay > 0.2f && g_vr_ay < 0.8f;
     g_vr_grow = !middle ? kVrGrow : cb == kCrosshair || cb == kTitleFade ? kVrGrowMiddle : kVrGrowText;
     {

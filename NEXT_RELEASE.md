@@ -17,3 +17,5 @@
 - Rifle and sniper magazines held upright on the palm; the hand stays on a magazine as it seats
 - AK: the rounds on a loose magazine sit lower; rounds show in the open action only while there are any
 - Shotgun shells held between the thumb and index finger; the fingers now pose on the shotguns
+- The off hand's grab point on the AK where you reach for it
+- Objective text and tips raised into view; closing a tip with A no longer drops the magazine
