@@ -211,3 +211,5 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] A to close a tip doesn't drop the magazine (confirm)
 - [ ] Uzi: shots leave the barrel and scatter round where it points (the game's spread), no drift to the right at range (confirm)
 - [ ] WA2000: after switching from the M249 (or any gun) and back, the right hand sits on its grip as before (confirm)
+- [ ] switching guns (the SPAS to the WA2000 and others) doesn't crash (confirm)
+- [ ] WA2000: the shot lands at the scope's reticle (confirm)

@@ -2645,3 +2645,16 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
 - The checklist's fails (totest_done.txt and the logs) put in TODO; the Uzi's fore-grip item dropped (one-handed).
 - The AK's grab zone lengthened, not moved (user): a line from its point 8 cm on toward the muzzle (kAkGrabLonger),
   reach 10 cm round it. Installed, not run.
+
+## 2026-11-27: the crash switching to the WA2000; the WA2000's aim (installed, not run)
+
+- Crash (logcat -b crash): SIGSEGV, null dereference in vulkan.adreno.so's vkCmdDrawIndexed on the render thread,
+  just after switching from the SPAS to the WA2000 (the log stops at "SNR's draw skipped"). (The crashing build's
+  id f7676e... wasn't the one on disk: no lines.) Cause, from the code: Upload() submits and starts a new command
+  buffer when the 32 MB ring is full; Draw binds its pipeline and buffers, and then uploads more for our extra passes
+  (the gun's extra mesh: the WA2000's right side is a big one; the M67, the hand's and dropped magazines), so a full
+  ring there drew on a command buffer with nothing bound. Draw now submits first when the ring has under
+  kDrawHeadroom (2 MB) left, before anything's bound (the same place Upload would have).
+- The previous log (black_prev) wasn't a crash: mission failed, quit to the title, quit (Exit 0).
+- The WA2000's shots went right of the scope's aim (user): the game's direction leans toward its flat crosshair (as
+  the Uzi's did); the scope's camera looks down the barrel. Its shots now go exactly along the barrel as drawn.

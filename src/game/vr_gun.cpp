@@ -3549,7 +3549,13 @@ void VrFireShot(X86Context& ctx, uint8_t* base) {
                 float b[16] = {};
                 float l = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
                 for (int i = 0; i < 3; i++) b[i] = m[8 + i] / std::max(l, 1e-6f), b[12 + i] = m[12 + i];
-                if ((code == "SMG" || code == "SM5") && VrGunMap(b, false)) {
+                const bool sniper = code == "SNR" || code == "SN5";
+                if (sniper && VrGunMap(b, false)) {
+                    // the WA2000 hits where its scope looks: exactly along the barrel as drawn, the scope's camera
+                    // looking down it (user 2026-11-27: its shots went to the right of the scope's aim: the game's
+                    // lean toward its flat crosshair)
+                    for (int i = 0; i < 3; i++) d[i] = b[i];
+                } else if ((code == "SMG" || code == "SM5") && VrGunMap(b, false)) {
                     // its scatter about the barrel as the game's, but not the steady lean in it (its aim toward the
                     // flat game's crosshair: user, the shots drifted a few degrees right at range): the running
                     // mean of the shots' offset from the barrel taken off

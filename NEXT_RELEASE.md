@@ -19,3 +19,5 @@
 - Shotgun shells held between the thumb and index finger; the fingers now pose on the shotguns
 - The off hand's grab point on the AK where you reach for it
 - Objective text and tips raised into view; closing a tip with A no longer drops the magazine
+- Fixed: a crash switching weapons (the WA2000 after the SPAS)
+- WA2000: shots land where the scope aims

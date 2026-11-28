@@ -95,6 +95,7 @@ namespace {
 
 constexpr int kFrames = 3;
 constexpr VkDeviceSize kUploadSize = 32ull << 20;  // per frame: vertices, indices, constants, texture staging
+constexpr VkDeviceSize kDrawHeadroom = 2ull << 20;  // a gun draw's later uploads fit in this (Draw)
 constexpr VkDeviceSize kUboRange = 3072;           // b0 and b1: 192 vertex constants, DrawConstants under it
 constexpr VkDeviceSize kUboAlign = 256;
 constexpr VkFormat kBgra = VK_FORMAT_B8G8R8A8_UNORM;
@@ -3915,6 +3916,11 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         sp = &hidden_state;
     }
     const State& sv = *sp;
+    // a full upload ring submits and starts a new command buffer (Upload): after this draw's pipeline and buffers are
+    // bound, its later uploads (the gun's extra mesh, the M67, the hand's and dropped magazine passes) would draw on
+    // a command buffer with nothing bound: the driver's null dereference in vkCmdDrawIndexed (user 2026-11-27, a
+    // crash switching to the WA2000, its right side a big extra mesh). Room made here, before anything's bound
+    if (stereo_ && s.transforms[4][0] == 2.0f && CurrentFrame().used + kDrawHeadroom > kUploadSize) Submit(true, false);
     if (stereo_ && s.transforms[4][0] == 2.0f && s.transforms[4][4] == 1.0f && IsArms(a.index_count)) {
         auto posed = sv.vsc;
         uint32_t data = s.streams[0].vb ? mem::VirtualFromPhysical(kernel::R32(s.streams[0].vb + 4)) : 0;  // kResData
