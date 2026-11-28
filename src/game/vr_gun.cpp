@@ -150,7 +150,7 @@ std::atomic<bool> g_left_on{false};
 std::atomic<float> g_pinch[3] = {0, 0, 0};
 std::atomic<bool> g_pinch_ok{false};
 std::atomic<float> g_left_fore{1e9f};  // the off hand's distance from the fore-grip (m), for the reload's zones
-constexpr float kReach = 0.08f;  // metres from the fore-grip a grip press takes hold (tight: the user's ask)
+constexpr float kReach = 0.10f;  // metres from where the hand's drawn on the gun a grip press takes hold
 std::string g_code = "?";  // the weapon it was made for
 
 uint32_t Player() { return R32(kWorld) + kWorldPlayer; }
@@ -603,9 +603,6 @@ std::string HeldGunCode() {
     std::lock_guard lock(g_lock);
     return g_code;
 }
-// the off hand's grab zone moved back along the gun from the game's hold (metres): the AK's sat too far toward
-// the muzzle (user 2026-11-27: back a few inches; the hand drawn on it stays where the game holds it: "perfect")
-float ForeBack() { return HeldGunCode().rfind("AK", 0) == 0 ? 0.075f : 0.0f; }
 
 // rotation by angle about a unit axis, row-major
 void AxisAngle(const float* u, float t, float* R) {
@@ -3171,19 +3168,10 @@ void LeftHold(const Frame& f) {
         float fore[3], d2 = 0;
         Rest(f, 0, fore);
         for (int i = 0; i < 3; i++)
-            g_fore_at[i] = rot[i * 3] * fore[0] + rot[i * 3 + 1] * fore[1] + rot[i * 3 + 2] * fore[2] + pos[i] -
-                           rot[i * 3 + 2] * ForeBack();  // (the mesh's +z: along the barrel)
-        // the fore-grip is a stretch along the gun under the barrel, not a point (user 2026-11-27: the AK's grip
-        // pulled its magazine instead, the hand 5-10 cm ahead of the charging handle; after a shotgun's reload no
-        // grip took): from kForeBack of the grip-to-fore-grip way back (short of the magazine well) to kForeAhead on
-        // along the barrel (the mesh's +z)
-        constexpr float kForeBack = 0.4f, kForeAhead = 0.12f;
-        {
-            float v[3], z[3];
-            for (int i = 0; i < 3; i++) v[i] = hc[i] - g_fore_at[i], z[i] = rot[i * 3 + 2];
-            float t = std::clamp(v[0] * z[0] + v[1] * z[1] + v[2] * z[2], -kForeBack * f.fore, kForeAhead);
-            for (int i = 0; i < 3; i++) d2 += (v[i] - z[i] * t) * (v[i] - z[i] * t);
-        }
+            g_fore_at[i] = rot[i * 3] * fore[0] + rot[i * 3 + 1] * fore[1] + rot[i * 3 + 2] * fore[2] + pos[i];
+        // the grab point is where the hand is drawn on the gun, the game's palm there, on every gun (user
+        // 2026-11-27: a stretch along the barrel, then the AK's moved back, both missed it)
+        for (int i = 0; i < 3; i++) d2 += (hc[i] - g_fore_at[i]) * (hc[i] - g_fore_at[i]);
         g_fore_ok = true;
         near = d2 < kReach * kReach;
         g_left_fore.store(std::sqrt(d2), std::memory_order_relaxed);

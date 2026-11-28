@@ -205,4 +205,4 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] shotgun shells: pinched between the thumb and index finger, brass in the fingertips, pointing forward; the fingers pinch (they never did on shotguns) (confirm)
 - [ ] co-op: SAVE LOGS (ALL PLAYERS) in the CO-OP tab leaves logs/coop_<time>_<name>.log on every headset; after a crash the last run's log is logs/black_prev.log (confirm)
 - [ ] RPG: the free off hand looks like a hand again (not mangled) (confirm)
-- [ ] AK: the grip takes the gun about 3 inches nearer the receiver; the hand drawn on it where it was (confirm)
+- [ ] every gun: the grip takes the gun where the off hand is drawn on it (within 10 cm) (confirm)

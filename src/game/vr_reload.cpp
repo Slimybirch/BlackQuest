@@ -1282,7 +1282,7 @@ void VrReloadTick() {
     bool near_mag = false;
     // (not a shotgun's: there's nothing to pull; not within the fore-grip's reach, its stretch under the barrel:
     // that's the grip's, user 2026-11-27: the AK's magazine came out at a reach for its fore-end)
-    if (state == 0 && g_bone >= 0 && !VrLeftOnGun() && !g_parts.shells && VrLeftFore() > 0.08f) {
+    if (state == 0 && g_bone >= 0 && !VrLeftOnGun() && !g_parts.shells && VrLeftFore() > 0.10f) {
         std::lock_guard lock(g_lock);
         if (g_well_ok) {
             float v[3] = {hc[0] - g_well[0], hc[1] - g_well[1], hc[2] - g_well[2]};
@@ -1368,7 +1368,7 @@ void VrReloadTick() {
                 : g_parts.take == kTakeWaist  ? NearWaist(hand[0], head)
                                               : NearChest(hand[0], head);
     bool chest = (state == 0 || state == 1) && reserve > 0 && room && !VrLeftOnGun() && !g_racking && zone &&
-                 VrLeftFore() > 0.08f;  // (the fore-grip's reach is the grip's)
+                 VrLeftFore() > 0.10f;  // (the fore-grip's reach is the grip's)
     // the launchers' hints over the off hand (user)
     // (user: only until the first round ever goes into a launcher, then never again)
     if (!g_parts.launcher || reserve == 0 || state == 2 || Opt().vr_launcher_tips_done) SetTip("");

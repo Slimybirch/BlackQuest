@@ -2605,3 +2605,6 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
 - The AK's hold 7.5 cm back along the barrel (user: too far toward it): ForeBack moves the grab zone's point (LeftHold) back by it;
   the hand drawn on the gun stays the game's hold (user: that was perfect).
 - Recordings: the user's Quest video recordings pulled to S:/BlackQuest_videos (outside the repo).
+- The grab point, simply (user): where the hand is drawn on the gun (Rest: the game's palm on it), every gun, within
+  kReach 10 cm of the controller's grip; the stretch along the barrel and the AK's ForeBack are gone. The reload's
+  zones give way within those 10 cm.
