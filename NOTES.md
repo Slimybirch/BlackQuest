@@ -2596,3 +2596,12 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
   partner saves its own the same way on receiving it (any stage or level; the host passes it on to the others).
 - native/main.cpp: the last run's black.log is renamed black_prev.log before the new run's starts (a crash and a
   relaunch had lost it).
+
+## 2026-11-27: the RPG's hand, the AK's hold (user's recording; installed, not run)
+
+- The RPG's off hand came out mangled (the user's video): its draw has no arms either (log: RPG 0 finger chains), so
+  it borrowed the pistol's fingers, whose bones aren't its. The borrowing is the shotguns' only now (SHG SH5 RM1
+  RM5); the RPG's fingers are the game's pose as before.
+- The AK's hold 7.5 cm back along the barrel (user: too far toward it): ForeBack moves the grab zone's point (LeftHold) back by it;
+  the hand drawn on the gun stays the game's hold (user: that was perfect).
+- Recordings: the user's Quest video recordings pulled to S:/BlackQuest_videos (outside the repo).
