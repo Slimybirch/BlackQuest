@@ -351,6 +351,14 @@ int main(int, char**) {
         __android_log_print(ANDROID_LOG_ERROR, "BLACK", "SDL_Init: %s", SDL_GetError());
         return 1;
     }
+    {
+        // the last run's log kept as <log>_prev.log before this run's starts over it (a crash, then a relaunch, lost
+        // it: user 2026-11-27, co-op tests)
+        std::error_code ec;
+        auto dir = app::ExeDir() / "logs";
+        std::filesystem::rename(dir / (std::string(app::kGame.log) + ".log"),
+                                dir / (std::string(app::kGame.log) + "_prev.log"), ec);
+    }
     logx::Init((app::ExeDir() / "logs").string(), app::kGame.log);
     app::Load();
     if (app::kGame.init) app::kGame.init();

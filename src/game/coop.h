@@ -8,6 +8,8 @@
 #include "kernel/kernel.h"
 
 namespace coop {
+void SaveLogCopy(const char* why);  // blackquest: this copy's log kept as logs/coop_<time>_<name>.log
+void SaveAllLogs();                 // and every partner's (the CO-OP tab's SAVE LOGS)
 
 constexpr int kMaxPlayers = 8;
 constexpr int kNicknameBytes = 64, kNicknameCharacters = 20;

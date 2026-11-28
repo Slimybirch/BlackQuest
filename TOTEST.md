@@ -203,3 +203,4 @@ Checked here (`- [x]`) means confirmed and left out of the card. Lines must stay
 - [ ] seating a magazine by hand: the hand stays on it at the well until the grip lets go or the hand moves away (confirm)
 - [ ] AK: the rounds on a magazine out of the gun sit 2 inches lower; rounds show in the open action while there are any, none when empty (confirm)
 - [ ] shotgun shells: pinched between the thumb and index finger, brass in the fingertips, pointing forward; the fingers pinch (they never did on shotguns) (confirm)
+- [ ] co-op: SAVE LOGS (ALL PLAYERS) in the CO-OP tab leaves logs/coop_<time>_<name>.log on every headset; after a crash the last run's log is logs/black_prev.log (confirm)

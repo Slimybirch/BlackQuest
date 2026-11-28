@@ -129,7 +129,7 @@ constexpr uint32_t kRetryFrames = 120;
 constexpr size_t kWaitingMax = 256;
 constexpr int kProbeLines = 1500;
 
-enum Type : uint8_t { kDeath = 1, kProp, kProjectile, kMelee, kFlow, kObjective, kAmmo };  // kAmmo: blackquest
+enum Type : uint8_t { kDeath = 1, kProp, kProjectile, kMelee, kFlow, kObjective, kAmmo, kLogs };  // kAmmo, kLogs: blackquest
 
 #pragma pack(push, 1)
 // A death names the spawner and carries the killing hit. A prop's state (kProp) puts the prop's id in name, its
@@ -851,6 +851,11 @@ void Incoming(const uint8_t* p, int bytes, int count, uint64_t now) {
         if (e.actor == coop::LocalPlayer()) continue; // acknowledged echo; the local action already ran
         PartnerLoad(e.load, e.level);
         bool reloaded = e.level == g_partner_level && e.load != uint8_t(g_partner_load);
+        if (e.type == kLogs) {  // (any stage or level: saved at once, the host passes it on)
+            coop::SaveLogCopy("a partner asked");
+            if (coop::Hosting()) Post(e, true);
+            continue;
+        }
         bool wanted = (e.type == kDeath && g_stage >= 1) || ((e.type == kProp || e.type == kProjectile) && g_stage >= 3) ||
                       ((e.type == kMelee || e.type == kAmmo) && g_stage >= 4) || ((e.type == kFlow || e.type == kObjective) && g_stage >= 6);
         if (!wanted || reloaded || (coop::Hosting() && e.level != g_level)) {
@@ -1386,6 +1391,15 @@ void SendAmmo(int to) {
     e.shooter = uint8_t(to);
     Post(e);
     LOGR("coop: a magazine handed to player %d", to);
+}
+
+// blackquest: every partner saves its log (relayed by the host, as a magazine)
+void SendLogs() {
+    if (!g_net) return;
+    Event e{};
+    e.type = kLogs;
+    Post(e);
+    LOGR("coop: every partner asked to save its log");
 }
 
 void SendMelee(uint64_t name, uint32_t dir) {

@@ -129,6 +129,8 @@ void DrawPlayers(const coop::Session& s) {
         if (m.local) line += "  (YOU)";
         ImGui::BulletText("%s", line.c_str());
     }
+    // (user 2026-11-27): every player's log kept as it is now, for a problem to look at later
+    if (ImGui::Button("SAVE LOGS (ALL PLAYERS)")) coop::SaveAllLogs();
 }
 
 }  // namespace

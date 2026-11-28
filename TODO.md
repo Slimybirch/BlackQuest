@@ -404,6 +404,14 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 - [ ] room codes (EOS): see NOTES "room codes"; then a ROOM CODE row (create, join by code on the letter pad)
 - [ ] the player's body: the friendly soldiers' model (see Phase 7's list)
 - [ ] giving ammo to another player (see Phase 6's list); grenades host-synced (NOTES)
+- [ ] footsteps in co-op (idea from Peterson047/BLACK-XBEMultiplayer, binary only, no source or licence: the idea,
+      not code): a partner's steps heard in 3D from the game's own step sounds, walking and running, silent crouched
+- [ ] a VR-only multiplayer mode (user 2026-11-27, maybe; that build's Team Deathmatch for reference: up to 8,
+      nameplates, hit markers). Its remote bodies' animations are a paid asset licensed to that mod only: our own way
+      (the friendly soldiers' model and the game's animations, above)
+- [ ] health packs shared in co-op, every mode (user 2026-11-27): with a stored health pack, the left hand reached
+      out to a partner (within 10-20 cm of their body) and the health pack button (right stick down) gives it to them
+      (a co-op event, as a magazine is handed over); otherwise it heals you as now
 
 ## Phase 10 (the launcher / Builder; was 9)
 - [x] (built 2026-11-24) BlackQuestBuilder.exe (builder/, C# WinForms on .NET Framework 4.8: one small exe, nothing
@@ -433,14 +441,8 @@ CoD4 VR (jplakon/CallOfDuty4_VR) is GPL-3.0: design facts only, never its code.
 ## Phase 11 (release prep; was 10)
 - [x] (2026-11-25) v0.1.0 released: README and credits (MIT notices kept), the tag, the zip (each player signs their own APK)
 
-## Endless mode (user, 2026-11-24: replayability; after co-op, Phase 9)
-- [ ] mission 1's map, started by a hidden switch in the level (or a front-end entry); 3 lives a player, over when
-      every player is out (co-op aware: each player's own count, a spectate while out)
-- [ ] waves of enemies at random spawn points, more each wave; the next wave when the last enemy dies
-- [ ] random weapon pickups at random points, better weapons as the waves go (a tier table by wave)
-- [ ] needs from the code: the enemy spawn (the game's actor/spawn function and its spawn points or nav data),
-      the pickup spawn, the player's death and respawn (checkpoint reload: avoid it, respawn in place), the
-      mission's scripted events and objectives turned off, a wave and lives count on the HUD
+## Endless mode
+- Its own project: ENDLESS.md (ideas, design, research, plan). Add ideas there.
 
 ## Barrel reticle (user, 2026-11-24)
 - [x] (built, not run) a ring and dot 20 m down the barrel in each eye (the filter's Overlay, vr_gun.cpp VrReticle);

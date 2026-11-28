@@ -2588,3 +2588,11 @@ only the dot (the frame is a quad layer, nothing 3d over it). Not seen yet with 
   (6.3 cm over the grip, 2 cm ahead); the shell's middle 7.3 cm from the grip (was 2.0: in the fist). dev_reload SHG:
   the shell in at the port, the fore-grip TOOK after.
 - Not done: parts of the game's own reload animation at the take and the push in (the user's "if they could").
+
+## 2026-11-27: saving every player's log in co-op (built, not run)
+
+- CO-OP tab, under the players: SAVE LOGS (ALL PLAYERS). coop::SaveAllLogs copies this copy's log (logx::Path, after
+  logx::Flush) to logs/coop_<YYYYMMDD_HHMMSS>_<name>.log and sends a kLogs world event (coop_world.cpp); every
+  partner saves its own the same way on receiving it (any stage or level; the host passes it on to the others).
+- native/main.cpp: the last run's black.log is renamed black_prev.log before the new run's starts (a crash and a
+  relaunch had lost it).

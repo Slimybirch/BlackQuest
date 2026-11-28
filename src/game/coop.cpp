@@ -7,9 +7,11 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <mutex>
@@ -1442,6 +1444,29 @@ int ProbeLines(char (*lines)[32], int max) {
     const world::Counters& w = world::Count();
     std::snprintf(lines[6], 32, "WLD S%u T%u A%u W%u L%u X%u", w.sent, w.taken, w.applied, w.waiting, w.lost, w.stale);
     return 7;
+}
+
+// blackquest (user 2026-11-27, for co-op tests): this copy's log as it is now, kept as
+// logs/coop_<date>_<time>_<name>.log (the next launch starts a new black.log over the old)
+void SaveLogCopy(const char* why) {
+    logx::Flush();
+    std::error_code ec;
+    std::filesystem::path from = logx::Path();
+    char stamp[32];
+    std::time_t t = std::time(nullptr);
+    std::strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", std::localtime(&t));
+    std::string name = g_nickname;
+    for (char& c : name)
+        if (!std::isalnum(uint8_t(c))) c = '_';
+    std::filesystem::path to = from.parent_path() / ("coop_" + std::string(stamp) + "_" + name + ".log");
+    std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
+    LOGR("coop: log saved (%s): %s%s", why, to.filename().string().c_str(), ec ? " FAILED" : "");
+}
+
+// the SAVE LOGS button: this copy's and every partner's
+void SaveAllLogs() {
+    SaveLogCopy("saved here");
+    world::SendLogs();
 }
 
 }  // namespace coop
